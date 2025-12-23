@@ -1,0 +1,132 @@
+// --- TYPEDEF ---
+typedef int m_size_t;
+typedef char byte;
+
+// --- BITFIELDS ---
+struct BitfieldTest {
+    int first  : 3;
+    int second : 5;  
+    int third  : 8;  
+    int fourth : 16;
+}
+
+// --- PACKED STRUCT ---
+packed struct HardwarePacket {
+    char magic;
+    int payload;
+    char checksum;
+}
+
+packed struct Inner {
+    char a;
+    char b;
+}
+
+packed struct Outer {
+    char header;
+    Inner data;
+    int footer;
+}
+
+// --- UNION ---
+union Converter {
+    int raw_bits;
+    float value;
+}
+
+union Color {
+    int rgba;
+    char components[4];
+}
+
+// --- CONSTANTS & STATIC IF ---
+const string TEST_PLATFORM = "HOSTED";
+
+// --- VARIADIC EXTERN ---
+extern void printf(char* fmt, ...);
+extern void* malloc(int size);
+extern void strcpy(char* dest, char* src);
+
+// --- INTERRUPT ---
+interrupt void dummy_interrupt(void* frame) {
+    // Feature: Interrupt Calling Convention
+}
+
+println("--- Consolidated Moksha Test Suite ---");
+
+// --- SIZEOF & TYPEDEF ---
+m_size_t s1 = cast<m_size_t>(sizeof(BitfieldTest));
+m_size_t s2 = cast<m_size_t>(sizeof(int));
+print("Size of BitfieldTest: "); println(s1); 
+    print("Size of int alias: "); println(s2);
+
+// --- STATIC IF ---
+static if (TEST_PLATFORM == "HOSTED") {
+    println("Static If: Successfully compiled HOSTED block.");
+} else {
+    println("Static If: ERROR - Compiled wrong block.");
+}
+
+// --- BITFIELDS (PACKING/UNPACKING) ---
+BitfieldTest bf;
+bf.first = 5;      
+bf.second = 21;
+bf.third = 255;    
+bf.fourth = 1234;
+
+println("Bitfield Values:");
+print("  First (3 bits): "); println(bf.first);
+print("  Second (5 bits): "); println(bf.second);
+print("  Third (8 bits): "); println(bf.third);
+
+// --- SINGLE CONSOLIDATED UNSAFE BLOCK ---
+unsafe {
+    // 1. Pointer Casting & Raw Memory Value
+    int* raw = cast<int*>(&bf);
+    print("Raw Memory Value: "); println(*raw); 
+
+    // 2. Packed Struct Offset Verification
+    HardwarePacket packet;
+    char* base_addr = cast<char*>(&packet);
+    int* payload_addr = cast<int*>(&packet.payload);
+    int offset = cast<int>(payload_addr) - cast<int>(base_addr);
+    print("Offset of 'payload' in packed struct: "); println(offset);
+
+    // 3. Union Reinterpretation
+    Converter conv;
+    conv.raw_bits = 0x3F800000;
+    print("Union raw hex as float: "); println(conv.value); 
+
+    // 4. C-Runtime Interop (Malloc/Strcpy)
+    char* buffer = cast<char*>(malloc(12));
+    strcpy(buffer, "Hello World");
+    char* p = buffer;
+    p[6] = 'M'; p[7] = 'o'; p[8] = 'k'; p[9] = 's'; p[10] = 'h';
+    print("Modified C-Buffer: "); println(cast<char*>(buffer)); 
+
+    // 5. Nested Packed Structs Offset
+    Outer obj;
+    char* base = cast<char*>(&obj);
+    int* footer_ptr = &obj.footer;
+    int nested_offset = cast<int>(footer_ptr) - cast<int>(base);
+    print("Nested struct footer offset: "); println(nested_offset);
+
+    // 6. Pointer Arithmetic
+    int* data_ptr = cast<int*>(malloc(12));
+    *data_ptr = 100;
+    *(data_ptr + 1) = 200;
+    *(data_ptr + 2) = 300;
+    print("Pointer index [1]: "); println(data_ptr[1]);
+    print("Dereferenced offset +2: "); println(*(data_ptr + 2));
+
+    // 7. Little Endian Union Access
+    Color pixel;
+    pixel.rgba = 0x11223344;
+    print("Union Component 0 (LSB): "); println(cast<int>(pixel.components[0]));
+    print("Union Component 3 (MSB): "); println(cast<int>(pixel.components[3]));
+}
+
+// --- VARIADIC PRINTF ---
+int a = 10;
+int b = 20;
+printf("Variadic Printf: %d + %d = %d\n", a, b, a + b);

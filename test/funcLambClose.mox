@@ -1,0 +1,102 @@
+println("==== FUNCTIONS, LAMBDAS & CLOSURES SUITE ====")
+
+// --- 1. Standard Function Definitions ---
+
+println("\n[1. Standard Functions]")
+
+double add(any a, int b) {return a + b}
+double circleArea(double r) {return 3.14159 * r * r}
+string greet(string name, boolean isFormal) {if (isFormal) {return "Good evening, " + name} else {return "Hi " + name}}
+void printStatus(any code) {println("System Status Code: " + code)}
+
+println("add(10.5, 20): " + add(10.5, 20))
+println("circleArea(2.0): " + circleArea(2.0))
+println(greet("Swarup", true))
+println(greet("Moksha", false))
+printStatus(200)
+
+// --- 2. Lambdas (Anonymous Functions) ---
+
+println("\n[2. Lambdas]")
+
+// A. Typed Lambda
+any square = (int x) => { x * x }
+println("Square of 5 (Typed): " + square(5))
+
+// B. Untyped Lambda (Type Inference)
+any multiply = (a, b) => { a * b }
+println("Multiply 6 * 7 (Untyped): " + multiply(6, 7))
+
+// C. Block Body Lambda
+any max = (any a, any b) => { if (a > b) { return a } else { return b } }
+println("Max of (10, 42): " + max(10, 42))
+
+any greet1 = (name) => { println("Hello 1, " + name) }
+greet1("Swarup")
+
+any greet2 = (string name) => { println("Hello 2, " + name) }
+greet2("Swarup")
+
+any greet3 = (any name) => { println("Hello 3, " + name) }
+greet3("Swarup")
+
+any hell = (word) => { return word + " add" }
+println(hell("new"))
+
+// ---- 3. Higher Order Functions ----
+
+int applyOp(int a, int b, any operation) {
+    return operation(a, b)
+}
+
+any res = applyOp(11, 5, (x, y) => { x - y })
+println("Higher Order Result: " + res) // Should be 6
+
+// ---- 4. Default Parameters ----
+
+void log(string msg, int level = 1) {
+    println("Log Level " + level + ": " + msg)
+}
+
+log("Error occurred")    // Uses default level 1
+log("System failure", 3) // Uses explicit level 3
+
+// ---- 5. Recursive Functions ----
+
+int fib(n) {
+    if (n <= 1) { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+println("Fibonacci(6): " + fib(6))
+
+// ---- 6. Variable Shadowing
+
+int x = 100
+println(`X :- ${x}`)
+any f = (int x) => { println(`X :- ${x}`) }
+f(20)
+
+// ---- 7. Lambdas in Data Structures ----
+
+any ops[] = [
+    (x) => { x * 2 },
+    (x) => { x * x }
+]
+
+println("Array Lambda 1: " + ops[0](5)) // Should be 10
+println("Array Lambda 2: " + ops[1](5)) // Should be 25
+
+
+// ---- 8. Closures ----
+
+any makeCounter = () => {
+    int count = 0
+    return () => { 
+        count = count + 1 
+        return count 
+    }
+}
+
+any myCounter = makeCounter()
+println("Counter: " + myCounter()) // Should be 1
+println("Counter: " + myCounter()) // Should be 2

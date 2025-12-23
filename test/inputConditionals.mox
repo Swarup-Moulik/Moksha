@@ -1,0 +1,126 @@
+println("==== CONTROL FLOW & LOOPS SUITE ====")
+
+// ---------------------------------------------------------
+// 1. INPUT & CONDITIONALS
+// ---------------------------------------------------------
+println("\n[Input & If/Else]")
+
+print("Enter an integer: ")
+int iVal = readInt()
+
+print("Enter a double: ")
+double dVal = readDouble()
+
+print("Enter a boolean: ") // < 0 = false, false = false, "" = false, > 0 = true, any string = true
+boolean bVal = readBool()
+
+print("Enter a string: ")
+string sVal = read()
+
+println(`Inputs: Int = ${iVal}, Double = ${dVal}, Bool = ${bVal}, String = '${sVal}'`)
+
+if (iVal > 100) {
+    println("Input is huge (>100)")
+} elseif (iVal > 0) {
+    println("Input is positive")
+} else {
+    println("Input is zero or negative")
+}
+
+// ---------------------------------------------------------
+// 2. SWITCH CASES (Ranges & Logic)
+// ---------------------------------------------------------
+println("\n[Switch Cases]")
+
+int score = 95
+print(`Score ${score}: `)
+
+switch (score) {
+    case 90:100: { println("Grade A (Range 90-100)") }
+    case 80:89:  { println("Grade B (Range 80-89)") }
+    default:     { println("Other Grade") }
+}
+
+// Double Range (Requires if-else lowering in CodeGen)
+double temp = 30.0
+print(`Temp ${temp}: `)
+
+switch (temp) {
+    case 25.5 : 35.5: { println("Warm (25.5 - 35.5)") }
+    default:          { println("Out of range") }
+}
+
+// Complex Logic using switch(true)
+int x = 50
+print(`Complex x=${x}: `)
+
+switch (true) {
+    case (20 < x && x < 100): { println("Between 20 and 100") }
+    case (x >= 100):          { println("Large (>100)") }
+    default:                  { println("Small (<20)") }
+}
+
+string ch = "b"
+print(`Given ${ch} between : `)
+
+switch (ch) {
+    case "a":"d": { println("Between a and d ") }
+    case "A":"D": { println("Between A and D ") } 
+    default:      { println("Wrong Case") }
+}
+
+int rank = 1
+print(`Testing Rank ${rank}: `)
+
+switch (rank) { // These empty cases will "fall through" to the next block
+    case 1:
+    case 2:
+    case 3: {
+        println("Top Tier (1, 2, or 3)")
+    } 
+    case 4: {// This case has statements, so it will AUTO-BREAK after printing
+        println("Middle Tier (4)")
+    }
+  
+    default: {
+        println("Lower Tier")
+    }
+}
+
+// ---------------------------------------------------------
+// 3. LOOPS
+// ---------------------------------------------------------
+println("\n[Loops]")
+
+// A. While Loop
+println("--- While (Count down 3 to 1) ---")
+int w = 3
+while (w > 0) {
+    println(`w = ${w}`)
+    w--
+}
+
+// B. Do-While Loop
+println("--- Do-While (Run once) ---")
+int d = 0
+do {
+    println(`d = ${d} (Inside loop)`)
+    d++
+} while (d < 0) 
+
+// C. C-Style For Loop
+println("--- For Loop (0 to 4, Step 2) ---")
+for (int i = 0; i < 5; i = i + 2) {
+    println(`i = ${i}`)
+}
+
+// D. For-In Loop (Arrays)
+println("--- For-In Loop (Array) ---")
+int numbers[] = [10, 20, 30]
+
+// Syntax: for (index, value in iterable)
+for (idx, val in numbers) {
+    println(`Index ${idx} = Value ${val}`)
+}
+
+println("Done.")

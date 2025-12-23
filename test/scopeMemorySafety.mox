@@ -1,0 +1,88 @@
+println("==== SCOPE & MEMORY SAFETY SUITE ====")
+
+// =========================================================
+// SECTION 1: STANDARD SCOPING RULES
+// Goal: Verify variables are visible/hidden correctly.
+// =========================================================
+println("\n[1. Basic Variable Shadowing]")
+
+int x = 100
+println("Global x: " + x) // Expect 100
+
+if (true) {
+    // Shadowing: This 'x' is a new variable, effectively hiding the global 'x'
+    int x = 50
+    println("Inner Block x: " + x) // Expect 50
+    
+    x = x + 1
+    println("Inner Block x (modified): " + x) // Expect 51
+}
+
+println("Global x (After block): " + x) // Expect 100 (Unchanged)
+
+
+println("\n[2. Nested Scopes]")
+int outer = 1
+{
+    int middle = 2
+    {
+        int inner = 3
+        println("Sum (1+2+3): " + (outer + middle + inner)) // Expect 6
+    }
+    // println(inner) // Uncommenting this should cause a Compiler Error (Undefined Variable)
+}
+
+
+// =========================================================
+// SECTION 2: THE DANGER ZONE (Missing Memory Model)
+// Goal: Demonstrate errors caused by lack of Borrow Checking/ARC.
+// =========================================================
+println("\n[3. Dangling Pointer / Use-After-Free]")
+println("(This section demonstrates why Borrow Checking is needed)")
+
+class Data { 
+    public int value = 0 
+    constructor(int v) { this.value = v }
+}
+
+// --- SCENARIO A: The Escaping Stack Reference ---
+// We declare a pointer in the OUTER scope
+shared Data leakingPtr = null
+
+if (true) {
+    println("  -> Inside Block: Creating local Data(42)...")
+    Data local = new Data(42) // Created on STACK (Value Type)
+    
+    // UNSAFE ASSIGNMENT:
+    // We make the outer pointer point to this short-lived stack object.
+    // A Borrow Checker would BLOCK this line.
+    leakingPtr = local 
+    
+    println("  -> Inside Block: leakingPtr.value = " + leakingPtr.value) // Safe here
+} 
+// 'local' is now POPPED from the stack. The memory at that address is dead/reused.
+
+println("  -> Outside Block: Attempting to access leakingPtr...")
+
+// DANGER: This reads from memory that no longer belongs to 'local'.
+// It might print 42 (if lucky), garbage, or CRASH (Segfault).
+println("  [UNSAFE READ] leakingPtr.value: " + leakingPtr.value) 
+
+
+// --- SCENARIO B: The Manual Double Free ---
+println("\n[4. Manual Memory Mismanagement]")
+
+println("Creating shared Data(99)...")
+shared Data d1 = new Data(99)
+shared Data d2 = d1 // Aliasing: d2 points to d1
+
+println("Deleting d1 manually...")
+delete(d1) 
+
+// DANGER: d2 still thinks the object exists.
+// ARC would prevent this (ref count wouldn't hit 0 until d2 is gone).
+// A Tracing GC would prevent this (d1 wouldn't be deleted if d2 uses it).
+println("  [UNSAFE READ] d2.value (After d1 delete): " + d2.value)
+
+
+println("\n=== SUITE COMPLETED ===")

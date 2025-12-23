@@ -1,0 +1,58 @@
+# for showing all directories 
+find . -type d
+
+#to go to my directory
+cd "H:\My Project\Moksha"
+
+# Benchmark
+hyperfine --shell=none --warmup 20 --runs 500  './unsafe_c'  './unsafe'  './unsafe_cpp'
+hyperfine --shell=none --warmup 10 --runs 50  './Iterable_c'  './Iterable'  './Iterable_cpp'
+hyperfine --shell=none --warmup 20 --runs 500  './errorHandEnumMacro_c'  './errorHandEnumMacro'  './errorHandEnumMacro_cpp'
+
+
+# 1. Compile your Moksha Compiler (-O3 is for production grade not for debugging) 
+g++ -std=c++17 -I./include $(llvm-config --cxxflags) main.cpp $(find src -name "*.cpp") -o moksha $(llvm-config --ldflags --system-libs --libs all) -fexceptions
+
+g++ -O3 -std=c++17 -I./include $(llvm-config --cxxflags) main.cpp $(find src -name "*.cpp") -o moksha $(llvm-config --ldflags --system-libs --libs all) -fexceptions
+
+# 2. Compile the Runtime Library (separately)
+clang++ -c runtime/runtime.cpp -o runtime.o
+
+# 2. Compile Kernel Runtime
+g++ -c -ffreestanding -fno-rtti -fno-exceptions -nostdlib runtime/kernel_runtime.cpp -o kruntime.o
+
+# 3. Run Moksha to generate .o file for the script inside main.cpp (without -c file it prints llvm IR)
+
+a.  ./moksha test/arithmeticUnaryBinary.mox -c
+b.  ./moksha test/dataTypeNullability.mox -c
+c.  ./moksha test/inputConditionals.mox -c
+d.  ./moksha test/varInCond.mox -c
+e.  ./moksha test/stringArrayTable.mox -c
+f.  ./moksha test/Iterable.mox -c
+g.  ./moksha test/funcLambClose.mox -c 
+h.  ./moksha test/OOP.mox -c          
+i.  ./moksha test/errorHandEnumMacro.mox -c   
+j.  ./moksha test/scopeMemorySafety.mox -c
+k.  ./moksha test/polymorphism.mox -c
+l.  ./moksha test/unsafe.mox -c 
+m.  ./moksha test/ -c 
+
+# 4. Compile the Generated .o file and Link with the Runtime (not required because done in main.cpp)
+
+clang++ output/fileName.ll runtime.o -o executable/fileName.exe
+
+# 5. Run your final Moksha program!
+
+a.  ./executable/arithmeticUnaryBinary
+b.  ./executable/dataTypeNullability
+c.  ./executable/inputConditionals
+d.  ./executable/varInCond
+e.  ./executable/stringArrayTable
+f.  ./executable/Iterable
+g.  ./executable/funcLambClose
+h.  ./executable/OOP
+i.  ./executable/errorHandEnumMacro
+j.  ./executable/scopeMemorySafety
+k.  ./executable/polymorphism
+l.  ./executable/unsafe
+m.  ./executable/

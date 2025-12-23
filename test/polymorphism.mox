@@ -1,0 +1,224 @@
+println("==== POLYMORPHISM & REFERENCE SUITE ====")
+
+// --- 1. Basic Virtual Dispatch ---
+println("\n[1. Basic Overriding]")
+
+class Animal {
+    public string name = "Animal"
+    constructor(string n) { this.name = n }
+    public void speak() { println(this.name + " makes a generic sound.") }
+}
+
+class Dog(Animal) {
+    public void speak() { println(this.name + " barks: Woof!") }
+}
+
+class Cat(Animal) {
+    public void speak() { println(this.name + " meows: Meow!") }
+}
+
+Dog d = new Dog("Buddy")
+d.speak() 
+
+Cat c = new Cat("Whiskers")
+c.speak() 
+
+
+// --- 2. True Polymorphism (Base Class Reference) ---
+println("\n[2. Base Reference Dispatch]")
+
+void makeItSpeak(Animal a) {
+    println("-> Requesting speak() on " + a.name + "...")
+    a.speak() 
+}
+
+Animal generic = new Animal("Generic")
+makeItSpeak(generic) 
+makeItSpeak(d) 
+makeItSpeak(c) 
+
+
+// --- 3. Multi-Level Inheritance ---
+println("\n[3. Multi-Level Inheritance]")
+
+class Shape {
+    public void draw() { println("Drawing Shape") }
+}
+
+class Circle(Shape) {
+    public void draw() { println("Drawing Circle") }
+}
+
+class FilledCircle(Circle) {
+    public void draw() { println("Drawing FilledCircle (Red)") }
+}
+
+Shape s1 = new Shape()
+Shape s2 = new Circle()      
+Shape s3 = new FilledCircle() 
+
+s1.draw() 
+s2.draw() 
+s3.draw() 
+
+
+// --- 4. Partial Overriding (Mixed Inheritance) ---
+println("\n[4. Partial Overriding]")
+
+class Device {
+    public void start() { println("Device starting...") }
+    public void stop()  { println("Device stopping...") }
+}
+
+class Computer(Device) {
+    public void start() { println("Computer booting OS...") }
+}
+
+Device pc = new Computer()
+pc.start() 
+pc.stop()  
+
+
+// --- 5. VTable Integrity in Constructors ---
+println("\n[5. Polymorphism inside Constructors]")
+
+class BaseLogger {
+    constructor() { this.log("Base Constructor Running") }
+    public void log(string msg) { println("[BASE LOG]: " + msg) }
+}
+
+class FileLogger(BaseLogger) {
+    public void log(string msg) { println("[FILE LOG]: " + msg) }
+}
+
+println("Creating BaseLogger...")
+BaseLogger b = new BaseLogger() 
+
+println("Creating FileLogger...")
+BaseLogger f = new FileLogger() 
+
+
+// --- 6. Pass By Reference (The 'ref' Keyword) ---
+println("\n[6. Pass By Reference (ref)]")
+
+// A. Integers (Primitive Swap)
+println("\n--- A. Integer Swap ---")
+void swapInt(ref int a, ref int b) {
+    int temp = a
+    a = b
+    b = temp
+}
+int x = 10
+int y = 20
+println("Before: x=" + x + ", y=" + y)
+swapInt(x, y) 
+println("After:  x=" + x + ", y=" + y) 
+// Expect: x=20, y=10
+
+
+// B. Doubles (Primitive Modification)
+println("\n--- B. Double Mutation ---")
+void doubleValue(ref double val) {
+    val = val * 2.0
+}
+double pi = 3.14159
+doubleValue(pi)
+println("Doubled PI: " + pi)
+// Expect: ~6.28318
+
+
+// C. Booleans (Flag Toggling)
+println("\n--- C. Boolean Toggle ---")
+void toggle(ref boolean flag) {
+    flag = !flag
+}
+boolean isActive = false
+println("Active before: " + isActive)
+toggle(isActive)
+println("Active after:  " + isActive)
+// Expect: true
+
+
+// D. Strings (Pointer Reassignment)
+println("\n--- D. String Reassignment ---")
+// Note: Strings are immutable objects. 'ref' allows us to point the variable to a NEW string.
+void changeName(ref string name) {
+    name = "Moksha Master"
+}
+string user = "Novice"
+println("User before: " + user)
+changeName(user)
+println("User after:  " + user)
+// Expect: Moksha Master
+
+
+// E. Arrays (Replacing the Container)
+println("\n--- E. Array Replacement ---")
+// Passing an array normally passes a reference to contents.
+// Passing 'ref array' allows us to replace the entire array object in the caller.
+void replaceArray(ref int[] arr) {
+    // This assignment affects the caller because of 'ref'
+    arr = [999, 888, 777] 
+}
+
+int[] nums = [1, 2, 3]
+println("Array[0] before: " + nums[0])
+replaceArray(nums)
+println("Array[0] after:  " + nums[0])
+// Expect: 999
+
+
+// F. Objects (Swapping Instances)
+println("\n--- F. Object Swap ---")
+void swapDogs(ref Dog a, ref Dog b) {
+    Dog temp = a
+    a = b
+    b = temp
+}
+
+Dog d1 = new Dog("Alpha")
+Dog d2 = new Dog("Beta")
+println("d1 is " + d1.name + ", d2 is " + d2.name)
+
+swapDogs(d1, d2)
+
+println("d1 is " + d1.name + ", d2 is " + d2.name)
+// Expect: d1 is Beta, d2 is Alpha
+
+
+// G. Tables (Dictionary Update via Ref)
+println("\n--- G. Table Mutation ---")
+void injectKey(ref table t) {
+    // We can modify the table content (standard reference behavior)
+    // AND we could replace 't' entirely if we wanted (ref behavior)
+    t["status"] = "Modified via Ref"
+}
+
+table config = { "status": "Original" }
+println("Table Status before: " + config["status"])
+injectKey(config)
+println("Table Status after:  " + config["status"])
+
+
+// H. Class Field References (Advanced Pointer Arithmetic)
+println("\n--- H. Class Field Reference ---")
+class Counter {
+    public int count = 0
+    public double score = 1.5
+}
+
+void incrementRef(ref int c) {
+    c = c + 1
+}
+
+Counter ctr = new Counter()
+println("Counter before: " + ctr.count)
+
+// This requires calculating the address of 'ctr.count' (base + offset)
+// and passing that calculated address to the function.
+incrementRef(ctr.count) 
+
+println("Counter after:  " + ctr.count)
+// Expect: 1
+
+println("\n=== SUITE COMPLETED ===")

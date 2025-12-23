@@ -1,0 +1,100 @@
+// 1. INPUT
+print("\nEnter a string: ");
+string w = read();
+
+print("Enter array size: ");
+int size = readInt();
+string ar[size];
+
+println("Enter " + size + " words for the array:");
+for (int i = 0; i < size; i++) {
+    print("ar[" + i + "]: ");
+    ar[i] = read();
+}
+
+table tab = {};
+print("\nEnter a table key: ");
+string k = read();
+print("Enter value for " + k + ": ");
+tab[k] = read();
+tab["fixed"] = "unchangeable";
+
+// 2. DISPLAY LOOPS
+println("\n--- Loop Display ---");
+println("Pretty Print Array :- " + ar);
+
+println("\nArray (For-In Value Only):");
+for (val in ar) {
+    println(val);
+}
+
+// --- NEW: Array (Index, Value) ---
+println("\nArray (For-In Index & Value):");
+for (idx, val in ar) {
+    println("[" + idx + "] = " + val);
+}
+
+println("\nArray (For-In Value):");
+for (val in ar) { // represents value for 1 variable
+    println("Element = " + val);
+}
+
+// --- NEW: Table Iteration ---
+println("\nTable (Key, Value):");
+for (key, val in tab) {
+    println("Key: " + key + ", Val: " + val);
+}
+
+println("\nTable (Key):");
+for (key in tab) { // represents key for 1 variable
+    println("Key: " + key);
+}
+
+// --- NEW: String Iteration ---
+// (Requires Compiler Update below to work)
+println("\nString (For-In):");
+if (length(w) > 0) {
+    for (ch in w) {
+        println(ch);
+    }
+}
+
+
+// 3. COMPLEX ASSIGNMENT 
+println("\n--- Complex Assignment ---");
+
+if (length(w) > 3) {
+    println("4th letter of string: " + w[3]);
+    if (length(ar) > 3) {
+        ar[3] = w[3];
+        println("Assigned ar[3] = " + w[3]);
+    }
+} else {
+    println("String too short for index 3 test.");
+}
+
+if (length(ar) > 3) {
+    string valAr = ar[3];
+    tab["fromArray"] = valAr;
+    println("Assigned tab['fromArray'] = " + valAr);
+}
+
+println("Table : " + tab);
+
+println("Length of array : " + length(ar))
+
+// 4. DELETION
+println("\n--- Deletion ---");
+if (length(ar) > 3) {
+    println("Deleting ar[3] (" + ar[3] + ")...");
+    delete(ar[3]);
+    println("Array after delete: " + ar);
+}
+
+println("Length of array : " + length(ar))
+
+println("Deleting tab[" + k + "]...");
+delete(tab[k]);
+println("Table after delete: " + tab);
+
+println("\n=== TEST COMPLETED ===");

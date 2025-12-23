@@ -1,0 +1,331 @@
+println("==== OOP, MEMORY & OPERATOR SUITE ====")
+
+// --- 1. Normal Class Definition ---
+class Vector {
+    double x = 0.0
+    double y = 0.0
+
+    constructor(double x, double y) {
+        this.x = x
+        this.y = y
+    }
+
+    // Operator Overloading (+)
+    operator + (Vector other) {
+        return new Vector(this.x + other.x, this.y + other.y)
+    }
+
+    // Operator Overloading (-)
+    operator - (Vector other) {
+        return new Vector(this.x - other.x, this.y - other.y)
+    }
+
+    // Scalar Multiplication
+    operator * (double scalar) {
+        return new Vector(this.x * scalar, this.y * scalar)
+    }
+
+    void printVec(string label) {
+        println(label + ": " + this.x + ", " + this.y)
+    }
+
+    // Destructor
+    destructor() {
+        println(">> Destructor called for Vector (" + this.x + ", " + this.y + ")")
+    }
+}
+
+// --- 2. Value Semantics Test (Normal Class) ---
+println("\n[1. Normal Class: Value Semantics]")
+
+Vector v1 = new Vector(10.0, 20.0)
+v1.printVec("v1")
+
+println("Creating v2 = v1 (Should Clone)...")
+Vector v2 = v1 
+
+println("Modifying v2.x to 999.0...")
+v2.x = 999.0
+
+v1.printVec("v1 (Should remain 10, 20)") 
+v2.printVec("v2 (Should be 999, 20)")
+
+// --- 3. Operator Overloading Test ---
+println("\n[2. Operator Overloading]")
+
+Vector vSum = v1 + v2
+vSum.printVec("vSum (v1 + v2)")
+
+Vector vSub = v1 - v2
+vSub.printVec("vSub (v1 - v2)")
+
+Vector vScale = v1 * 2.5
+vScale.printVec("vScale (v1 * 2.5)")
+
+// --- 4. Ref Class Definition & Test ---
+println("\n[3. Ref Class: Reference Semantics]")
+
+ref class Manager {
+    int id = 0
+    string name = ""
+
+    constructor(int id, string name) {
+        this.id = id
+        this.name = name
+    }
+}
+
+Manager m1 = new Manager(101, "Alice")
+println("m1: " + m1.name + " (" + m1.id + ")")
+
+println("Creating m2 = m1 (Ref Class)...")
+Manager m2 = m1
+
+println("Modifying m2.name to 'Bob'...")
+m2.name = "Bob"
+
+println("m1 Name (Should be 'Bob'): " + m1.name + " , m2 Name: " + m2.name)
+
+// --- 5. Shared Keyword Test (Force Reference) ---
+println("\n[4. Shared Keyword]")
+
+println("Creating origin Vector(0,0)...")
+Vector origin = new Vector(0.0, 0.0)
+
+println("Creating 'shared Vector refToOrigin = origin'...")
+// 'shared' prevents the default cloning behavior of Normal Classes
+shared Vector refToOrigin = origin 
+
+println("Modifying refToOrigin.x to 55.5...")
+refToOrigin.x = 55.5
+
+origin.printVec("Origin (Should be 55.5, 0.0)")
+
+// --- 6. Destructor Test ---
+println("\n[5. Destructor]")
+println("Deleting vSum...")
+delete(vSum) // Should print the destructor message
+println("vSum deleted.")
+
+// --- 7. Operator Overloading Argument Matching ---
+println("\n[6. Operator Argument Promotion]")
+
+class ScalarMath {
+    double val = 0.0
+    constructor(double v) { this.val = v }
+
+    // Expects 'double', but we will pass 'int' to test implicit promotion
+    operator * (double factor) {
+        return new ScalarMath(this.val * factor)
+    }
+}
+
+ScalarMath s = new ScalarMath(9.3)
+// Pass '2' (int). Should implicitly promote to 2.0 (double)
+ScalarMath s2 = s * 2.0
+
+println("9.3 * 2 (Int promoted to Double): " + s2.val)
+
+// --- 8. Inheritance & Method Overriding ---
+println("\n[7. Inheritance & Overriding]")
+
+class Entity {
+    public string id = "GEN-000"
+    
+    // Base Method
+    public void describe() {
+        println("Entity ID: " + this.id)
+    }
+}
+
+// Player inherits from Entity
+class Player(Entity) {
+    public int level = 1
+    
+    constructor(string id, int lvl) {
+        this.id = id
+        this.level = lvl
+    }
+
+    // Overridden Method
+    public void describe() {
+        println("Player " + this.id + " is Level " + this.level)
+    }
+}
+
+Entity e = new Entity()
+e.describe() // Should print generic message
+
+Player p = new Player("P-101", 5)
+p.describe() // Should print specific Player message
+
+
+// --- 9. Access Specifiers & Getters/Setters ---
+println("\n[8. Access Specifiers (Public/Private/Protected)]")
+
+class Account {
+    // Private: Only accessible inside Account methods
+    private double _balance = 0.0
+    
+    // Protected: Accessible by Derived classes (e.g. Savings)
+    protected string type = "Checking"
+    
+    // Public: Accessible everywhere
+    public string owner = "Anonymous"
+
+    constructor(string owner, double initial) {
+        this.owner = owner
+        this._balance = initial
+    }
+
+    // -- Getter Method --
+    public double getBalance() {
+        return this._balance
+    }
+
+    // -- Setter Method (With Logic) --
+    public void setBalance(double val) {
+        if (val >= 0.0) {
+            this._balance = val
+        } else {
+            println("Error: Negative balance not allowed!")
+        }
+    }
+
+    public void printInfo() {
+        // Can access private _balance here
+        println("Account: " + this.owner + " | Type: " + this.type + " | Bal: " + this._balance)
+    }
+}
+
+Account acc = new Account("Alice", 500.0)
+acc.printInfo()
+
+println("Attempting illegal setBalance(-100)...")
+acc.setBalance(-100.0) // Should print Error logic inside setter
+println("Current Balance (Should be 500): " + acc.getBalance())
+
+println("Setting valid balance 1000.0...")
+acc.setBalance(1000.0)
+println("New Balance: " + acc.getBalance())
+
+// Testing Protected Access via Inheritance
+class Savings(Account) {
+    constructor(string owner) {
+        this.owner = owner
+        // Accessing protected member of parent is allowed
+        this.type = "Savings" 
+    }
+}
+
+Savings save = new Savings("Bob")
+save.printInfo() // Should show type "Savings"
+
+// --- 10. Multiple Inheritance ---
+println("\n[9. Multiple Inheritance]")
+
+class Mamal {
+    public void breathe() { println("Mamal is breathing...") }
+}
+
+class Winged {
+    public void fly() { println("Winged creature is flying...") }
+}
+
+// Inherits from BOTH Mamal and Winged
+class Bat(Mamal, Winged) {
+    public void screech() { println("Bat screeches!") }
+}
+
+Bat b = new Bat()
+b.breathe() // From Mamal
+b.fly()     // From Winged
+b.screech() // Own method
+
+
+// --- 11. Multilevel Inheritance ---
+println("\n[10. Multilevel Inheritance]")
+
+class Vehicle {
+    public void start() { println("Vehicle started.") }
+}
+
+class Car(Vehicle) {
+    public void honk() { println("Car honks.") }
+}
+
+class SportsCar(Car) {
+    public void turbo() { println("Turbo boost engaged!") }
+}
+
+SportsCar ferrari = new SportsCar()
+ferrari.start() // From Vehicle (Grandparent)
+ferrari.honk()  // From Car (Parent)
+ferrari.turbo() // Own method
+
+
+// --- 12. Reference Inheritance & Shared ---
+println("\n[11. Inheritance with Ref Class & Shared]")
+
+// A. Using 'ref class' inheritance
+ref class Node {
+    public int data = 0
+}
+
+ref class ListNode(Node) {
+    public Node? next = null
+}
+
+println("Creating Linked List (Ref Class Inheritance)...")
+ListNode head = new ListNode()
+head.data = 10
+
+ListNode second = new ListNode()
+second.data = 20
+
+head.next = second // Pointing to another ref object
+
+println("Head: " + head.data + ", Next: " + head.next.data)
+
+// Modify 'second' via 'head.next' reference
+println("Modifying head.next.data to 99...")
+// Cast needed if your type system is strict, otherwise implicit
+head.next.data = 99 
+
+println("Second Node Data (Should be 99): " + second.data)
+
+
+// B. Using 'shared' on Derived Class
+println("\n[Shared Keyword on Derived Class]")
+
+class Shape {
+    public double area = 0.0
+}
+
+class Square(Shape) {
+    public double side = 0.0
+}
+
+Square sq1 = new Square()
+sq1.side = 5.0
+sq1.area = 25.0
+
+println("Creating 'shared Square sqRef = sq1'...")
+shared Square sqRef = sq1
+
+println("Creating 'Square sq2 = sq1'...")
+Square sq2 = sq1
+
+println("Modifying sqRef.area to 100.0...")
+sqRef.area = 100.0
+
+println("Original sq1 Area (Should be 100): " + sq1.area)
+println("Original sq2 Area (Should be 25): " + sq2.area)
+println("Shared sqRef Area (Should be 100): " + sqRef.area)
+
+// However, if we alias the SHARED variable...
+shared Square aliasRef = sqRef
+aliasRef.area = 200.0
+println("Shared sqRef Area after Alias mod (Should be 200): " + sqRef.area)
+
+println("=== SUITE COMPLETED ===")

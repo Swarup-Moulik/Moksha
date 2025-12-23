@@ -1,0 +1,132 @@
+println("==== CONDITIONALS & TRUTHINESS SUITE ====")
+
+// ---------------------------------------------------------
+// 1. IF / ELSE STATEMENT
+// ---------------------------------------------------------
+println("\n[1. IF / ELSE Logic]")
+
+// A. Boolean Literals
+if (true) { println("if(true): PASS") } else { println("if(true): FAIL") }
+if (false) { println("if(false): FAIL") } else { println("if(false): PASS") }
+
+// B. Integer Literals (C-Style: Non-zero is true, 0 is false)
+if (1) { println("if(1): PASS") } else { println("if(1): FAIL") }
+if (0) { println("if(0): FAIL") } else { println("if(0): PASS") }
+if (-42) { println("if(-42): PASS") } else { println("if(-42): FAIL") }
+
+// C. Variables
+boolean bVar = true
+int iVar = 100
+int zVar = 0
+
+if (bVar) { println("if(bool var): PASS") }
+if (iVar) { println("if(int var): PASS") }
+if (zVar) { println("if(zero var): FAIL") } else { println("if(zero var): PASS") }
+
+// ---------------------------------------------------------
+// 2. WHILE LOOP
+// ---------------------------------------------------------
+println("\n[2. WHILE LOOP]")
+
+int count = 3
+println("Counting down 3 to 1 using while(int):")
+while (count) {
+    println(`  count = ${count}`)
+    count--
+}
+
+println("Testing while(false):")
+while (false) {
+    println("FAIL: Should not execute")
+}
+println("PASS: Loop skipped")
+
+// ---------------------------------------------------------
+// 3. DO-WHILE LOOP
+// ---------------------------------------------------------
+println("\n[3. DO-WHILE LOOP]")
+
+println("Do-While (false condition):")
+do {
+    println("  PASS: Body executed once")
+} while (false)
+
+int d = 2
+println("Do-While using integer logic (2 to 1):")
+do {
+    println(`  d = ${d}`)
+    d--
+} while (d)
+
+// ---------------------------------------------------------
+// 4. FOR LOOP
+// ---------------------------------------------------------
+println("\n[4. FOR LOOP]")
+
+println("Standard loop (i < 3):")
+for (int i = 0; i < 3; i++) {
+    println(`  i = ${i}`)
+}
+
+println("Loop using integer as condition (j-- until 0):")
+for (int j = 2; j; j--) {
+    println(`  j = ${j}`)
+}
+
+// ---------------------------------------------------------
+// 5. IN OPERATOR (Collection Membership)
+// ---------------------------------------------------------
+println("\n[5. IN OPERATOR]")
+
+int[] nums = [10, 20, 30]
+int val = 20
+int missing = 99
+
+if (val in nums) {
+    println(`Found ${val} in array: PASS`)
+} else {
+    println(`Did not find ${val} in array: FAIL`)
+}
+
+if (10 in nums) {
+    println("Found 10 in array: PASS")
+} else {
+    println("Did not find 10 in array: FAIL")
+}
+
+if (missing in nums) {
+    println(`Found ${missing} in array: FAIL`)
+} else {
+    println(`Did not find ${missing} in array: PASS`)
+}
+
+// Table Keys
+table user = {"id": 1, "name": "Moksha"}
+if ("name" in user) {
+    println("Key 'name' found in table: PASS")
+} else {
+    println("Key 'name' not found: FAIL")
+}
+
+// ---------------------------------------------------------
+// 6. STRING TRUTHINESS
+// ---------------------------------------------------------
+println("\n[6. STRING TRUTHINESS]")
+
+string sFull = "Hello"
+string sEmpty = ""
+
+if (sFull) {
+    println("if('Hello'): PASS")
+} else {
+    println("if('Hello'): FAIL")
+}
+
+// Logic: Empty string should be FALSE (like JS/Python), not True (C-style pointer)
+if (sEmpty) {
+    println("if(''): FAIL (Should be false)")
+} else {
+    println("if(''): PASS")
+}
+
+println("Done.")

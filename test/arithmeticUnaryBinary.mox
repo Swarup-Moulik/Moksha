@@ -1,0 +1,195 @@
+println("==== ARITHMETIC TEST SUITE ====");
+
+// --- 1. Integer Arithmetic ---
+println("\n[Integer Operations]");
+int a = 10;
+int b = 3;
+
+print("10 + 3 = ");
+println(a + b);     // Expect: 13
+
+print("10 - 3 = ");
+println(a - b);     // Expect: 7
+
+print("10 * 3 = ");
+println(a * b);     // Expect: 30
+
+print("10 / 3 = ");
+println(int(a / b)); // Expect: 3 (Explicit Integer Cast)
+
+print("10 % 3 = ");
+println(a % b);     // Expect: 1
+
+// --- 2. Floating Point Arithmetic ---
+println("\n[Double Operations]");
+double x = 10.5;
+double y = 2.5;
+
+print("10.5 + 2.5 = ");
+println(x + y);     // Expect: 13.000000
+
+print("10.5 - 2.5 = ");
+println(x - y);     // Expect: 8.000000
+
+print("10.5 * 2.5 = ");
+println(x * 2.0);   // Expect: 21.000000
+
+print("10.5 / 2.5 = ");
+println(x / y);     // Expect: 4.200000
+
+// --- 3. Implicit Type Casting (Promotion) ---
+println("\n[Implicit Type Casting]");
+int i = 5;
+double d = 2.5;
+
+print("5 (int) + 2.5 (double) = ");
+println(i + d);     // Expect: 7.500000
+
+print("2.5 (double) - 5 (int) = ");
+println(d - i);     // Expect: -2.500000
+
+print("5 (int) * 2.5 (double) = ");
+println(i * d);     // Expect: 12.500000
+
+// Assignment Promotion
+double promoted = 10;
+print("Assigned 10 (int) to double var: ");
+println(promoted);  // Expect: 10.000000
+
+// --- 4. Bitwise Operations ---
+println("\n[Bitwise Operations]");
+int bitA = 5; // Binary: 0101
+int bitB = 3; // Binary: 0011
+
+print("5 & 3 (0101 & 0011) = ");
+println(bitA & bitB); // Expect: 1 (0001)
+
+print("5 | 3 (0101 | 0011) = ");
+println(bitA | bitB); // Expect: 7 (0111)
+
+print("5 ^ 3 (0101 ^ 0011) = ");
+println(bitA ^ bitB); // Expect: 6 (0110)
+
+// --- 5. Complex Expression ---
+println("\n[Complex Expression Precedence]");
+int complex = (a + 2) * b + (20 / 4);
+print("(10 + 2) * 3 + (20 / 4) = ");
+println(complex);   // Expect: 41
+
+
+println("==== ADVANCED MATH & OPERATOR SUITE ====");
+
+// --- 1. Division Types ---
+println("\n[Division Types]");
+
+// A. Standard Division (/)
+print("5 / 2 (Standard): ");
+println(5 / 2);      // Expect: 2.5
+
+print("10.0 / 4.0 (Standard): ");
+println(10.0 / 4.0); // Expect: 2.5
+
+// B. Integer Division (Explicit Cast)
+print("int(5 / 2) (Integer): ");
+println(int(5 / 2));     // Expect: 2
+
+print("int(10.0 / 4.0) (Integer): ");
+println(int(10.0 / 4.0)); // Expect: 2
+
+// --- 2. Missing Arithmetic Operators ---
+println("\n[Power Operator]");
+int base = 2;
+int exp = 3;
+print("2 ** 3 = ");
+println(base ** exp); // Expect: 8
+
+// --- 3. Missing Bitwise Operators ---
+println("\n[Shift & Not Operators]");
+int val = 8; // Binary: 0000 1000
+
+print("8 << 1 (Left Shift) = ");
+println(val << 1);    // Expect: 16
+
+print("8 >> 2 (Right Shift) = ");
+println(val >> 2);    // Expect: 2
+
+int bitNot = 0;
+print("~0 (Bitwise Not) = ");
+println(~bitNot);     // Expect: -1
+
+// --- 4. Implicit Type Casting (Mixed Types) ---
+println("\n[Implicit Casting]");
+int i2 = 10;
+double d2 = 2.5;
+
+print("10 + 2.5 = ");
+println(i2 + d2);     // Expect: 12.5
+
+print("int(10 / 2.5) = ");
+println(int(i2 / d2));    // Expect: 4
+
+
+println("==== UNARY INCREMENT/DECREMENT SUITE ====");
+
+// --- 1. Basic Prefix vs Postfix (Integer) ---
+println("\n[Integer Prefix/Postfix]");
+int a2 = 5;
+print("Initial a2: "); println(a2); // 5
+
+print("Postfix (a2++): ");
+println(a2++); // Expect: 5
+print("After Postfix: ");
+println(a2);   // Expect: 6
+
+print("Prefix (++a2): ");
+println(++a2); // Expect: 7
+
+int b2 = 5;
+print("Postfix (b2--): ");
+println(b2--); // Expect: 5
+print("After Postfix: ");
+println(b2);   // Expect: 4
+
+print("Prefix (--b2): ");
+println(--b2); // Expect: 3
+
+// --- 2. Floating Point Support ---
+println("\n[Double Prefix/Postfix]");
+double d3 = 2.5;
+print("Initial d3: "); println(d3); // 2.5
+
+d3++; 
+print("After d3++: "); 
+println(d3); // Expect: 3.5
+
+--d3;
+print("After --d3: "); 
+println(d3); // Expect: 2.5
+
+// --- 3. Complex Expressions ---
+println("\n[Expressions]");
+int x2 = 10;
+int y2 = 5;
+
+// Calculation: (10 * 6) + 11 = 71
+int res = (x2 * y2++) + ++x2;
+
+print("Result: ");
+println(res); // Expect: 61
+print("Final x2: "); println(x2); // Expect: 11
+print("Final y2: "); println(y2); // Expect: 6
+
+// --- 4. Object Field Increment ---
+println("\n[Object Field Increment]");
+class Counter {
+    public int count = 0;
+}
+
+Counter c = new Counter();
+c.count++;
+print("c.count after ++: ");
+println(c.count); // Expect: 1
+
+++c.count;
+print("c.count after prefix ++: ");
+println(c.count); // Expect: 2

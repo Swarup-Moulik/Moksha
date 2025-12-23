@@ -1,0 +1,63 @@
+Phase 1: The "Freestanding" Build System
+Goal: Stop relying on C++ iostream and vector so code can run on bare metal.
+
+Object File Emitter: Add the emitObjectFile function (provided earlier) to CodeGenerator.cpp or main.cpp. 
+This allows moksha -c kernel.mox to output kernel.o.
+
+Split the Runtime:
+
+Keep runtime.cpp for high-level user apps (Linux/Windows).
+
+Create kernel_runtime.cpp: A stripped-down version with ZERO external includes. Implement your own memcpy, memset, and strlen in raw C or Moksha.
+
+Compiler Flag: Add a --freestanding flag to your compiler. When active, it must disable features that require the heavy runtime (GC, new Class with default malloc, Exceptions).
+
+
+
+Phase 2: Booting Bare Metal
+Goal: Get "Hello World" on a screen without Windows/Linux running underneath.
+
+Boot Stub (boot.s): Write a 20-line Assembly file implementing the Multiboot Header. This is what GRUB looks for to load your OS.
+
+Linker Script (linker.ld): Write a script to tell the linker to put your code at physical address 1MB (standard for kernels).
+
+Kernel Entry: Write kernel.mox with a main() function that accepts the Multiboot struct pointer.
+
+VGA Driver: Re-use your struct VGAChar logic to write "Moksha OS" to video memory 0xB8000.
+
+
+
+Phase 3: Hardware Control (The "Low Level" Features)
+Goal: Talk to the CPU and Peripherals. You can't do this with just structs.
+
+Inline Assembly / Intrinsics: You need to add support for specific CPU instructions.
+
+Option A: Add asm { "mov eax, 1" } support to your Parser/CodeGen.
+
+Option B (Easier): Add built-in functions like native_outb(port, value) and native_inb(port) in CodeGenerator.cpp mapped to LLVM inline asm.
+
+Interrupt Handling: Implement an IDT (Interrupt Descriptor Table) using Moksha structs. This lets you handle keyboard presses and crashes.
+
+
+
+Phase 4: Memory Management (The "High Level" Return)
+Goal: Re-enable new Class(), Strings, and Vectors inside your Kernel.
+
+Physical Memory Manager (PMM): Read the memory map from GRUB. Write a bitmap allocator to track which RAM pages are free.
+
+Kernel Heap: Write k_malloc and k_free using your PMM.
+
+Reconnect Runtime: Link your kernel_runtime.cpp's allocation functions to k_malloc.
+
+Result: You can now use string s = "Hello" + " World" inside your OS kernel!
+
+
+
+Phase 5: User Space
+Goal: Run Moksha scripts inside Moksha OS.
+
+Virtual Memory (Paging): Use your structs to write to the CPU's Page Tables (CR3 register). Protect Kernel memory from User memory.
+
+Context Switching: Save/Restore CPU registers to run multiple programs (Multitasking).
+
+System Calls: Create a bridge (e.g., int 0x80) so user programs can call print() and the Kernel handles the VGA driver.

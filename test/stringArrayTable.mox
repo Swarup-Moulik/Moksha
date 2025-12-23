@@ -1,0 +1,163 @@
+void testStrings() {
+    println("TEST: Strings (Any & Strict)");
+
+    // Strict String
+    string strictStr = "Hello";
+    
+    // Dynamic String (Any)
+    any dynStr = "World";
+
+    // 1. Concatenation (Strict + Any)
+    // The runtime handles unboxing the 'any' type automatically
+    string combined = strictStr + " " + dynStr;
+    println("Concat Result: " + combined); 
+
+    // 2. Escape Sequences
+    string escaped = "Line1\n\tLine2 (Tabbed)\n\"Quote\"";
+    println("Escaped String:\n" + escaped);
+
+    // 3. Interpolation (Template Strings)
+    int count = 42;
+    // Embed variables and expressions inside backticks
+    string template = `Count is ${count}, Next is ${count + 1}`;
+    println("Template Result: " + template);
+    
+    // Nested Template
+    string nested = `Outer { ${ `Inner ${strictStr}` } }`;
+    println("Nested Template: " + nested);
+}
+
+void testTables() {
+    println("TEST: Tables");
+
+    // 1. Creation
+    table config = {};
+
+    // 2. Keys 
+    any keyId = "id";
+    any keyName = "name";
+    any keyActive = "isActive";
+
+    // 3. Assignment
+    config[keyId] = 101;
+    config[keyName] = "MokshaLang";
+    config[keyActive] = true;
+
+    // 4. Mixed Keys
+    any keyLevel = 5; 
+    config[keyLevel] = "Level 5 Access";
+
+    // 5. Access
+    println("ID: " + config[keyId]);
+    println("Name: " + config[keyName]);
+    println("Level 5: " + config[keyLevel]);
+
+    // 6. Delete Verification
+    println("Value before delete: " + config[keyActive]); // Should print "true"
+    
+    delete(config[keyActive]); 
+    
+    // If deletion works, accessing the key again should return null
+    println("Value after delete: " + config[keyActive]); 
+
+    // 7. Add New Key-Value Pair
+    any keyNew = "status";
+    config[keyNew] = "Running";
+    println("Status: " + config[keyNew]);
+
+    // 8. Table Literal
+    println("\n--- Table Literal ---");
+    any k1 = "x";
+    any k2 = "y";
+    
+    table point = {
+        k1: 10,
+        k2: 20
+    };
+    
+    println(`Point: (${point[k1]}, ${point[k2]})`);
+}
+
+void testArrays() {
+    println("=== 1. Basic Fixed-Size Arrays ===");
+    
+    // int arr[5] -> Creates [0, 0, 0, 0, 0]
+    int arr[5]; 
+    println("Size of arr: " + length(arr));
+    println("Default value: " + arr[0]);
+    
+    arr[0] = 100;
+    arr[4] = 500;
+    println("Modified: " + arr[0] + ", " + arr[4]);
+
+    println("\n=== 2. Different Data Types (Fixed Size) ===");
+    
+    string sArr[3]; // ["", "", ""]
+    sArr[0] = "Moksha";
+    println("String array: " + sArr[0]);
+    
+    boolean bArr[2]; // [false, false]
+    bArr[1] = true;
+    println("Bool array: " + bArr[0] + ", " + bArr[1]);
+
+    println("\n=== 3. 2D Fixed Arrays (Matrix) ===");
+    
+    // 3x3 Matrix
+    int matrix[3][3];
+    
+    matrix[0][0] = 1;
+    matrix[1][1] = 5;
+    matrix[2][2] = 9;
+    
+    println("Diagonal: " + matrix[0][0] + " " + matrix[1][1] + " " + matrix[2][2]);
+    
+    // Verify default zero
+    println("Off-diagonal (should be 0): " + matrix[0][1]);
+
+    println("\n=== 4. Dynamic Allocation Logic ===");
+    
+    int size = 4;
+    double dyn[size]; // Variable size allocation
+    dyn[0] = 3.14;
+    println("Dynamic sized array length: " + length(dyn));
+    println("Value: " + dyn[0]);
+
+    println("\n=== 5. Mixed Initialization ===");
+    
+    // Literal Initialization (Dynamic size inferred)
+    int[] vec = [10, 20, 30];
+    println("Vec length: " + length(vec));
+    
+    // Type checking (This should be allowed by semantic analyzer)
+    any[] generic = [1, "two", 3.0];
+    println("Generic: " + generic[1]);
+
+    any[4] gen = [1, "two", 3.0, true];
+    println("Generic: " + gen[1]);
+
+    println("\n=== 6. Typed Literal Arrays (Double, Bool, String) ===");
+
+    // Double Array Literal
+    double[] prices = [10.5, 20.99, 5.5];
+    println("Double Array (prices[1]): " + prices[1]);
+    
+    // Boolean Array Literal
+    boolean[] flags = [true, false, true];
+    println("Boolean Array (flags[0]): " + flags[0]);
+
+    // String Array Literal
+    string[] names = ["Alice", "Bob", "Charlie"];
+    println("String Array (names[2]): " + names[2]);
+    println("String Array Length: " + length(names));
+
+    println("\n=== 7. 2D Any Arrays ===");
+    // Mixed types in a 2D structure: [Int, String], [Bool, Double]
+    any[][] grid = [[1, "a"], [true, 2.5]];
+    println("Grid[0][1] (String): " + grid[0][1]);
+    println("Grid[1][0] (Bool): " + grid[1][0]);
+}
+
+testStrings();
+testTables();
+testArrays();
+println("TEST SUITE COMPLETED SUCCESSFULLY");

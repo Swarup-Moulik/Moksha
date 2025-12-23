@@ -1,0 +1,200 @@
+println("==== DATA TYPES & NULLABILITY SUITE ====")
+
+// --- 1. Primitive Types ---
+println("\n[Primitives]")
+int num = 6967
+double pi = 3.14159
+boolean isCool = true
+string msg = "Swarup Moulik"
+
+print("Int: "); println(num)
+print("Double: "); println(pi)
+print("Boolean: "); println(isCool)
+print("String: "); println(msg)
+
+// --- 2. Nullable Types (type?) ---
+println("\n[Nullability]")
+
+// A. Nullable String
+string? nullableStr = null
+print("string? (initialized to null): ")
+println(nullableStr)
+
+nullableStr = "I am safe now"
+print("string? (assigned value): ")
+println(nullableStr)
+
+// B. Nullable Int
+int? nullableInt = null
+print("int? (initialized to null): ")
+println(nullableInt)
+
+nullableInt = 67
+print("int? (assigned value): ")
+println(nullableInt)
+
+// C. Nullable Double (NEW)
+double? nullableDouble = null
+print("double? (initialized to null): ")
+println(nullableDouble)
+
+nullableDouble = 99.99
+print("double? (assigned value): ")
+println(nullableDouble)
+
+// D. Nullable Boolean (NEW)
+boolean? nullableBool = null
+print("boolean? (initialized to null): ")
+println(nullableBool)
+
+nullableBool = true
+print("boolean? (assigned true): ")
+println(nullableBool)
+
+// --- 3. Any Type (Dynamic) ---
+println("\n[Any Type]")
+any dyn = 10
+print("Any holding Int: "); println(dyn)
+
+dyn = "Changing type..."
+print("Any holding String: "); println(dyn)
+
+dyn = null
+print("Any holding Null: "); println(dyn)
+
+// --- 4. Tables (Dictionaries) ---
+println("\n[Table / Dictionary]")
+
+table user = {
+    "id": 101,
+    "username": "MokshaDev",
+    "isAdmin": true
+}
+
+print("Table Structure: ")
+println(user) 
+
+// --- 5. Null Safety Operators ---
+println("\n[Null Safety Operators]")
+
+// A. Null Coalescing (??)
+println("A. Null Coalescing (??)")
+
+string? maybeUser = null
+string displayName = maybeUser ?? "Guest"
+print("User is null, fallback to: "); println(displayName)
+
+maybeUser = "Admin"
+displayName = maybeUser ?? "Guest"
+print("User is set, uses: "); println(displayName)
+
+int? maybeScore = null
+int finalScore = maybeScore ?? 0
+print("Score is null, fallback to: "); println(finalScore)
+
+// B. Optional Chaining (?.)
+println("\nB. Optional Chaining (?.)")
+
+table? configObj = null
+
+// 1. Safe Property Access
+print("1. Null Object Property (configObj?.port): ")
+println(configObj?.port) 
+
+// 2. Safe Index Access
+print("2. Null Object Index (configObj?['server']): ")
+println(configObj?.["server"])
+
+// 3. Valid Object
+configObj = { "port": 8080, "server": "localhost" }
+print("3. Valid Object Access: ")
+println(configObj?.port + " " + configObj?.["server"])
+
+// C. Optional Method Calls (NEW)
+println("\nC. Optional Method Calls (?.())")
+
+// Class for testing methods
+class Logger {
+    public void log(string msg) {
+        println("Logger: " + msg);
+    }
+}
+
+Logger? myLogger = null
+
+print("1. Call on null object (myLogger?.log): ")
+// This should do nothing and return null/void, NOT crash
+myLogger?.log("This should not print") 
+println("(No output above means success)")
+
+myLogger = new Logger()
+print("2. Call on valid object: ")
+myLogger?.log("This SHOULD print")
+
+// --- 6. Template Literals ---
+println("\n[Template Literals]")
+string name = "Moksha"
+int version = 1
+double speed = 99.9
+println(`Language: ${name} v${version} running at ${speed}% speed`)
+
+// --- 2. Explicit Primitive Casting ---
+println("\n[2. Explicit Primitive Casting]")
+
+double precise = 99.99
+int truncated = int(precise)
+println("int(99.99) = " + truncated) // Should be 99
+
+int whole = 50
+double floaty = double(whole)
+println("double(50) = " + floaty) // Should be 50.000000
+
+// --- 3. Implicit Boxing (Primitive -> Any) ---
+println("\n[3. Implicit Boxing to 'any']")
+
+any boxInt = 123
+any boxDouble = 45.67
+any boxBool = true
+
+println("Boxed Int: " + boxInt)
+println("Boxed Double: " + boxDouble)
+println("Boxed Bool: " + boxBool)
+
+// --- 4. Explicit Unboxing (Any -> Primitive) ---
+println("\n[4. Explicit Unboxing]")
+
+// The compiler relies on the cast to know which unbox function to call
+int unboxI = int(boxInt)
+double unboxD = double(boxDouble)
+boolean unboxB = boolean(boxBool)
+
+println("Unboxed Int + 1: " + (unboxI + 1))
+println("Unboxed Double + 0.33: " + (unboxD + 0.33))
+println("Unboxed Boolean: " + unboxB)
+
+println("==== CONVERSION SHOWCASE ====")
+
+// 1. ASCII Conversion (Using Casts)
+int code = 66
+string charStr = string(code)  // Calls moksha_int_to_ascii
+println("ASCII 66 -> " + charStr) // Output: B
+
+string letter = "B"
+int backToCode = int(letter)   // Calls moksha_unbox_int (ASCII branch)
+println("Letter B -> " + backToCode) // Output: 66
+
+// 2. Text Parsing (Using Casts)
+string piStr = "3.14159"
+double pit = double(piStr)      // Calls moksha_unbox_double (Parse branch)
+println("Parsed Double: " + (pit + 0.00001)) // Prove it's a number
+
+string numStr = "100"
+int numt = int(numStr)          // Calls moksha_unbox_int (Parse branch)
+println("Parsed Int: " + (numt + 1))
+
+// 3. Number Formatting (Using Concatenation)
+int x = 500
+string s = "" + x              // Calls moksha_int_to_str (Implicit)
+println("Formatted Number: " + s)
+
+println("\n=== TEST COMPLETED ===")
