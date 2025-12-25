@@ -17,15 +17,18 @@
 namespace Moksha
 {
 
-    // --- Global Compiler State ---
-    static std::map<std::string, std::map<std::string, int>> classFieldIndices;
-    static std::map<std::string, std::vector<llvm::Type *>> classLayouts;
+    // --- Global Compiler State (Static Helpers) ---
+    // Note: classFieldIndices and classLayouts are MEMBERS of CodeGenerator, so they are not here.
     static std::map<std::string, FunctionDefinitionNode *> globalFunctionDefs;
     static std::map<std::string, std::vector<VariableDeclarationNode *>> classFieldInitializers;
     static std::map<std::string, std::map<std::string, int>> scopedEnumConstants;
+
+    // Structs are currently tracked globally per translation unit (simplifies getLLVMType)
     static std::map<std::string, llvm::StructType *> structLLVMTypes;
     static std::map<std::string, std::map<std::string, int>> structFieldIndices;
     static std::map<std::string, bool> structIsUnion;
+
+    // Definition of the static member from header
     std::map<std::string, std::map<std::string, CodeGenerator::BitfieldMeta>> CodeGenerator::structBitfields;
 
     // --- C-Runtime Declarations ---
@@ -33,29 +36,18 @@ namespace Moksha
     {
         llvm::IRBuilder<> builder(context);
 
-        // Standard
-        llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, true),
-                               llvm::Function::ExternalLinkage, "printf", module);
-        llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getInt64Ty()}, false),
-                               llvm::Function::ExternalLinkage, "malloc", module);
-        llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getInt64Ty(), builder.getInt64Ty()}, false),
-                               llvm::Function::ExternalLinkage, "calloc", module);
+        // Standard C Library
+        llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, true), llvm::Function::ExternalLinkage, "printf", module);
+        llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getInt64Ty()}, false), llvm::Function::ExternalLinkage, "malloc", module);
+        llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getInt64Ty(), builder.getInt64Ty()}, false), llvm::Function::ExternalLinkage, "calloc", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_free", module);
-
-        llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getPtrTy()}, false),
-                               llvm::Function::ExternalLinkage, "strcpy", module);
-        llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()}, false),
-                               llvm::Function::ExternalLinkage, "memcpy", module);
-        llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getInt32Ty(), builder.getInt64Ty()}, false),
-                               llvm::Function::ExternalLinkage, "memset", module);
-        llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()}, true),
-                               llvm::Function::ExternalLinkage, "sprintf", module);
-        llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()}, true),
-                               llvm::Function::ExternalLinkage, "fprintf", module);
-        llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, false),
-                               llvm::Function::ExternalLinkage, "strlen", module);
-        llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, false),
-                               llvm::Function::ExternalLinkage, "puts", module);
+        llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "strcpy", module);
+        llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()}, false), llvm::Function::ExternalLinkage, "memcpy", module);
+        llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getInt32Ty(), builder.getInt64Ty()}, false), llvm::Function::ExternalLinkage, "memset", module);
+        llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "strlen", module);
+        llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "puts", module);
+        llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()}, true), llvm::Function::ExternalLinkage, "sprintf", module);
+        llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "strcmp", module);
 
         // Boxing / Unboxing
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getInt32Ty()}, false), llvm::Function::ExternalLinkage, "moksha_box_int", module);
@@ -74,6 +66,7 @@ namespace Moksha
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getInt32Ty()}, false), llvm::Function::ExternalLinkage, "moksha_int_to_str", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getInt32Ty()}, false), llvm::Function::ExternalLinkage, "moksha_int_to_ascii", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getDoubleTy()}, false), llvm::Function::ExternalLinkage, "moksha_double_to_str", module);
+        llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_ptr_to_str", module);
 
         // Arrays & Tables
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getInt32Ty()}, false), llvm::Function::ExternalLinkage, "moksha_alloc_array", module);
@@ -84,6 +77,7 @@ namespace Moksha
         llvm::Function::Create(llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy(), builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_table_delete", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_table_keys", module);
 
+        llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getInt32Ty()}, false), llvm::Function::ExternalLinkage, "moksha_array_get_unsafe", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getInt32Ty()}, false), llvm::Function::ExternalLinkage, "moksha_array_get", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy(), builder.getInt32Ty(), builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_array_set", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_array_push_val", module);
@@ -94,6 +88,7 @@ namespace Moksha
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_string_concat", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_get_length", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getInt32Ty()}, false), llvm::Function::ExternalLinkage, "moksha_string_get_char", module);
+        llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_strlen", module);
 
         // Inputs
         llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {}, false), llvm::Function::ExternalLinkage, "moksha_read_int", module);
@@ -102,14 +97,11 @@ namespace Moksha
         llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {}, false), llvm::Function::ExternalLinkage, "moksha_read_bool", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {}, false), llvm::Function::ExternalLinkage, "moksha_read_string", module);
 
-        // Misc
+        // Runtime Exception & Closures
         llvm::Function::Create(llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_throw_exception", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getInt32Ty(), builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_create_closure", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_get_closure_env", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_get_closure_func", module);
-        llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_strlen", module);
-        llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy(), builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "strcmp", module);
-        llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_ptr_to_str", module);
     }
 
     // --- getLLVMType Helper ---
@@ -117,6 +109,7 @@ namespace Moksha
     {
         if (!resolvedType)
             return llvm::PointerType::get(context, 0);
+
         if (auto arrType = std::dynamic_pointer_cast<ArrayType>(resolvedType))
         {
             if (arrType->isFixedSize)
@@ -127,6 +120,7 @@ namespace Moksha
         }
         if (resolvedType->isNullable)
             return llvm::PointerType::get(context, 0);
+
         if (std::dynamic_pointer_cast<IntType>(resolvedType))
             return llvm::Type::getInt32Ty(context);
         if (std::dynamic_pointer_cast<DoubleType>(resolvedType))
@@ -143,13 +137,13 @@ namespace Moksha
             return llvm::Type::getInt64Ty(context);
         if (std::dynamic_pointer_cast<FloatType>(resolvedType))
             return llvm::Type::getFloatTy(context);
+
         if (auto structType = std::dynamic_pointer_cast<StructType>(resolvedType))
         {
             if (structLLVMTypes.count(structType->structName))
             {
                 return structLLVMTypes[structType->structName];
             }
-            // If not found (should be caught by SemanticAnalyzer), default to void* or error
             return llvm::PointerType::getUnqual(context);
         }
         return llvm::PointerType::get(context, 0); // Default to ptr
@@ -176,20 +170,16 @@ namespace Moksha
         return "";
     }
 
-    // Helper to convert Moksha FunctionType -> LLVM FunctionType
     llvm::FunctionType *CodeGenerator::getLLVMFunctionProto(std::shared_ptr<FunctionType> mokshaType)
     {
         llvm::Type *retType = getLLVMType(mokshaType->returnType, context, module.get());
         std::vector<llvm::Type *> args;
-
         // Add implicit 'this' (void*)
         args.push_back(builder.getPtrTy());
-
         for (auto &p : mokshaType->parameterTypes)
         {
             args.push_back(getLLVMType(p, context, module.get()));
         }
-
         return llvm::FunctionType::get(retType, args, mokshaType->isVariadic);
     }
 
@@ -237,10 +227,7 @@ namespace Moksha
 
         // Loop Body
         builder.SetInsertPoint(bodyBB);
-
-        // Recursive call
         llvm::Value *innerArr = generateArrayAllocation(dims, dimIndex + 1, leafDefault);
-
         builder.CreateCall(module->getFunction("moksha_array_push_val"), {outerArr, innerArr});
 
         llvm::Value *nextIdx = builder.CreateAdd(currIdx, builder.getInt32(1));
@@ -544,6 +531,8 @@ namespace Moksha
         module = std::make_unique<llvm::Module>("moksha_module", context);
         setupMokshaRuntime(module.get(), context);
         setupGlobalExceptionState();
+        fnArrayGetUnsafe = module->getFunction("moksha_array_get_unsafe");
+        fnStringGetChar = module->getFunction("moksha_string_get_char");
     }
 
     void CodeGenerator::setupGlobalExceptionState()
@@ -551,12 +540,10 @@ namespace Moksha
         module->getOrInsertGlobal("__exception_flag", builder.getInt32Ty());
         globalExceptionFlag = module->getNamedGlobal("__exception_flag");
         globalExceptionFlag->setLinkage(llvm::GlobalValue::ExternalLinkage);
-        globalExceptionFlag->setInitializer(builder.getInt32(0));
 
         module->getOrInsertGlobal("__exception_val", builder.getPtrTy());
         globalExceptionVal = module->getNamedGlobal("__exception_val");
         globalExceptionVal->setLinkage(llvm::GlobalValue::ExternalLinkage);
-        globalExceptionVal->setInitializer(llvm::ConstantPointerNull::get(builder.getPtrTy()));
     }
 
     void CodeGenerator::generate(const std::vector<std::unique_ptr<StatementNode>> &statements)
@@ -1431,10 +1418,29 @@ namespace Moksha
         auto oldNamedValues = namedValues;
         auto oldVariableTypes = variableTypes;
 
+        std::vector<std::string> localsToFree;
+
         for (auto &s : node.statements)
         {
             if (s)
             {
+                // Identify Reference Types declared in this scope
+                if (auto varDecl = dynamic_cast<VariableDeclarationNode *>(s.get()))
+                {
+                    std::shared_ptr<Type> t = varDecl->type->resolvedType;
+                    // Check if type is a Heap Object (Array, Table, String, or Class)
+                    bool isRef = std::dynamic_pointer_cast<ArrayType>(t) ||
+                                 std::dynamic_pointer_cast<TableType>(t) ||
+                                 std::dynamic_pointer_cast<StringType>(t) ||
+                                 std::dynamic_pointer_cast<ClassInstanceType>(t);
+
+                    // Externs and Shared vars have different lifecycles
+                    if (isRef && !varDecl->isExtern && !varDecl->isShared)
+                    {
+                        localsToFree.push_back(varDecl->name.lexeme);
+                    }
+                }
+
                 s->accept(*this);
 
                 // [NEW] FAIL-FAST CHECK
@@ -1468,6 +1474,25 @@ namespace Moksha
 
                     // Continue Path
                     builder.SetInsertPoint(nextStmtBB);
+                }
+            }
+        }
+
+        llvm::Function *freeFunc = module->getFunction("moksha_free");
+
+        for (auto it = localsToFree.rbegin(); it != localsToFree.rend(); ++it)
+        {
+            std::string name = *it;
+            if (namedValues.count(name))
+            {
+                llvm::Value *stackSlot = namedValues[name];
+                if (stackSlot->getType()->isPointerTy())
+                {
+                    // Assuming opaque pointers (LLVM 15+), simply load ptr
+                    llvm::Value *heapPtr = builder.CreateLoad(builder.getPtrTy(), stackSlot);
+
+                    // Call moksha_free(heapPtr)
+                    builder.CreateCall(freeFunc, {heapPtr});
                 }
             }
         }
@@ -2100,6 +2125,57 @@ namespace Moksha
         node.right->accept(*this);
         llvm::Value *R = lastValue;
 
+        if (auto *constL = llvm::dyn_cast<llvm::ConstantInt>(L))
+        {
+            if (auto *constR = llvm::dyn_cast<llvm::ConstantInt>(R))
+            {
+                // We have two constants! Calculate NOW.
+                if (node.op.lexeme == "+")
+                {
+                    lastValue = llvm::ConstantInt::get(context, constL->getValue() + constR->getValue());
+                    return;
+                }
+                else if (node.op.lexeme == "-")
+                {
+                    lastValue = llvm::ConstantInt::get(context, constL->getValue() - constR->getValue());
+                    return;
+                }
+                else if (node.op.lexeme == "*")
+                {
+                    lastValue = llvm::ConstantInt::get(context, constL->getValue() * constR->getValue());
+                    return;
+                }
+                else if (node.op.lexeme == "/")
+                {
+                    // CRITICAL: Check for Zero before dividing!
+                    if (constR->getValue() == 0)
+                    {
+                        std::cerr << "[Warning] Compile-time division by zero detected. Optimization skipped.\n";
+                    }
+                    else
+                    {
+                        // Use 'sdiv' for Signed Integer Division
+                        lastValue = llvm::ConstantInt::get(context, constL->getValue().sdiv(constR->getValue()));
+                        return;
+                    }
+                }
+                else if (node.op.lexeme == "%")
+                {
+                    // CRITICAL: Check for Zero before modulo!
+                    if (constR->getValue() == 0)
+                    {
+                        std::cerr << "[Warning] Compile-time modulo by zero detected. Optimization skipped.\n";
+                    }
+                    else
+                    {
+                        // Use 'srem' for Signed Remainder (Modulo)
+                        lastValue = llvm::ConstantInt::get(context, constL->getValue().srem(constR->getValue()));
+                        return;
+                    }
+                }
+            }
+        }
+
         wantAddress = oldWantAddr;
 
         if (!L || !R)
@@ -2286,17 +2362,31 @@ namespace Moksha
         {
             // Unbox to Double for precision
             if (L->getType()->isPointerTy())
-                L = builder.CreateCall(module->getFunction("moksha_unbox_double"), {L}, "unbox_L_f");
+            {
+                llvm::Value *valPtr = builder.CreateConstInBoundsGEP1_32(builder.getInt8Ty(), L, 8);
+                L = builder.CreateLoad(builder.getDoubleTy(), builder.CreateBitCast(valPtr, builder.getPtrTy()));
+            }
             if (R->getType()->isPointerTy())
-                R = builder.CreateCall(module->getFunction("moksha_unbox_double"), {R}, "unbox_R_f");
+            {
+                llvm::Value *valPtr = builder.CreateConstInBoundsGEP1_32(builder.getInt8Ty(), R, 8);
+                R = builder.CreateLoad(builder.getDoubleTy(), builder.CreateBitCast(valPtr, builder.getPtrTy()));
+            }
         }
         else if (isIntMath)
         {
             // Unbox to Int for bitwise/modulo
             if (L->getType()->isPointerTy())
-                L = builder.CreateCall(module->getFunction("moksha_unbox_int"), {L}, "unbox_L_i");
+            {
+
+                llvm::Value *valPtr = builder.CreateConstInBoundsGEP1_32(builder.getInt8Ty(), L, 8);
+                L = builder.CreateLoad(builder.getInt32Ty(), builder.CreateBitCast(valPtr, builder.getPtrTy()));
+            }
             if (R->getType()->isPointerTy())
-                R = builder.CreateCall(module->getFunction("moksha_unbox_int"), {R}, "unbox_R_i");
+            {
+
+                llvm::Value *valPtr = builder.CreateConstInBoundsGEP1_32(builder.getInt8Ty(), R, 8);
+                R = builder.CreateLoad(builder.getInt32Ty(), builder.CreateBitCast(valPtr, builder.getPtrTy()));
+            }
         }
 
         if (node.op.lexeme == "in")
@@ -2848,10 +2938,15 @@ namespace Moksha
         if (auto varNode = dynamic_cast<VariableNode *>(node.callee.get()))
         {
             calleeName = varNode->name.lexeme;
+            if (calleeName == "readInt")
+                calleeName = "moksha_read_int";
+            else if (calleeName == "readDouble")
+                calleeName = "moksha_read_double";
+            else if (calleeName == "readBool")
+                calleeName = "moksha_read_bool";
+            else if (calleeName == "read")
+                calleeName = "moksha_read_string";
         }
-
-        // 2. Evaluate all arguments to get LLVM Values (General purpose)
-        // Note: For methods, we re-evaluate or use these, but we need 'this' first.
 
         // --- CASE 1: Member Access (obj.method()) ---
         if (auto memAccess = dynamic_cast<MemberAccessNode *>(node.callee.get()))
@@ -3333,29 +3428,50 @@ namespace Moksha
 
     void CodeGenerator::visit(InputExpression &node)
     {
-        std::shared_ptr<Type> type = node.resolvedType;
+        llvm::Function *func = nullptr;
+        std::string funcName;
 
-        if (std::dynamic_pointer_cast<IntType>(type))
+        // 1. Map token to the correct runtime function name
+        if (node.token.type == TokenType::KW_READINT)
         {
-            llvm::Function *f = module->getFunction("moksha_read_int");
-            lastValue = builder.CreateCall(llvm::FunctionCallee(f), {}, "read_i");
+            funcName = "moksha_read_int";
         }
-        else if (std::dynamic_pointer_cast<DoubleType>(type))
+        else if (node.token.type == TokenType::KW_READDOUBLE)
         {
-            llvm::Function *f = module->getFunction("moksha_read_double");
-            lastValue = builder.CreateCall(llvm::FunctionCallee(f), {}, "read_d");
+            funcName = "moksha_read_double";
         }
-        else if (std::dynamic_pointer_cast<BooleanType>(type))
+        else if (node.token.type == TokenType::KW_READBOOL)
         {
-            llvm::Function *f = module->getFunction("moksha_read_bool");
-            lastValue = builder.CreateCall(llvm::FunctionCallee(f), {}, "read_b");
+            funcName = "moksha_read_bool";
         }
-        else
+        else if (node.token.type == TokenType::KW_READ)
         {
-            // Default to String
-            llvm::Function *f = module->getFunction("moksha_read_string");
-            lastValue = builder.CreateCall(llvm::FunctionCallee(f), {}, "read_s");
+            funcName = "moksha_read_string";
         }
+
+        // 2. Retrieve the function
+        func = module->getFunction(funcName);
+
+        // 3. SAFETY CHECK
+        if (!func)
+        {
+            std::cerr << "[CodeGen Error] Function '" << funcName << "' not found. Did you declare it in the constructor?" << std::endl;
+            // FIX 1: Assign to lastValue instead of symbolTable.addTemp
+            lastValue = llvm::ConstantInt::get(context, llvm::APInt(32, 0));
+            return;
+        }
+
+        // 4. Generate the Call
+        llvm::Value *result = builder.CreateCall(func, {});
+
+        // 5. Post-Processing
+        if (node.token.type == TokenType::KW_READBOOL)
+        {
+            result = builder.CreateTrunc(result, builder.getInt1Ty(), "bool_trunc");
+        }
+
+        // FIX 2: Assign result to lastValue so parent nodes can use it
+        lastValue = result;
     }
 
     void CodeGenerator::visit(TemplateLiteralNode &node)
@@ -3364,12 +3480,10 @@ namespace Moksha
         llvm::Function *i2sFunc = module->getFunction("moksha_int_to_str");
         llvm::Function *d2sFunc = module->getFunction("moksha_double_to_str");
         llvm::Function *anyToStrFunc = module->getFunction("moksha_any_to_str");
-
-        // --- MISSING FUNC DECLARATION ---
         llvm::Function *boxStringFunc = module->getFunction("moksha_box_string");
 
+        // 1. Create an empty base string (Boxed)
         llvm::Value *currentStr = builder.CreateGlobalString("");
-        // Box the initial empty string
         currentStr = builder.CreateCall(llvm::FunctionCallee(boxStringFunc), {currentStr});
 
         for (auto &part : node.parts)
@@ -3378,41 +3492,48 @@ namespace Moksha
             llvm::Value *val = lastValue;
 
             std::shared_ptr<Type> type = part->resolvedType;
-            bool isAny = isAnyType(type);
+            bool isAny = std::dynamic_pointer_cast<AnyType>(type) != nullptr;
             bool isArray = std::dynamic_pointer_cast<ArrayType>(type) != nullptr;
             bool isTable = std::dynamic_pointer_cast<TableType>(type) != nullptr;
 
-            if (isAny || isArray || isTable || val->getType()->isPointerTy())
+            // 2. Convert to String Object (Pointer)
+            if (std::dynamic_pointer_cast<StringType>(type))
+            {
+                // Already a string object, no conversion needed
+            }
+            else if (isAny || isArray || isTable || val->getType()->isPointerTy())
             {
                 if (val->getType() != builder.getPtrTy())
                     val = builder.CreateBitCast(val, builder.getPtrTy());
 
-                // If it's NOT already a String Object, convert and box it
-                if (!std::dynamic_pointer_cast<StringType>(type))
-                {
-                    val = builder.CreateCall(llvm::FunctionCallee(anyToStrFunc), {val}, "any_to_s");
-                    val = builder.CreateCall(llvm::FunctionCallee(boxStringFunc), {val}); // <--- BOX IT
-                }
+                // any_to_str returns char*, so we MUST BOX IT
+                val = builder.CreateCall(llvm::FunctionCallee(anyToStrFunc), {val}, "any_to_s");
+                val = builder.CreateCall(llvm::FunctionCallee(boxStringFunc), {val}, "box_s");
             }
             else if (val->getType()->isIntegerTy(1)) // Bool
             {
                 llvm::Value *i32Val = builder.CreateZExt(val, builder.getInt32Ty(), "bool_ext");
                 llvm::Function *boxBoolFunc = module->getFunction("moksha_box_bool");
                 llvm::Value *boxedVal = builder.CreateCall(llvm::FunctionCallee(boxBoolFunc), {i32Val}, "box_b");
+
+                // any_to_str returns char*, so we MUST BOX IT
                 val = builder.CreateCall(llvm::FunctionCallee(anyToStrFunc), {boxedVal}, "b2s");
-                val = builder.CreateCall(llvm::FunctionCallee(boxStringFunc), {val}); // <--- BOX IT
+                val = builder.CreateCall(llvm::FunctionCallee(boxStringFunc), {val}, "box_s");
             }
             else if (val->getType()->isIntegerTy()) // Int
             {
+                // int_to_str returns char*, so we MUST BOX IT
                 val = builder.CreateCall(llvm::FunctionCallee(i2sFunc), {val}, "i2s");
-                val = builder.CreateCall(llvm::FunctionCallee(boxStringFunc), {val}); // <--- CRITICAL FIX HERE
+                val = builder.CreateCall(llvm::FunctionCallee(boxStringFunc), {val}, "box_s");
             }
             else if (val->getType()->isDoubleTy()) // Double
             {
+                // double_to_str returns char*, so we MUST BOX IT
                 val = builder.CreateCall(llvm::FunctionCallee(d2sFunc), {val}, "d2s");
-                val = builder.CreateCall(llvm::FunctionCallee(boxStringFunc), {val}); // <--- BOX IT
+                val = builder.CreateCall(llvm::FunctionCallee(boxStringFunc), {val}, "box_s");
             }
 
+            // 3. Concatenate (Expects two Boxed Strings)
             currentStr = builder.CreateCall(llvm::FunctionCallee(concatFunc), {currentStr, val});
         }
         lastValue = currentStr;
@@ -3770,7 +3891,7 @@ namespace Moksha
         {
             if (idx->getType()->isDoubleTy())
                 idx = builder.CreateFPToSI(idx, builder.getInt32Ty());
-            result = builder.CreateCall(module->getFunction("moksha_string_get_char"), {target, idx});
+            result = builder.CreateCall(llvm::FunctionCallee(fnStringGetChar), {target, idx});
         }
         else
         {
@@ -4425,9 +4546,6 @@ namespace Moksha
         bool isString = std::dynamic_pointer_cast<StringType>(type) != nullptr;
         bool isTable = std::dynamic_pointer_cast<TableType>(type) != nullptr;
 
-        // "loopTargetPtr" is what we actually iterate 0..N over.
-        // For Arrays/Strings, it's the object itself.
-        // For Tables, it's a temporary Array of Keys.
         llvm::Value *loopTargetPtr = iterablePtr;
 
         if (isTable)
@@ -4493,8 +4611,7 @@ namespace Moksha
         {
             // Standard Array
             keyVal = currIdx; // Index
-            llvm::Function *arrGet = module->getFunction("moksha_array_get");
-            valVal = builder.CreateCall(llvm::FunctionCallee(arrGet), {loopTargetPtr, currIdx}, "arr_val");
+            valVal = builder.CreateCall(llvm::FunctionCallee(fnArrayGetUnsafe), {loopTargetPtr, currIdx}, "arr_val");
 
             // [FIX START] Unbox primitive values!
             if (auto arrType = std::dynamic_pointer_cast<ArrayType>(type))
@@ -5236,5 +5353,4 @@ namespace Moksha
 
         insideUnsafe = oldState; // Restore Safety
     }
-
-} // namespace Moksha
+}

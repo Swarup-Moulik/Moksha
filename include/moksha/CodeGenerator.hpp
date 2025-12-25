@@ -14,8 +14,7 @@
 
 namespace Moksha
 {
-    // --- NEW HELPER DECLARATION ---
-    // Takes the resolved type object and returns the corresponding LLVM type.
+    // Helper: Takes the resolved type object and returns the corresponding LLVM type.
     llvm::Type *getLLVMType(std::shared_ptr<Type> resolvedType, llvm::LLVMContext &context, llvm::Module *module);
 
     class CodeGenerator : public ASTVisitor
@@ -23,12 +22,15 @@ namespace Moksha
     private:
         bool wantAddress = false;
         bool insideUnsafe = false;
+        
         // Core LLVM classes
         llvm::LLVMContext context;
         llvm::IRBuilder<> builder;
+        llvm::Function *fnArrayGetUnsafe = nullptr;
+        llvm::Function *fnStringGetChar = nullptr;
         std::unique_ptr<llvm::Module> module;
 
-        // Maps variable names to their memory location (stack address)
+        // Maps variable names to their memory location (stack address or global)
         std::map<std::string, llvm::Value *> namedValues;
 
         std::set<std::string> heapAllocatedVars;
@@ -42,9 +44,12 @@ namespace Moksha
         // Holds the result of the last expression visited
         llvm::Value *lastValue = nullptr;
 
-        std::string currentClassName = "";                                   // Tracks if we are inside a class (for methods)
-        std::map<std::string, std::map<std::string, int>> classFieldIndices; // Maps ClassName -> FieldName -> Index
-        std::map<std::string, std::vector<llvm::Type *>> classLayouts;       // Maps ClassName -> List of Field Types (Ordered)
+        std::string currentClassName = "";                                   
+        
+        // [FIX] These are the authoritative storage for Class Metadata
+        std::map<std::string, std::map<std::string, int>> classFieldIndices; 
+        std::map<std::string, std::vector<llvm::Type *>> classLayouts;       
+        
         llvm::Value *currentThis = nullptr;
 
         struct LoopInfo
@@ -54,19 +59,24 @@ namespace Moksha
         };
         std::vector<LoopInfo> loopStack;
         std::vector<const StatementNode *> deferStack;
-        std::map<std::string, std::string> variableTypes; // Maps varName -> className
+        std::map<std::string, std::string> variableTypes; 
+        
         llvm::GlobalVariable *globalExceptionFlag = nullptr;
         llvm::GlobalVariable *globalExceptionVal = nullptr;
         std::stack<llvm::BasicBlock *> exceptionStack;
+        
         std::string getStructName(std::shared_ptr<Moksha::Type> type);
 
+    public:
         struct BitfieldMeta
         {
             int bitOffset;
             int bitWidth;
         };
+        // Static map to track bitfields across structs
         static std::map<std::string, std::map<std::string, BitfieldMeta>> structBitfields;
 
+    private:
         llvm::Value *generateArrayAllocation(const std::vector<ExpressionNode *> &dims, size_t dimIndex, llvm::Value *leafDefault);
         llvm::Value *getAddress(ASTNode *node);
 
@@ -74,36 +84,27 @@ namespace Moksha
         llvm::FunctionType *getLLVMFunctionProto(std::shared_ptr<FunctionType> mokshaType);
         void generateDefaultConstructor(const std::string &className, const std::string &parentName, const std::vector<std::unique_ptr<StatementNode>> &members);
 
-        // Helper to register global exception state
         void setupGlobalExceptionState();
-
         bool isVolatile(const std::string &name);
 
     public:
         CodeGenerator();
 
-        // Returns the generated module (to print or compile)
         llvm::Module *getModule() { return module.get(); }
         bool isFreestanding = false;
 
-        // Main entry point
         void generate(const std::vector<std::unique_ptr<StatementNode>> &statements);
 
         // --- Visitor Implementation ---
-        // Expressions
         void visit(LiteralNode &node) override;
         void visit(VariableNode &node) override;
         void visit(BinaryOpNode &node) override;
         void visit(GroupingNode &node) override;
-
-        // Statements
         void visit(VariableDeclarationNode &node) override;
         void visit(ReturnNode &node) override;
         void visit(BlockStatementNode &node) override;
         void visit(ExpressionStatementNode &node) override;
         void visit(PrintStatementNode &node) override;
-
-        // Complex Features
         void visit(FunctionDefinitionNode &node) override;
         void visit(ClassDefinitionNode &node) override;
         void visit(StructDefinitionNode &node) override;

@@ -5,9 +5,20 @@ find . -type d
 cd "H:\My Project\Moksha"
 
 # Benchmark
-hyperfine --shell=none --warmup 20 --runs 500  './unsafe_c'  './unsafe'  './unsafe_cpp'
-hyperfine --shell=none --warmup 10 --runs 50  './Iterable_c'  './Iterable'  './Iterable_cpp'
-hyperfine --shell=none --warmup 20 --runs 500  './errorHandEnumMacro_c'  './errorHandEnumMacro'  './errorHandEnumMacro_cpp'
+hyperfine --shell=none --warmup 25 --runs 250  './unsafe_c'  './unsafe'  './unsafe_cpp'
+
+// on powershell
+hyperfine `
+  --warmup 10 `
+  --runs 50 `
+  ".\Iterable_c < input.txt" `
+  "python Iterable.py < input.txt" `
+  "java Iterable < input.txt"
+  ".\Iterable_cpp < input.txt" `
+
+hyperfine --warmup 10 --runs 50  ".\Iterable_c < input.txt" ".\Iterable < input.txt" ".\Iterable_cpp < input.txt" "python Iterable.py < input.txt"
+
+hyperfine --shell=none --warmup 20 --runs 250  './errorHandEnumMacro_c'  './errorHandEnumMacro'  './errorHandEnumMacro_cpp'
 
 
 # 1. Compile your Moksha Compiler (-O3 is for production grade not for debugging) 
@@ -25,16 +36,16 @@ g++ -c -ffreestanding -fno-rtti -fno-exceptions -nostdlib runtime/kernel_runtime
 
 a.  ./moksha test/arithmeticUnaryBinary.mox -c
 b.  ./moksha test/dataTypeNullability.mox -c
-c.  ./moksha test/inputConditionals.mox -c
-d.  ./moksha test/varInCond.mox -c
+c.  ./moksha test/inputConditionals.mox -c  //
+d.  ./moksha test/varInCond.mox -c  //
 e.  ./moksha test/stringArrayTable.mox -c
-f.  ./moksha test/Iterable.mox -c
-g.  ./moksha test/funcLambClose.mox -c 
-h.  ./moksha test/OOP.mox -c          
-i.  ./moksha test/errorHandEnumMacro.mox -c   
+f.  ./moksha test/Iterable.mox -c  //
+g.  ./moksha test/funcLambClose.mox -c  //
+h.  ./moksha test/OOP.mox -c     //     
+i.  ./moksha test/errorHandEnumMacro.mox -c  //
 j.  ./moksha test/scopeMemorySafety.mox -c
 k.  ./moksha test/polymorphism.mox -c
-l.  ./moksha test/unsafe.mox -c 
+l.  ./moksha test/unsafe.mox -c    //
 m.  ./moksha test/ -c 
 
 # 4. Compile the Generated .o file and Link with the Runtime (not required because done in main.cpp)

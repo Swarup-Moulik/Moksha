@@ -8,8 +8,8 @@ source_filename = "moksha_module"
 %HardwarePacket = type <{ i8, i32, i8 }>
 %BitfieldTest = type { i32 }
 
-@__exception_flag = global i32 0
-@__exception_val = global ptr null
+@__exception_flag = external global i32
+@__exception_val = external global ptr
 @0 = private unnamed_addr constant [7 x i8] c"HOSTED\00", align 1
 @1 = private unnamed_addr constant [39 x i8] c"--- Consolidated Moksha Test Suite ---\00", align 1
 @2 = private unnamed_addr constant [4 x i8] c"%s\0A\00", align 1
@@ -76,13 +76,13 @@ declare ptr @memcpy(ptr, ptr, i64)
 
 declare ptr @memset(ptr, i32, i64)
 
-declare i32 @sprintf(ptr, ptr, ...)
-
-declare i32 @fprintf(ptr, ptr, ...)
-
 declare i32 @strlen(ptr)
 
 declare i32 @puts(ptr)
+
+declare i32 @sprintf(ptr, ptr, ...)
+
+declare i32 @strcmp(ptr, ptr)
 
 declare ptr @moksha_box_int(i32)
 
@@ -114,6 +114,8 @@ declare ptr @moksha_int_to_ascii(i32)
 
 declare ptr @moksha_double_to_str(double)
 
+declare ptr @moksha_ptr_to_str(ptr)
+
 declare ptr @moksha_alloc_array(i32)
 
 declare ptr @moksha_alloc_table(i32)
@@ -127,6 +129,8 @@ declare ptr @moksha_table_get(ptr, ptr)
 declare void @moksha_table_delete(ptr, ptr)
 
 declare ptr @moksha_table_keys(ptr)
+
+declare ptr @moksha_array_get_unsafe(ptr, i32)
 
 declare ptr @moksha_array_get(ptr, i32)
 
@@ -143,6 +147,8 @@ declare ptr @moksha_string_concat(ptr, ptr)
 declare i32 @moksha_get_length(ptr)
 
 declare ptr @moksha_string_get_char(ptr, i32)
+
+declare i32 @moksha_strlen(ptr)
 
 declare i32 @moksha_read_int()
 
@@ -161,12 +167,6 @@ declare ptr @moksha_create_closure(ptr, i32, ptr)
 declare ptr @moksha_get_closure_env(ptr)
 
 declare ptr @moksha_get_closure_func(ptr)
-
-declare i32 @moksha_strlen(ptr)
-
-declare i32 @strcmp(ptr, ptr)
-
-declare ptr @moksha_ptr_to_str(ptr)
 
 define i32 @main() {
 entry:

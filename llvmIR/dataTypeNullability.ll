@@ -3,8 +3,8 @@ source_filename = "moksha_module"
 
 %Logger = type { ptr }
 
-@__exception_flag = global i32 0
-@__exception_val = global ptr null
+@__exception_flag = external global i32
+@__exception_val = external global ptr
 @0 = private unnamed_addr constant [41 x i8] c"==== DATA TYPES & NULLABILITY SUITE ====\00", align 1
 @1 = private unnamed_addr constant [4 x i8] c"%s\0A\00", align 1
 @2 = private unnamed_addr constant [14 x i8] c"\0A[Primitives]\00", align 1
@@ -183,13 +183,13 @@ declare ptr @memcpy(ptr, ptr, i64)
 
 declare ptr @memset(ptr, i32, i64)
 
-declare i32 @sprintf(ptr, ptr, ...)
-
-declare i32 @fprintf(ptr, ptr, ...)
-
 declare i32 @strlen(ptr)
 
 declare i32 @puts(ptr)
+
+declare i32 @sprintf(ptr, ptr, ...)
+
+declare i32 @strcmp(ptr, ptr)
 
 declare ptr @moksha_box_int(i32)
 
@@ -221,6 +221,8 @@ declare ptr @moksha_int_to_ascii(i32)
 
 declare ptr @moksha_double_to_str(double)
 
+declare ptr @moksha_ptr_to_str(ptr)
+
 declare ptr @moksha_alloc_array(i32)
 
 declare ptr @moksha_alloc_table(i32)
@@ -234,6 +236,8 @@ declare ptr @moksha_table_get(ptr, ptr)
 declare void @moksha_table_delete(ptr, ptr)
 
 declare ptr @moksha_table_keys(ptr)
+
+declare ptr @moksha_array_get_unsafe(ptr, i32)
 
 declare ptr @moksha_array_get(ptr, i32)
 
@@ -250,6 +254,8 @@ declare ptr @moksha_string_concat(ptr, ptr)
 declare i32 @moksha_get_length(ptr)
 
 declare ptr @moksha_string_get_char(ptr, i32)
+
+declare i32 @moksha_strlen(ptr)
 
 declare i32 @moksha_read_int()
 
@@ -268,12 +274,6 @@ declare ptr @moksha_create_closure(ptr, i32, ptr)
 declare ptr @moksha_get_closure_env(ptr)
 
 declare ptr @moksha_get_closure_func(ptr)
-
-declare i32 @moksha_strlen(ptr)
-
-declare i32 @strcmp(ptr, ptr)
-
-declare ptr @moksha_ptr_to_str(ptr)
 
 define i32 @main() {
 entry:
@@ -788,50 +788,48 @@ opt_call_cont92:                                  ; preds = %opt_call_null91, %o
   %188 = call ptr @moksha_string_concat(ptr %186, ptr %187)
   %189 = load i32, ptr %version98, align 4
   %i2s = call ptr @moksha_int_to_str(i32 %189)
-  %190 = call ptr @moksha_box_string(ptr %i2s)
-  %191 = call ptr @moksha_string_concat(ptr %188, ptr %190)
-  %192 = call ptr @moksha_box_string(ptr @119)
-  %193 = call ptr @moksha_string_concat(ptr %191, ptr %192)
-  %194 = load double, ptr %speed99, align 8
-  %d2s = call ptr @moksha_double_to_str(double %194)
-  %195 = call ptr @moksha_box_string(ptr %d2s)
-  %196 = call ptr @moksha_string_concat(ptr %193, ptr %195)
-  %197 = call ptr @moksha_box_string(ptr @120)
-  %198 = call ptr @moksha_string_concat(ptr %196, ptr %197)
-  %print_unbox100 = call ptr @moksha_unbox_string(ptr %198)
-  %199 = call i32 (ptr, ...) @printf(ptr @121, ptr %print_unbox100)
-  %200 = call ptr @moksha_box_string(ptr @122)
-  %print_unbox101 = call ptr @moksha_unbox_string(ptr %200)
-  %201 = call i32 (ptr, ...) @printf(ptr @123, ptr %print_unbox101)
+  %190 = call ptr @moksha_string_concat(ptr %188, ptr %i2s)
+  %191 = call ptr @moksha_box_string(ptr @119)
+  %192 = call ptr @moksha_string_concat(ptr %190, ptr %191)
+  %193 = load double, ptr %speed99, align 8
+  %d2s = call ptr @moksha_double_to_str(double %193)
+  %194 = call ptr @moksha_string_concat(ptr %192, ptr %d2s)
+  %195 = call ptr @moksha_box_string(ptr @120)
+  %196 = call ptr @moksha_string_concat(ptr %194, ptr %195)
+  %print_unbox100 = call ptr @moksha_unbox_string(ptr %196)
+  %197 = call i32 (ptr, ...) @printf(ptr @121, ptr %print_unbox100)
+  %198 = call ptr @moksha_box_string(ptr @122)
+  %print_unbox101 = call ptr @moksha_unbox_string(ptr %198)
+  %199 = call i32 (ptr, ...) @printf(ptr @123, ptr %print_unbox101)
   store double 0x4058FF5C28F5C28F, ptr %precise, align 8
   store double 0x4058FF5C28F5C28F, ptr %precise102, align 8
-  %202 = load double, ptr %precise102, align 8
-  %cast_d2i = fptosi double %202 to i32
+  %200 = load double, ptr %precise102, align 8
+  %cast_d2i = fptosi double %200 to i32
   store i32 %cast_d2i, ptr %truncated, align 4
   store i32 %cast_d2i, ptr %truncated103, align 4
-  %203 = call ptr @moksha_box_string(ptr @124)
-  %204 = load i32, ptr %truncated103, align 4
-  %205 = call ptr @moksha_int_to_str(i32 %204)
-  %206 = call ptr @moksha_box_string(ptr %205)
-  %207 = call ptr @moksha_string_concat(ptr %203, ptr %206)
-  %print_unbox104 = call ptr @moksha_unbox_string(ptr %207)
-  %208 = call i32 (ptr, ...) @printf(ptr @125, ptr %print_unbox104)
+  %201 = call ptr @moksha_box_string(ptr @124)
+  %202 = load i32, ptr %truncated103, align 4
+  %203 = call ptr @moksha_int_to_str(i32 %202)
+  %204 = call ptr @moksha_box_string(ptr %203)
+  %205 = call ptr @moksha_string_concat(ptr %201, ptr %204)
+  %print_unbox104 = call ptr @moksha_unbox_string(ptr %205)
+  %206 = call i32 (ptr, ...) @printf(ptr @125, ptr %print_unbox104)
   store i32 50, ptr %whole, align 4
   store i32 50, ptr %whole105, align 4
-  %209 = load i32, ptr %whole105, align 4
-  %cast_i2d = sitofp i32 %209 to double
+  %207 = load i32, ptr %whole105, align 4
+  %cast_i2d = sitofp i32 %207 to double
   store double %cast_i2d, ptr %floaty, align 8
   store double %cast_i2d, ptr %floaty106, align 8
-  %210 = call ptr @moksha_box_string(ptr @126)
-  %211 = load double, ptr %floaty106, align 8
-  %212 = call ptr @moksha_double_to_str(double %211)
-  %213 = call ptr @moksha_box_string(ptr %212)
-  %214 = call ptr @moksha_string_concat(ptr %210, ptr %213)
-  %print_unbox107 = call ptr @moksha_unbox_string(ptr %214)
-  %215 = call i32 (ptr, ...) @printf(ptr @127, ptr %print_unbox107)
-  %216 = call ptr @moksha_box_string(ptr @128)
-  %print_unbox108 = call ptr @moksha_unbox_string(ptr %216)
-  %217 = call i32 (ptr, ...) @printf(ptr @129, ptr %print_unbox108)
+  %208 = call ptr @moksha_box_string(ptr @126)
+  %209 = load double, ptr %floaty106, align 8
+  %210 = call ptr @moksha_double_to_str(double %209)
+  %211 = call ptr @moksha_box_string(ptr %210)
+  %212 = call ptr @moksha_string_concat(ptr %208, ptr %211)
+  %print_unbox107 = call ptr @moksha_unbox_string(ptr %212)
+  %213 = call i32 (ptr, ...) @printf(ptr @127, ptr %print_unbox107)
+  %214 = call ptr @moksha_box_string(ptr @128)
+  %print_unbox108 = call ptr @moksha_unbox_string(ptr %214)
+  %215 = call i32 (ptr, ...) @printf(ptr @129, ptr %print_unbox108)
   %box_i109 = call ptr @moksha_box_int(i32 123)
   store ptr %box_i109, ptr %boxInt, align 8
   store ptr %box_i109, ptr %boxInt110, align 8
@@ -841,144 +839,144 @@ opt_call_cont92:                                  ; preds = %opt_call_null91, %o
   %box_b113 = call ptr @moksha_box_bool(i32 1)
   store ptr %box_b113, ptr %boxBool, align 8
   store ptr %box_b113, ptr %boxBool114, align 8
-  %218 = call ptr @moksha_box_string(ptr @130)
-  %219 = load ptr, ptr %boxInt110, align 8
-  %220 = call ptr @moksha_any_to_str(ptr %219)
-  %221 = call ptr @moksha_box_string(ptr %220)
-  %222 = call ptr @moksha_string_concat(ptr %218, ptr %221)
-  %print_unbox115 = call ptr @moksha_unbox_string(ptr %222)
-  %223 = call i32 (ptr, ...) @printf(ptr @131, ptr %print_unbox115)
-  %224 = call ptr @moksha_box_string(ptr @132)
-  %225 = load ptr, ptr %boxDouble112, align 8
-  %226 = call ptr @moksha_any_to_str(ptr %225)
-  %227 = call ptr @moksha_box_string(ptr %226)
-  %228 = call ptr @moksha_string_concat(ptr %224, ptr %227)
-  %print_unbox116 = call ptr @moksha_unbox_string(ptr %228)
-  %229 = call i32 (ptr, ...) @printf(ptr @133, ptr %print_unbox116)
-  %230 = call ptr @moksha_box_string(ptr @134)
-  %231 = load ptr, ptr %boxBool114, align 8
-  %232 = call ptr @moksha_any_to_str(ptr %231)
-  %233 = call ptr @moksha_box_string(ptr %232)
-  %234 = call ptr @moksha_string_concat(ptr %230, ptr %233)
-  %print_unbox117 = call ptr @moksha_unbox_string(ptr %234)
-  %235 = call i32 (ptr, ...) @printf(ptr @135, ptr %print_unbox117)
-  %236 = call ptr @moksha_box_string(ptr @136)
-  %print_unbox118 = call ptr @moksha_unbox_string(ptr %236)
-  %237 = call i32 (ptr, ...) @printf(ptr @137, ptr %print_unbox118)
-  %238 = load ptr, ptr %boxInt110, align 8
-  %unbox_i119 = call i32 @moksha_unbox_int(ptr %238)
+  %216 = call ptr @moksha_box_string(ptr @130)
+  %217 = load ptr, ptr %boxInt110, align 8
+  %218 = call ptr @moksha_any_to_str(ptr %217)
+  %219 = call ptr @moksha_box_string(ptr %218)
+  %220 = call ptr @moksha_string_concat(ptr %216, ptr %219)
+  %print_unbox115 = call ptr @moksha_unbox_string(ptr %220)
+  %221 = call i32 (ptr, ...) @printf(ptr @131, ptr %print_unbox115)
+  %222 = call ptr @moksha_box_string(ptr @132)
+  %223 = load ptr, ptr %boxDouble112, align 8
+  %224 = call ptr @moksha_any_to_str(ptr %223)
+  %225 = call ptr @moksha_box_string(ptr %224)
+  %226 = call ptr @moksha_string_concat(ptr %222, ptr %225)
+  %print_unbox116 = call ptr @moksha_unbox_string(ptr %226)
+  %227 = call i32 (ptr, ...) @printf(ptr @133, ptr %print_unbox116)
+  %228 = call ptr @moksha_box_string(ptr @134)
+  %229 = load ptr, ptr %boxBool114, align 8
+  %230 = call ptr @moksha_any_to_str(ptr %229)
+  %231 = call ptr @moksha_box_string(ptr %230)
+  %232 = call ptr @moksha_string_concat(ptr %228, ptr %231)
+  %print_unbox117 = call ptr @moksha_unbox_string(ptr %232)
+  %233 = call i32 (ptr, ...) @printf(ptr @135, ptr %print_unbox117)
+  %234 = call ptr @moksha_box_string(ptr @136)
+  %print_unbox118 = call ptr @moksha_unbox_string(ptr %234)
+  %235 = call i32 (ptr, ...) @printf(ptr @137, ptr %print_unbox118)
+  %236 = load ptr, ptr %boxInt110, align 8
+  %unbox_i119 = call i32 @moksha_unbox_int(ptr %236)
   store i32 %unbox_i119, ptr %unboxI, align 4
   store i32 %unbox_i119, ptr %unboxI120, align 4
-  %239 = load ptr, ptr %boxDouble112, align 8
-  %unbox_d = call double @moksha_unbox_double(ptr %239)
+  %237 = load ptr, ptr %boxDouble112, align 8
+  %unbox_d = call double @moksha_unbox_double(ptr %237)
   store double %unbox_d, ptr %unboxD, align 8
   store double %unbox_d, ptr %unboxD121, align 8
-  %240 = load ptr, ptr %boxBool114, align 8
-  %unbox_b = call i32 @moksha_unbox_bool(ptr %240)
-  %241 = trunc i32 %unbox_b to i1
-  store i1 %241, ptr %unboxB, align 1
-  store i1 %241, ptr %unboxB122, align 1
-  %242 = call ptr @moksha_box_string(ptr @138)
-  %243 = load i32, ptr %unboxI120, align 4
-  %addtmp = add i32 %243, 1
-  %244 = call ptr @moksha_int_to_str(i32 %addtmp)
-  %245 = call ptr @moksha_box_string(ptr %244)
-  %246 = call ptr @moksha_string_concat(ptr %242, ptr %245)
-  %print_unbox123 = call ptr @moksha_unbox_string(ptr %246)
-  %247 = call i32 (ptr, ...) @printf(ptr @139, ptr %print_unbox123)
-  %248 = call ptr @moksha_box_string(ptr @140)
-  %249 = load double, ptr %unboxD121, align 8
-  %faddtmp = fadd double %249, 3.300000e-01
-  %250 = call ptr @moksha_double_to_str(double %faddtmp)
-  %251 = call ptr @moksha_box_string(ptr %250)
-  %252 = call ptr @moksha_string_concat(ptr %248, ptr %251)
-  %print_unbox124 = call ptr @moksha_unbox_string(ptr %252)
-  %253 = call i32 (ptr, ...) @printf(ptr @141, ptr %print_unbox124)
-  %254 = call ptr @moksha_box_string(ptr @142)
-  %255 = load i1, ptr %unboxB122, align 1
-  %256 = zext i1 %255 to i32
-  %257 = call ptr @moksha_box_bool(i32 %256)
-  %258 = call ptr @moksha_any_to_str(ptr %257)
-  %259 = call ptr @moksha_box_string(ptr %258)
-  %260 = call ptr @moksha_string_concat(ptr %254, ptr %259)
-  %print_unbox125 = call ptr @moksha_unbox_string(ptr %260)
-  %261 = call i32 (ptr, ...) @printf(ptr @143, ptr %print_unbox125)
-  %262 = call ptr @moksha_box_string(ptr @144)
-  %print_unbox126 = call ptr @moksha_unbox_string(ptr %262)
-  %263 = call i32 (ptr, ...) @printf(ptr @145, ptr %print_unbox126)
+  %238 = load ptr, ptr %boxBool114, align 8
+  %unbox_b = call i32 @moksha_unbox_bool(ptr %238)
+  %239 = trunc i32 %unbox_b to i1
+  store i1 %239, ptr %unboxB, align 1
+  store i1 %239, ptr %unboxB122, align 1
+  %240 = call ptr @moksha_box_string(ptr @138)
+  %241 = load i32, ptr %unboxI120, align 4
+  %addtmp = add i32 %241, 1
+  %242 = call ptr @moksha_int_to_str(i32 %addtmp)
+  %243 = call ptr @moksha_box_string(ptr %242)
+  %244 = call ptr @moksha_string_concat(ptr %240, ptr %243)
+  %print_unbox123 = call ptr @moksha_unbox_string(ptr %244)
+  %245 = call i32 (ptr, ...) @printf(ptr @139, ptr %print_unbox123)
+  %246 = call ptr @moksha_box_string(ptr @140)
+  %247 = load double, ptr %unboxD121, align 8
+  %faddtmp = fadd double %247, 3.300000e-01
+  %248 = call ptr @moksha_double_to_str(double %faddtmp)
+  %249 = call ptr @moksha_box_string(ptr %248)
+  %250 = call ptr @moksha_string_concat(ptr %246, ptr %249)
+  %print_unbox124 = call ptr @moksha_unbox_string(ptr %250)
+  %251 = call i32 (ptr, ...) @printf(ptr @141, ptr %print_unbox124)
+  %252 = call ptr @moksha_box_string(ptr @142)
+  %253 = load i1, ptr %unboxB122, align 1
+  %254 = zext i1 %253 to i32
+  %255 = call ptr @moksha_box_bool(i32 %254)
+  %256 = call ptr @moksha_any_to_str(ptr %255)
+  %257 = call ptr @moksha_box_string(ptr %256)
+  %258 = call ptr @moksha_string_concat(ptr %252, ptr %257)
+  %print_unbox125 = call ptr @moksha_unbox_string(ptr %258)
+  %259 = call i32 (ptr, ...) @printf(ptr @143, ptr %print_unbox125)
+  %260 = call ptr @moksha_box_string(ptr @144)
+  %print_unbox126 = call ptr @moksha_unbox_string(ptr %260)
+  %261 = call i32 (ptr, ...) @printf(ptr @145, ptr %print_unbox126)
   store i32 66, ptr %code, align 4
   store i32 66, ptr %code127, align 4
-  %264 = load i32, ptr %code127, align 4
-  %i2c = call ptr @moksha_int_to_ascii(i32 %264)
-  %265 = call ptr @moksha_box_string(ptr %i2c)
-  store ptr %265, ptr %charStr, align 8
-  store ptr %265, ptr %charStr128, align 8
-  %266 = call ptr @moksha_box_string(ptr @146)
-  %267 = load ptr, ptr %charStr128, align 8
-  %268 = call ptr @moksha_string_concat(ptr %266, ptr %267)
-  %print_unbox129 = call ptr @moksha_unbox_string(ptr %268)
-  %269 = call i32 (ptr, ...) @printf(ptr @147, ptr %print_unbox129)
-  %270 = call ptr @moksha_box_string(ptr @148)
-  store ptr %270, ptr %letter, align 8
-  store ptr %270, ptr %letter130, align 8
-  %271 = load ptr, ptr %letter130, align 8
-  %unbox_i131 = call i32 @moksha_unbox_int(ptr %271)
+  %262 = load i32, ptr %code127, align 4
+  %i2c = call ptr @moksha_int_to_ascii(i32 %262)
+  %263 = call ptr @moksha_box_string(ptr %i2c)
+  store ptr %263, ptr %charStr, align 8
+  store ptr %263, ptr %charStr128, align 8
+  %264 = call ptr @moksha_box_string(ptr @146)
+  %265 = load ptr, ptr %charStr128, align 8
+  %266 = call ptr @moksha_string_concat(ptr %264, ptr %265)
+  %print_unbox129 = call ptr @moksha_unbox_string(ptr %266)
+  %267 = call i32 (ptr, ...) @printf(ptr @147, ptr %print_unbox129)
+  %268 = call ptr @moksha_box_string(ptr @148)
+  store ptr %268, ptr %letter, align 8
+  store ptr %268, ptr %letter130, align 8
+  %269 = load ptr, ptr %letter130, align 8
+  %unbox_i131 = call i32 @moksha_unbox_int(ptr %269)
   store i32 %unbox_i131, ptr %backToCode, align 4
   store i32 %unbox_i131, ptr %backToCode132, align 4
-  %272 = call ptr @moksha_box_string(ptr @149)
-  %273 = load i32, ptr %backToCode132, align 4
-  %274 = call ptr @moksha_int_to_str(i32 %273)
-  %275 = call ptr @moksha_box_string(ptr %274)
-  %276 = call ptr @moksha_string_concat(ptr %272, ptr %275)
-  %print_unbox133 = call ptr @moksha_unbox_string(ptr %276)
-  %277 = call i32 (ptr, ...) @printf(ptr @150, ptr %print_unbox133)
-  %278 = call ptr @moksha_box_string(ptr @151)
-  store ptr %278, ptr %piStr, align 8
-  store ptr %278, ptr %piStr134, align 8
-  %279 = load ptr, ptr %piStr134, align 8
-  %unbox_d135 = call double @moksha_unbox_double(ptr %279)
+  %270 = call ptr @moksha_box_string(ptr @149)
+  %271 = load i32, ptr %backToCode132, align 4
+  %272 = call ptr @moksha_int_to_str(i32 %271)
+  %273 = call ptr @moksha_box_string(ptr %272)
+  %274 = call ptr @moksha_string_concat(ptr %270, ptr %273)
+  %print_unbox133 = call ptr @moksha_unbox_string(ptr %274)
+  %275 = call i32 (ptr, ...) @printf(ptr @150, ptr %print_unbox133)
+  %276 = call ptr @moksha_box_string(ptr @151)
+  store ptr %276, ptr %piStr, align 8
+  store ptr %276, ptr %piStr134, align 8
+  %277 = load ptr, ptr %piStr134, align 8
+  %unbox_d135 = call double @moksha_unbox_double(ptr %277)
   store double %unbox_d135, ptr %pit, align 8
   store double %unbox_d135, ptr %pit136, align 8
-  %280 = call ptr @moksha_box_string(ptr @152)
-  %281 = load double, ptr %pit136, align 8
-  %faddtmp137 = fadd double %281, 1.000000e-05
-  %282 = call ptr @moksha_double_to_str(double %faddtmp137)
-  %283 = call ptr @moksha_box_string(ptr %282)
-  %284 = call ptr @moksha_string_concat(ptr %280, ptr %283)
-  %print_unbox138 = call ptr @moksha_unbox_string(ptr %284)
-  %285 = call i32 (ptr, ...) @printf(ptr @153, ptr %print_unbox138)
-  %286 = call ptr @moksha_box_string(ptr @154)
-  store ptr %286, ptr %numStr, align 8
-  store ptr %286, ptr %numStr139, align 8
-  %287 = load ptr, ptr %numStr139, align 8
-  %unbox_i140 = call i32 @moksha_unbox_int(ptr %287)
+  %278 = call ptr @moksha_box_string(ptr @152)
+  %279 = load double, ptr %pit136, align 8
+  %faddtmp137 = fadd double %279, 1.000000e-05
+  %280 = call ptr @moksha_double_to_str(double %faddtmp137)
+  %281 = call ptr @moksha_box_string(ptr %280)
+  %282 = call ptr @moksha_string_concat(ptr %278, ptr %281)
+  %print_unbox138 = call ptr @moksha_unbox_string(ptr %282)
+  %283 = call i32 (ptr, ...) @printf(ptr @153, ptr %print_unbox138)
+  %284 = call ptr @moksha_box_string(ptr @154)
+  store ptr %284, ptr %numStr, align 8
+  store ptr %284, ptr %numStr139, align 8
+  %285 = load ptr, ptr %numStr139, align 8
+  %unbox_i140 = call i32 @moksha_unbox_int(ptr %285)
   store i32 %unbox_i140, ptr %numt, align 4
   store i32 %unbox_i140, ptr %numt141, align 4
-  %288 = call ptr @moksha_box_string(ptr @155)
-  %289 = load i32, ptr %numt141, align 4
-  %addtmp142 = add i32 %289, 1
-  %290 = call ptr @moksha_int_to_str(i32 %addtmp142)
-  %291 = call ptr @moksha_box_string(ptr %290)
-  %292 = call ptr @moksha_string_concat(ptr %288, ptr %291)
-  %print_unbox143 = call ptr @moksha_unbox_string(ptr %292)
-  %293 = call i32 (ptr, ...) @printf(ptr @156, ptr %print_unbox143)
+  %286 = call ptr @moksha_box_string(ptr @155)
+  %287 = load i32, ptr %numt141, align 4
+  %addtmp142 = add i32 %287, 1
+  %288 = call ptr @moksha_int_to_str(i32 %addtmp142)
+  %289 = call ptr @moksha_box_string(ptr %288)
+  %290 = call ptr @moksha_string_concat(ptr %286, ptr %289)
+  %print_unbox143 = call ptr @moksha_unbox_string(ptr %290)
+  %291 = call i32 (ptr, ...) @printf(ptr @156, ptr %print_unbox143)
   store i32 500, ptr %x, align 4
   store i32 500, ptr %x144, align 4
-  %294 = call ptr @moksha_box_string(ptr @157)
-  %295 = load i32, ptr %x144, align 4
-  %296 = call ptr @moksha_int_to_str(i32 %295)
-  %297 = call ptr @moksha_box_string(ptr %296)
-  %298 = call ptr @moksha_string_concat(ptr %294, ptr %297)
-  store ptr %298, ptr %s, align 8
-  store ptr %298, ptr %s145, align 8
-  %299 = call ptr @moksha_box_string(ptr @158)
-  %300 = load ptr, ptr %s145, align 8
-  %301 = call ptr @moksha_string_concat(ptr %299, ptr %300)
-  %print_unbox146 = call ptr @moksha_unbox_string(ptr %301)
-  %302 = call i32 (ptr, ...) @printf(ptr @159, ptr %print_unbox146)
-  %303 = call ptr @moksha_box_string(ptr @160)
-  %print_unbox147 = call ptr @moksha_unbox_string(ptr %303)
-  %304 = call i32 (ptr, ...) @printf(ptr @161, ptr %print_unbox147)
+  %292 = call ptr @moksha_box_string(ptr @157)
+  %293 = load i32, ptr %x144, align 4
+  %294 = call ptr @moksha_int_to_str(i32 %293)
+  %295 = call ptr @moksha_box_string(ptr %294)
+  %296 = call ptr @moksha_string_concat(ptr %292, ptr %295)
+  store ptr %296, ptr %s, align 8
+  store ptr %296, ptr %s145, align 8
+  %297 = call ptr @moksha_box_string(ptr @158)
+  %298 = load ptr, ptr %s145, align 8
+  %299 = call ptr @moksha_string_concat(ptr %297, ptr %298)
+  %print_unbox146 = call ptr @moksha_unbox_string(ptr %299)
+  %300 = call i32 (ptr, ...) @printf(ptr @159, ptr %print_unbox146)
+  %301 = call ptr @moksha_box_string(ptr @160)
+  %print_unbox147 = call ptr @moksha_unbox_string(ptr %301)
+  %302 = call i32 (ptr, ...) @printf(ptr @161, ptr %print_unbox147)
   ret i32 0
 }
 

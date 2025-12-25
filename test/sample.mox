@@ -1,0 +1,7 @@
+
+int a = 60
+int b = 9
+println(`Result :- ${a + b} , done`)
+
+int c = 7
+println(`Result :- ${a + c} , done`)

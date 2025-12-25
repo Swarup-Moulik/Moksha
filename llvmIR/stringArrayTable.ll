@@ -1,8 +1,8 @@
 ; ModuleID = 'moksha_module'
 source_filename = "moksha_module"
 
-@__exception_flag = global i32 0
-@__exception_val = global ptr null
+@__exception_flag = external global i32
+@__exception_val = external global ptr
 @0 = private unnamed_addr constant [29 x i8] c"TEST: Strings (Any & Strict)\00", align 1
 @1 = private unnamed_addr constant [4 x i8] c"%s\0A\00", align 1
 @2 = private unnamed_addr constant [6 x i8] c"Hello\00", align 1
@@ -158,13 +158,13 @@ declare ptr @memcpy(ptr, ptr, i64)
 
 declare ptr @memset(ptr, i32, i64)
 
-declare i32 @sprintf(ptr, ptr, ...)
-
-declare i32 @fprintf(ptr, ptr, ...)
-
 declare i32 @strlen(ptr)
 
 declare i32 @puts(ptr)
+
+declare i32 @sprintf(ptr, ptr, ...)
+
+declare i32 @strcmp(ptr, ptr)
 
 declare ptr @moksha_box_int(i32)
 
@@ -196,6 +196,8 @@ declare ptr @moksha_int_to_ascii(i32)
 
 declare ptr @moksha_double_to_str(double)
 
+declare ptr @moksha_ptr_to_str(ptr)
+
 declare ptr @moksha_alloc_array(i32)
 
 declare ptr @moksha_alloc_table(i32)
@@ -209,6 +211,8 @@ declare ptr @moksha_table_get(ptr, ptr)
 declare void @moksha_table_delete(ptr, ptr)
 
 declare ptr @moksha_table_keys(ptr)
+
+declare ptr @moksha_array_get_unsafe(ptr, i32)
 
 declare ptr @moksha_array_get(ptr, i32)
 
@@ -225,6 +229,8 @@ declare ptr @moksha_string_concat(ptr, ptr)
 declare i32 @moksha_get_length(ptr)
 
 declare ptr @moksha_string_get_char(ptr, i32)
+
+declare i32 @moksha_strlen(ptr)
 
 declare i32 @moksha_read_int()
 
@@ -243,12 +249,6 @@ declare ptr @moksha_create_closure(ptr, i32, ptr)
 declare ptr @moksha_get_closure_env(ptr)
 
 declare ptr @moksha_get_closure_func(ptr)
-
-declare i32 @moksha_strlen(ptr)
-
-declare i32 @strcmp(ptr, ptr)
-
-declare ptr @moksha_ptr_to_str(ptr)
 
 define i32 @main() {
 entry:
@@ -376,72 +376,80 @@ next_stmt20:                                      ; preds = %next_stmt17
   %38 = call ptr @moksha_string_concat(ptr %36, ptr %37)
   %39 = load i32, ptr %count19, align 4
   %i2s = call ptr @moksha_int_to_str(i32 %39)
-  %40 = call ptr @moksha_box_string(ptr %i2s)
-  %41 = call ptr @moksha_string_concat(ptr %38, ptr %40)
-  %42 = call ptr @moksha_box_string(ptr @12)
-  %43 = call ptr @moksha_string_concat(ptr %41, ptr %42)
-  %44 = load i32, ptr %count19, align 4
-  %addtmp = add i32 %44, 1
+  %40 = call ptr @moksha_string_concat(ptr %38, ptr %i2s)
+  %41 = call ptr @moksha_box_string(ptr @12)
+  %42 = call ptr @moksha_string_concat(ptr %40, ptr %41)
+  %43 = load i32, ptr %count19, align 4
+  %addtmp = add i32 %43, 1
   %i2s22 = call ptr @moksha_int_to_str(i32 %addtmp)
-  %45 = call ptr @moksha_box_string(ptr %i2s22)
-  %46 = call ptr @moksha_string_concat(ptr %43, ptr %45)
-  store ptr %46, ptr %template, align 8
-  store ptr %46, ptr %template23, align 8
-  %47 = load i32, ptr @__exception_flag, align 4
-  %48 = icmp ne i32 %47, 0
-  br i1 %48, label %unwind25, label %next_stmt24
+  %44 = call ptr @moksha_string_concat(ptr %42, ptr %i2s22)
+  store ptr %44, ptr %template, align 8
+  store ptr %44, ptr %template23, align 8
+  %45 = load i32, ptr @__exception_flag, align 4
+  %46 = icmp ne i32 %45, 0
+  br i1 %46, label %unwind25, label %next_stmt24
 
 unwind21:                                         ; preds = %next_stmt17
   ret void
 
 next_stmt24:                                      ; preds = %next_stmt20
-  %49 = call ptr @moksha_box_string(ptr @13)
-  %50 = load ptr, ptr %template23, align 8
-  %51 = call ptr @moksha_string_concat(ptr %49, ptr %50)
-  %print_unbox26 = call ptr @moksha_unbox_string(ptr %51)
-  %52 = call i32 (ptr, ...) @printf(ptr @14, ptr %print_unbox26)
-  %53 = load i32, ptr @__exception_flag, align 4
-  %54 = icmp ne i32 %53, 0
-  br i1 %54, label %unwind28, label %next_stmt27
+  %47 = call ptr @moksha_box_string(ptr @13)
+  %48 = load ptr, ptr %template23, align 8
+  %49 = call ptr @moksha_string_concat(ptr %47, ptr %48)
+  %print_unbox26 = call ptr @moksha_unbox_string(ptr %49)
+  %50 = call i32 (ptr, ...) @printf(ptr @14, ptr %print_unbox26)
+  %51 = load i32, ptr @__exception_flag, align 4
+  %52 = icmp ne i32 %51, 0
+  br i1 %52, label %unwind28, label %next_stmt27
 
 unwind25:                                         ; preds = %next_stmt20
   ret void
 
 next_stmt27:                                      ; preds = %next_stmt24
-  %55 = call ptr @moksha_box_string(ptr @15)
-  %56 = call ptr @moksha_box_string(ptr @16)
-  %57 = call ptr @moksha_string_concat(ptr %55, ptr %56)
-  %58 = call ptr @moksha_box_string(ptr @17)
-  %59 = call ptr @moksha_box_string(ptr @18)
+  %53 = call ptr @moksha_box_string(ptr @15)
+  %54 = call ptr @moksha_box_string(ptr @16)
+  %55 = call ptr @moksha_string_concat(ptr %53, ptr %54)
+  %56 = call ptr @moksha_box_string(ptr @17)
+  %57 = call ptr @moksha_box_string(ptr @18)
+  %58 = call ptr @moksha_string_concat(ptr %56, ptr %57)
+  %59 = load ptr, ptr %strictStr1, align 8
   %60 = call ptr @moksha_string_concat(ptr %58, ptr %59)
-  %61 = load ptr, ptr %strictStr1, align 8
-  %62 = call ptr @moksha_string_concat(ptr %60, ptr %61)
-  %63 = call ptr @moksha_string_concat(ptr %57, ptr %62)
-  %64 = call ptr @moksha_box_string(ptr @19)
-  %65 = call ptr @moksha_string_concat(ptr %63, ptr %64)
-  store ptr %65, ptr %nested, align 8
-  store ptr %65, ptr %nested29, align 8
-  %66 = load i32, ptr @__exception_flag, align 4
-  %67 = icmp ne i32 %66, 0
-  br i1 %67, label %unwind31, label %next_stmt30
+  %61 = call ptr @moksha_string_concat(ptr %55, ptr %60)
+  %62 = call ptr @moksha_box_string(ptr @19)
+  %63 = call ptr @moksha_string_concat(ptr %61, ptr %62)
+  store ptr %63, ptr %nested, align 8
+  store ptr %63, ptr %nested29, align 8
+  %64 = load i32, ptr @__exception_flag, align 4
+  %65 = icmp ne i32 %64, 0
+  br i1 %65, label %unwind31, label %next_stmt30
 
 unwind28:                                         ; preds = %next_stmt24
   ret void
 
 next_stmt30:                                      ; preds = %next_stmt27
-  %68 = call ptr @moksha_box_string(ptr @20)
-  %69 = load ptr, ptr %nested29, align 8
-  %70 = call ptr @moksha_string_concat(ptr %68, ptr %69)
-  %print_unbox32 = call ptr @moksha_unbox_string(ptr %70)
-  %71 = call i32 (ptr, ...) @printf(ptr @21, ptr %print_unbox32)
-  %72 = load i32, ptr @__exception_flag, align 4
-  %73 = icmp ne i32 %72, 0
-  br i1 %73, label %unwind34, label %next_stmt33
+  %66 = call ptr @moksha_box_string(ptr @20)
+  %67 = load ptr, ptr %nested29, align 8
+  %68 = call ptr @moksha_string_concat(ptr %66, ptr %67)
+  %print_unbox32 = call ptr @moksha_unbox_string(ptr %68)
+  %69 = call i32 (ptr, ...) @printf(ptr @21, ptr %print_unbox32)
+  %70 = load i32, ptr @__exception_flag, align 4
+  %71 = icmp ne i32 %70, 0
+  br i1 %71, label %unwind34, label %next_stmt33
 
 unwind31:                                         ; preds = %next_stmt27
   ret void
 
 next_stmt33:                                      ; preds = %next_stmt30
+  %72 = load ptr, ptr %nested29, align 8
+  call void @moksha_free(ptr %72)
+  %73 = load ptr, ptr %template23, align 8
+  call void @moksha_free(ptr %73)
+  %74 = load ptr, ptr %escaped13, align 8
+  call void @moksha_free(ptr %74)
+  %75 = load ptr, ptr %combined7, align 8
+  call void @moksha_free(ptr %75)
+  %76 = load ptr, ptr %strictStr1, align 8
+  call void @moksha_free(ptr %76)
   ret void
 
 unwind34:                                         ; preds = %next_stmt30
@@ -772,28 +780,30 @@ next_stmt59:                                      ; preds = %next_stmt56
   %138 = load ptr, ptr %k152, align 8
   %139 = call ptr @moksha_table_get(ptr %137, ptr %138)
   %any_to_s = call ptr @moksha_any_to_str(ptr %139)
-  %140 = call ptr @moksha_box_string(ptr %any_to_s)
-  %141 = call ptr @moksha_string_concat(ptr %136, ptr %140)
-  %142 = call ptr @moksha_box_string(ptr @49)
-  %143 = call ptr @moksha_string_concat(ptr %141, ptr %142)
-  %144 = load ptr, ptr %point58, align 8
-  %145 = load ptr, ptr %k255, align 8
-  %146 = call ptr @moksha_table_get(ptr %144, ptr %145)
-  %any_to_s61 = call ptr @moksha_any_to_str(ptr %146)
-  %147 = call ptr @moksha_box_string(ptr %any_to_s61)
-  %148 = call ptr @moksha_string_concat(ptr %143, ptr %147)
-  %149 = call ptr @moksha_box_string(ptr @50)
-  %150 = call ptr @moksha_string_concat(ptr %148, ptr %149)
-  %print_unbox62 = call ptr @moksha_unbox_string(ptr %150)
-  %151 = call i32 (ptr, ...) @printf(ptr @51, ptr %print_unbox62)
-  %152 = load i32, ptr @__exception_flag, align 4
-  %153 = icmp ne i32 %152, 0
-  br i1 %153, label %unwind64, label %next_stmt63
+  %140 = call ptr @moksha_string_concat(ptr %136, ptr %any_to_s)
+  %141 = call ptr @moksha_box_string(ptr @49)
+  %142 = call ptr @moksha_string_concat(ptr %140, ptr %141)
+  %143 = load ptr, ptr %point58, align 8
+  %144 = load ptr, ptr %k255, align 8
+  %145 = call ptr @moksha_table_get(ptr %143, ptr %144)
+  %any_to_s61 = call ptr @moksha_any_to_str(ptr %145)
+  %146 = call ptr @moksha_string_concat(ptr %142, ptr %any_to_s61)
+  %147 = call ptr @moksha_box_string(ptr @50)
+  %148 = call ptr @moksha_string_concat(ptr %146, ptr %147)
+  %print_unbox62 = call ptr @moksha_unbox_string(ptr %148)
+  %149 = call i32 (ptr, ...) @printf(ptr @51, ptr %print_unbox62)
+  %150 = load i32, ptr @__exception_flag, align 4
+  %151 = icmp ne i32 %150, 0
+  br i1 %151, label %unwind64, label %next_stmt63
 
 unwind60:                                         ; preds = %next_stmt56
   ret void
 
 next_stmt63:                                      ; preds = %next_stmt59
+  %152 = load ptr, ptr %point58, align 8
+  call void @moksha_free(ptr %152)
+  %153 = load ptr, ptr %config1, align 8
+  call void @moksha_free(ptr %153)
   ret void
 
 unwind64:                                         ; preds = %next_stmt59
@@ -1742,6 +1752,30 @@ unwind215:                                        ; preds = %next_stmt211
   ret void
 
 next_stmt217:                                     ; preds = %next_stmt214
+  %312 = load ptr, ptr %grid210, align 8
+  call void @moksha_free(ptr %312)
+  %313 = load ptr, ptr %names194, align 8
+  call void @moksha_free(ptr %313)
+  %314 = load ptr, ptr %flags188, align 8
+  call void @moksha_free(ptr %314)
+  %315 = load ptr, ptr %prices179, align 8
+  call void @moksha_free(ptr %315)
+  %316 = load ptr, ptr %gen163, align 8
+  call void @moksha_free(ptr %316)
+  %317 = load ptr, ptr %generic155, align 8
+  call void @moksha_free(ptr %317)
+  %318 = load ptr, ptr %vec147, align 8
+  call void @moksha_free(ptr %318)
+  %319 = load ptr, ptr %dyn131, align 8
+  call void @moksha_free(ptr %319)
+  %320 = load ptr, ptr %matrix67, align 8
+  call void @moksha_free(ptr %320)
+  %321 = load ptr, ptr %bArr46, align 8
+  call void @moksha_free(ptr %321)
+  %322 = load ptr, ptr %sArr32, align 8
+  call void @moksha_free(ptr %322)
+  %323 = load ptr, ptr %arr1, align 8
+  call void @moksha_free(ptr %323)
   ret void
 
 unwind218:                                        ; preds = %next_stmt214
