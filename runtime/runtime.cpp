@@ -1,12 +1,9 @@
 #include <iostream>
-#include <vector>
-#include <string>
-#include <unordered_map>
 #include <cstring>
 #include <cstdlib>
-#include <stdexcept>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 
 // --- Type Definitions ---
 
@@ -54,11 +51,9 @@ struct MokshaDouble
 struct MokshaString
 {
     MokshaHeader header;
-    char *val;
     size_t cachedHash;
-    ~MokshaString() {
-        if (val) free(val);
-    }
+    int32_t length;
+    char val[]; // C99 Flexible Array Member
 };
 
 struct MokshaBool
@@ -92,60 +87,34 @@ struct MokshaFloat
 struct MokshaArray
 {
     MokshaHeader header;
-    std::vector<void *> data;
+    int32_t capacity;
+    int32_t length;
+    void *data[]; // C99 Flexible Array Member
 };
 
 // Closure Wrapper
 struct MokshaClosure
 {
     MokshaHeader header;
-    void *funcPtr;                // The raw function pointer
-    std::vector<uint8_t> envData; // The captured environment (byte buffer)
+    void *funcPtr;
+    size_t envSize;
+    uint8_t envData[]; // FAM for environment
 };
 
 extern "C" void *moksha_box_string(char *v); // Forward declaration
 
-// --- Hash & Equality for Table ---
-struct MokshaKeyHash
+struct TableEntry
 {
-    std::size_t operator()(void *k) const
-    {
-        if (!k)
-            return 0;
-        MokshaHeader *h = (MokshaHeader *)k;
-        if (h->type == TYPE_STRING)
-        {
-            return ((MokshaString *)k)->cachedHash;
-        }
-        // Fallback to pointer hash
-        return std::hash<void *>{}(k);
-    }
-};
-
-struct MokshaKeyEqual
-{
-    bool operator()(void *lhs, void *rhs) const
-    {
-        if (lhs == rhs)
-            return true;
-        if (!lhs || !rhs)
-            return false;
-
-        MokshaHeader *h1 = (MokshaHeader *)lhs;
-        MokshaHeader *h2 = (MokshaHeader *)rhs;
-
-        if (h1->type == TYPE_STRING && h2->type == TYPE_STRING)
-        {
-            return strcmp(((MokshaString *)lhs)->val, ((MokshaString *)rhs)->val) == 0;
-        }
-        return false;
-    }
+    void *key;
+    void *value;
 };
 
 struct MokshaTable
 {
     MokshaHeader header;
-    std::unordered_map<void *, void *, MokshaKeyHash, MokshaKeyEqual> data;
+    int32_t capacity;
+    int32_t count;
+    TableEntry *entries; // Flat array
 };
 
 // --- Helpers ---
@@ -167,14 +136,124 @@ const char *internal_get_str(void *ptr)
     return "";
 }
 
-std::vector<MokshaArray *> globalArrayPool;
-std::vector<MokshaTable *> globalTablePool;
 static void *globalCharCache[256] = {nullptr};
+
+// --- Table Logic (Linear Probing) ---
+// FNV-1a Hash
+size_t hash_key(void *key)
+{
+    if (!key)
+        return 0;
+    MokshaHeader *h = (MokshaHeader *)key;
+    if (h->type == TYPE_STRING)
+        return ((MokshaString *)key)->cachedHash;
+
+    // Pointer Hash for objects/arrays
+    size_t x = (size_t)key;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = (x >> 16) ^ x;
+    return x;
+}
+
+bool keys_equal(void *k1, void *k2)
+{
+    if (k1 == k2)
+        return true;
+    if (!k1 || !k2)
+        return false;
+    MokshaHeader *h1 = (MokshaHeader *)k1;
+    MokshaHeader *h2 = (MokshaHeader *)k2;
+
+    if (h1->type == TYPE_STRING && h2->type == TYPE_STRING)
+    {
+        MokshaString *s1 = (MokshaString *)k1;
+        MokshaString *s2 = (MokshaString *)k2;
+        if (s1->cachedHash != s2->cachedHash)
+            return false; // Fast fail
+        if (s1->length != s2->length)
+            return false;
+        return memcmp(s1->val, s2->val, s1->length) == 0;
+    }
+    return false;
+}
+
+TableEntry *table_find_entry(TableEntry *entries, int32_t capacity, void *key)
+{
+    size_t idx = hash_key(key) & (capacity - 1);
+    TableEntry *tombstone = nullptr;
+
+    while (true)
+    {
+        TableEntry *entry = &entries[idx];
+        if (entry->key == nullptr)
+        {
+            if (entry->value == nullptr)
+            { // Empty
+                return tombstone != nullptr ? tombstone : entry;
+            }
+            else
+            { // Tombstone (deleted)
+                if (tombstone == nullptr)
+                    tombstone = entry;
+            }
+        }
+        else if (keys_equal(entry->key, key))
+        {
+            return entry;
+        }
+        idx = (idx + 1) & (capacity - 1);
+    }
+}
 
 // --- External C ABI (Linked by LLVM) ---
 
 extern "C"
 {
+    void *moksha_any_to_str(void *ptr);
+
+    int32_t moksha_table_capacity(void *tablePtr)
+    {
+        if (!tablePtr)
+            return 0;
+        return ((MokshaTable *)tablePtr)->capacity;
+    }
+
+    void *moksha_table_get_entry_key(void *tablePtr, int32_t index)
+    {
+        // Unsafe access for speed. CodeGen ensures index < capacity.
+        return ((MokshaTable *)tablePtr)->entries[index].key;
+    }
+
+    void *moksha_table_get_entry_val(void *tablePtr, int32_t index)
+    {
+        return ((MokshaTable *)tablePtr)->entries[index].value;
+    }
+
+    void **moksha_get_raw_ptr(void *arrPtr)
+    {
+        return ((MokshaArray *)arrPtr)->data;
+    }
+
+    void moksha_print_val(void *val, int32_t isNewLine)
+    {
+        char *str = (char *)moksha_any_to_str(val);
+        printf("%s%s", str, isNewLine ? "\n" : "");
+        free(str); // Fixes the memory leak!
+    }
+
+    void *moksha_get_static_string(void **handlePtr, char *content)
+    {
+        if (*handlePtr != nullptr)
+        {
+            return *handlePtr;
+        }
+        void *strObj = moksha_box_string(content);
+        ((MokshaHeader *)strObj)->isStatic = true;
+        *handlePtr = strObj;
+        return strObj;
+    }
+
     void moksha_throw_exception(void *v)
     {
         __exception_val = v;  // Store the error object
@@ -196,6 +275,18 @@ extern "C"
         case TYPE_INT:
             delete (MokshaInt *)ptr;
             break;
+        case TYPE_CHAR:
+            delete (MokshaChar *)ptr;
+            break;
+        case TYPE_SHORT:
+            delete (MokshaShort *)ptr;
+            break;
+        case TYPE_LONG:
+            delete (MokshaLong *)ptr;
+            break;
+        case TYPE_FLOAT:
+            delete (MokshaFloat *)ptr;
+            break;
         case TYPE_DOUBLE:
             delete (MokshaDouble *)ptr;
             break;
@@ -203,24 +294,23 @@ extern "C"
             delete (MokshaBool *)ptr;
             break;
         case TYPE_STRING:
-            delete (MokshaString *)ptr;
-            break; // Calls ~MokshaString
+            free(ptr);
+            break;
         case TYPE_ARRAY:
         {
-            MokshaArray *arr = (MokshaArray *)ptr;
-            arr->data.clear();              // Keep capacity, clear items
-            globalArrayPool.push_back(arr); // Return to pool
+            free(ptr);
             break;
         }
         case TYPE_TABLE:
         {
-            MokshaTable *tbl = (MokshaTable *)ptr;
-            tbl->data.clear();
-            globalTablePool.push_back(tbl); // Return to pool
+            MokshaTable *t = (MokshaTable *)ptr;
+            if (t->entries)
+                free(t->entries);
+            delete t;
             break;
         }
         case TYPE_CLOSURE:
-            delete (MokshaClosure *)ptr;
+            free(ptr);
             break;
         default:
             free(ptr);
@@ -258,16 +348,24 @@ extern "C"
 
     void *moksha_box_string(char *v)
     {
-        MokshaString *ptr = new MokshaString();
-        ptr->header.type = TYPE_STRING;
-        ptr->val = strdup(v ? v : "");
+        int32_t len = v ? strlen(v) : 0;
+        size_t totalSize = sizeof(MokshaString) + len + 1;
 
-        // FNV-1a Hash
-        size_t hash = 14695981039346656037ULL;
-        for (char *p = ptr->val; *p; ++p)
+        MokshaString *ptr = (MokshaString *)malloc(totalSize);
+        ptr->header.type = TYPE_STRING;
+        ptr->header.isStatic = false;
+        ptr->length = len;
+
+        if (len > 0)
+            memcpy(ptr->val, v, len);
+        ptr->val[len] = '\0';
+
+        // Hash
+        size_t hash = 2166136261u;
+        for (int i = 0; i < len; i++)
         {
-            hash ^= (unsigned char)*p;
-            hash *= 1099511628211ULL;
+            hash ^= (uint8_t)ptr->val[i];
+            hash *= 16777619;
         }
         ptr->cachedHash = hash;
 
@@ -283,7 +381,7 @@ extern "C"
         return b;
     }
 
-    void *moksha_box_short(int8_t v)
+    void *moksha_box_short(int16_t v)
     {
         MokshaShort *b = new MokshaShort();
         b->header.type = TYPE_SHORT;
@@ -292,7 +390,7 @@ extern "C"
         return b;
     }
 
-    void *moksha_box_long(int8_t v)
+    void *moksha_box_long(int64_t v)
     {
         MokshaLong *b = new MokshaLong();
         b->header.type = TYPE_LONG;
@@ -301,7 +399,7 @@ extern "C"
         return b;
     }
 
-    void *moksha_box_float(int8_t v)
+    void *moksha_box_float(float v)
     {
         MokshaFloat *b = new MokshaFloat();
         b->header.type = TYPE_FLOAT;
@@ -322,7 +420,7 @@ extern "C"
         if (h->type == TYPE_DOUBLE)
             return (int32_t)((MokshaDouble *)ptr)->val;
 
-        // [FIX] Support Parsing and ASCII
+        // Support Parsing and ASCII
         if (h->type == TYPE_STRING)
         {
             char *str = ((MokshaString *)ptr)->val;
@@ -366,7 +464,7 @@ extern "C"
         if (h->type == TYPE_INT)
             return (double)((MokshaInt *)ptr)->val;
 
-        // [FIX] Support Parsing Double ("3.14")
+        // Support Parsing Double ("3.14")
         if (h->type == TYPE_STRING)
         {
             char *str = ((MokshaString *)ptr)->val;
@@ -399,11 +497,11 @@ extern "C"
     char *moksha_unbox_string(void *ptr)
     {
         if (!ptr)
-            return strdup("");
+            return (char *)"";
         MokshaHeader *h = (MokshaHeader *)ptr;
         if (h->type == TYPE_STRING)
-            return strdup(((MokshaString *)ptr)->val);
-        return strdup("");
+            return ((MokshaString *)ptr)->val;
+        return (char *)"";
     }
 
     // --- String Ops ---
@@ -433,7 +531,7 @@ extern "C"
         {
             MokshaArray *arr = (MokshaArray *)ptr;
             std::string s = "[";
-            for (size_t i = 0; i < arr->data.size(); ++i)
+            for (int32_t i = 0; i < arr->length; ++i)
             {
                 if (i > 0)
                     s += ", ";
@@ -449,18 +547,26 @@ extern "C"
             MokshaTable *tbl = (MokshaTable *)ptr;
             std::string s = "{";
             bool first = true;
-            for (auto const &[key, val] : tbl->data)
+
+            // Iterate over the flat 'entries' array instead of 'data' map
+            for (int32_t i = 0; i < tbl->capacity; i++)
             {
-                if (!first)
-                    s += ", ";
-                first = false;
-                char *kStr = (char *)moksha_any_to_str(key);
-                s += kStr;
-                free(kStr);
-                s += ": ";
-                char *vStr = (char *)moksha_any_to_str(val);
-                s += vStr;
-                free(vStr);
+                if (tbl->entries[i].key != nullptr)
+                {
+                    if (!first)
+                        s += ", ";
+                    first = false;
+
+                    char *kStr = (char *)moksha_any_to_str(tbl->entries[i].key);
+                    s += kStr;
+                    free(kStr);
+
+                    s += ": ";
+
+                    char *vStr = (char *)moksha_any_to_str(tbl->entries[i].value);
+                    s += vStr;
+                    free(vStr);
+                }
             }
             s += "}";
             return strdup(s.c_str());
@@ -496,128 +602,140 @@ extern "C"
         return buffer;
     }
 
-    //
     void *moksha_string_concat(void *s1, void *s2)
     {
-        const char *c1 = internal_get_str(s1);
-        const char *c2 = internal_get_str(s2);
+        MokshaString *ms1 = (MokshaString *)s1;
+        MokshaString *ms2 = (MokshaString *)s2;
 
-        size_t len1 = strlen(c1);
-        size_t len2 = strlen(c2);
+        // Fast null checks
+        int32_t l1 = ms1 ? ms1->length : 0;
+        int32_t l2 = ms2 ? ms2->length : 0;
+        int32_t newLen = l1 + l2;
 
-        // Allocate ONCE
-        char *buffer = (char *)malloc(len1 + len2 + 1);
+        size_t totalSize = sizeof(MokshaString) + newLen + 1;
+        MokshaString *res = (MokshaString *)malloc(totalSize);
 
-        // Copy
-        memcpy(buffer, c1, len1);
-        memcpy(buffer + len1, c2, len2);
-        buffer[len1 + len2] = '\0';
+        res->header.type = TYPE_STRING;
+        res->header.isStatic = false;
+        res->length = newLen;
 
-        // Optimization: Manually create struct to avoid strdup inside moksha_box_string
-        MokshaString *b = new MokshaString();
-        b->header.type = TYPE_STRING;
-        b->header.isStatic = false;
-        b->val = buffer; // Take ownership!
+        if (l1 > 0)
+            memcpy(res->val, ms1->val, l1);
+        if (l2 > 0)
+            memcpy(res->val + l1, ms2->val, l2);
+        res->val[newLen] = '\0';
 
-        // Calculate Hash (Optional, for Table keys)
-        size_t hash = 14695981039346656037ULL;
-        for (char *p = b->val; *p; ++p)
+        // Hash
+        size_t hash = 2166136261u;
+        for (int i = 0; i < newLen; i++)
         {
-            hash ^= (unsigned char)*p;
-            hash *= 1099511628211ULL;
+            hash ^= (uint8_t)res->val[i];
+            hash *= 16777619;
         }
-        b->cachedHash = hash;
+        res->cachedHash = hash;
 
-        return (void *)b;
+        return res;
     }
 
     int32_t moksha_strlen(void *ptr)
     {
         if (!ptr)
             return 0;
-        return (int32_t)strlen(internal_get_str(ptr));
+        // O(1) Lookup
+        return ((MokshaString *)ptr)->length;
+    }
+
+    int32_t moksha_get_length(void *targetPtr)
+    {
+        if (!targetPtr)
+            return 0;
+        MokshaHeader *h = (MokshaHeader *)targetPtr;
+        if (h->type == TYPE_ARRAY)
+            return ((MokshaArray *)targetPtr)->length;
+        if (h->type == TYPE_STRING)
+            return ((MokshaString *)targetPtr)->length;
+        return 0;
     }
 
     void *moksha_string_get_char(void *ptr, int32_t index)
     {
-        if (!ptr)
-            return moksha_box_string((char *)"");
         MokshaString *s = (MokshaString *)ptr;
-        if (index < 0 || s->val[index] == '\0')
-        {
-            // Simple bounds check: if we hit null terminator or negative
-            char buffer[128];
-            sprintf(buffer, "IndexOutOfBoundsException: String index %d", index);
-            moksha_throw_exception(moksha_box_string(buffer));
+
+        // Bounds Check
+        if (index < 0 || index >= s->length)
             return moksha_box_string((char *)"");
-        }
 
-        // 2. Cache Lookup (Fast)
-        unsigned char uc = (unsigned char)s->val[index];
+        uint8_t c = (uint8_t)s->val[index];
 
-        // HIT
-        if (globalCharCache[uc] != nullptr)
+        if (globalCharCache[c] != nullptr)
         {
-            return globalCharCache[uc];
+            return globalCharCache[c];
         }
 
-        // MISS (Create & Cache)
-        char buffer[2] = {(char)uc, '\0'};
-        MokshaString *ms = new MokshaString();
-        ms->header.type = TYPE_STRING;
-        ms->header.isStatic = true;
-        ms->val = strdup(buffer);
+        // Cache Miss: Create, Mark Static, Store
+        char b[2] = {(char)c, 0};
+        void *newStr = moksha_box_string(b);
+        ((MokshaHeader *)newStr)->isStatic = true; // Prevent free()
 
-        globalCharCache[uc] = (void *)ms;
-        return (void *)ms;
+        globalCharCache[c] = newStr;
+        return newStr;
     }
 
     // --- Array Operations ---
     void *moksha_alloc_array(int32_t cap)
     {
         if (cap < 0)
-        {
-            moksha_throw_exception(moksha_box_string((char *)"AllocationException: Negative array size"));
-            return nullptr;
-        }
-        MokshaArray *arr;
-        if (!globalArrayPool.empty())
-        {
-            // Recycle from Pool (Fast!)
-            arr = globalArrayPool.back();
-            globalArrayPool.pop_back();
-        }
-        else
-        {
-            // Create New (Slow)
-            arr = new MokshaArray();
-            arr->header.type = TYPE_ARRAY;
-        }
+            cap = 4;
+        if (cap == 0)
+            cap = 4; // Min capacity
+
+        // Malloc the header + pointers consecutively
+        size_t totalSize = sizeof(MokshaArray) + (cap * sizeof(void *));
+        MokshaArray *arr = (MokshaArray *)malloc(totalSize);
+
+        arr->header.type = TYPE_ARRAY;
         arr->header.isStatic = false;
-        arr->data.reserve(cap > 0 ? cap : 4);
+        arr->capacity = cap;
+        arr->length = 0;
+
         return (void *)arr;
     }
 
     void *moksha_array_push_val(void *arrPtr, void *val)
     {
-        if (arrPtr)
-            ((MokshaArray *)arrPtr)->data.push_back(val);
-        return arrPtr;
+        if (!arrPtr)
+            return nullptr;
+        MokshaArray *arr = (MokshaArray *)arrPtr;
+
+        if (arr->length >= arr->capacity)
+        {
+            int32_t newCap = arr->capacity * 2;
+            size_t newSize = sizeof(MokshaArray) + (newCap * sizeof(void *));
+
+            MokshaArray *newArr = (MokshaArray *)realloc(arr, newSize);
+            if (!newArr)
+                panic("Out of memory during array resize");
+
+            newArr->capacity = newCap;
+            arr = newArr;
+        }
+
+        arr->data[arr->length++] = val;
+        return (void *)arr; // Return potentially new pointer
     }
 
     void *moksha_array_get(void *arrPtr, int32_t index)
     {
+        // Safe access with bounds check
         if (!arrPtr)
         {
-            moksha_throw_exception(moksha_box_string((char *)"NullReferenceException: Array is null"));
+            moksha_throw_exception(moksha_box_string((char *)"NullRef"));
             return nullptr;
         }
         MokshaArray *arr = (MokshaArray *)arrPtr;
-        if (index < 0 || index >= (int32_t)arr->data.size())
+        if (index < 0 || index >= arr->length)
         {
-            char buf[128];
-            sprintf(buf, "IndexOutOfBoundsException: Index %d, Size %zu", index, arr->data.size());
-            moksha_throw_exception(moksha_box_string(buf));
+            moksha_throw_exception(moksha_box_string((char *)"IndexOutOfBounds"));
             return nullptr;
         }
         return arr->data[index];
@@ -625,58 +743,44 @@ extern "C"
 
     void *moksha_array_get_unsafe(void *arrPtr, int32_t index)
     {
-        MokshaArray *arr = (MokshaArray *)arrPtr;
-        return arr->data[index]; // Direct access, ZERO overhead
+        return ((MokshaArray *)arrPtr)->data[index];
     }
 
     void moksha_array_set(void *arrPtr, int32_t index, void *val)
     {
-        if (!arrPtr)
-            panic("Null array assignment");
         MokshaArray *arr = (MokshaArray *)arrPtr;
-        if (index < 0 || index >= (int32_t)arr->data.size())
-            panic("Index out of bounds");
         arr->data[index] = val;
     }
 
     void *moksha_alloc_array_fill(int32_t size, void *defaultVal)
     {
-        // [FIX] Add Negative Check
-        if (size < 0)
-        {
-            char buffer[128];
-            sprintf(buffer, "AllocationException: Negative array size %d", size);
-            moksha_throw_exception(moksha_box_string(buffer));
-            return nullptr;
-        }
-
         MokshaArray *arr = (MokshaArray *)moksha_alloc_array(size);
-        arr->data.resize(size, defaultVal);
+        for (int i = 0; i < size; i++)
+            arr->data[i] = defaultVal;
+        arr->length = size;
         return (void *)arr;
-    }
-
-    // This is for Arrays/Tables (Boxed Objects)
-    int32_t moksha_get_length(void *targetPtr)
-    {
-        if (!targetPtr)
-            return 0;
-        MokshaHeader *h = (MokshaHeader *)targetPtr;
-        if (h->type == TYPE_ARRAY)
-            return (int32_t)((MokshaArray *)targetPtr)->data.size();
-        // Fallback for Boxed String if ever passed
-        if (h->type == TYPE_STRING)
-            return (int32_t)strlen(((MokshaString *)targetPtr)->val);
-        return 0;
     }
 
     void *moksha_array_spread(void *targetPtr, void *sourcePtr)
     {
         if (!targetPtr || !sourcePtr)
             return targetPtr;
-        MokshaArray *target = (MokshaArray *)targetPtr;
-        MokshaArray *source = (MokshaArray *)sourcePtr;
-        target->data.insert(target->data.end(), source->data.begin(), source->data.end());
-        return target;
+        MokshaArray *tgt = (MokshaArray *)targetPtr;
+        MokshaArray *src = (MokshaArray *)sourcePtr;
+
+        // Ensure capacity
+        int32_t needed = tgt->length + src->length;
+        if (needed > tgt->capacity)
+        {
+            size_t newSize = sizeof(MokshaArray) + (needed * sizeof(void *));
+            tgt = (MokshaArray *)realloc(tgt, newSize);
+            tgt->capacity = needed;
+        }
+
+        // Memcpy (Fast!)
+        memcpy(tgt->data + tgt->length, src->data, src->length * sizeof(void *));
+        tgt->length = needed;
+        return tgt;
     }
 
     void moksha_array_delete(void *arrPtr, int32_t index)
@@ -684,56 +788,87 @@ extern "C"
         if (!arrPtr)
             return;
         MokshaArray *arr = (MokshaArray *)arrPtr;
-        if (arr->header.type != TYPE_ARRAY)
+        if (index < 0 || index >= arr->length)
             return;
 
-        if (index >= 0 && index < (int32_t)arr->data.size())
+        // Memmove to shift left
+        int32_t moveCount = arr->length - index - 1;
+        if (moveCount > 0)
         {
-            arr->data.erase(arr->data.begin() + index);
+            memmove(arr->data + index, arr->data + index + 1, moveCount * sizeof(void *));
         }
+        arr->length--;
     }
 
     // --- Table Operations ---
+    void table_resize(MokshaTable *t, int32_t newCap)
+    {
+        TableEntry *newEntries = (TableEntry *)calloc(newCap, sizeof(TableEntry));
+
+        // Rehash
+        for (int i = 0; i < t->capacity; i++)
+        {
+            TableEntry *oldEntry = &t->entries[i];
+            if (oldEntry->key == nullptr)
+                continue;
+
+            TableEntry *dest = table_find_entry(newEntries, newCap, oldEntry->key);
+            dest->key = oldEntry->key;
+            dest->value = oldEntry->value;
+        }
+
+        free(t->entries);
+        t->entries = newEntries;
+        t->capacity = newCap;
+    }
+
     void *moksha_alloc_table(int32_t initial_size)
     {
-        MokshaTable *table;
-        if (!globalTablePool.empty())
-        {
-            // Recycle from Pool
-            table = globalTablePool.back();
-            globalTablePool.pop_back();
-        }
-        else
-        {
-            table = new MokshaTable();
-            table->header.type = TYPE_TABLE;
-        }
-        table->header.isStatic = false;
-        return (void *)table;
+        MokshaTable *t = new MokshaTable();
+        t->header = {TYPE_TABLE, false};
+        t->count = 0;
+        t->capacity = (initial_size < 8) ? 8 : initial_size;
+        // Allocate bucket array (calloc zeros it, indicating empty slots)
+        t->entries = (TableEntry *)calloc(t->capacity, sizeof(TableEntry));
+        return t;
     }
 
     void *moksha_table_keys(void *tablePtr)
     {
         if (!tablePtr)
             return moksha_alloc_array(0);
-        MokshaTable *table = (MokshaTable *)tablePtr;
-
-        MokshaArray *arr = (MokshaArray *)moksha_alloc_array(table->data.size());
-
-        // Copy every key from the map into the array
-        for (auto const &[key, val] : table->data)
+        MokshaTable *t = (MokshaTable *)tablePtr;
+        MokshaArray *arr = (MokshaArray *)moksha_alloc_array(t->count);
+        int idx = 0;
+        for (int i = 0; i < t->capacity; i++)
         {
-            arr->data.push_back(key);
+            if (t->entries[i].key != nullptr)
+            {
+                arr->data[idx++] = t->entries[i].key;
+            }
         }
-        return (void *)arr;
+        arr->length = idx;
+        return arr;
     }
 
     void *moksha_table_set(void *tablePtr, void *key, void *val)
     {
         if (!tablePtr)
-            panic("Set null table.");
-        MokshaTable *table = (MokshaTable *)tablePtr;
-        table->data[key] = val;
+            return nullptr;
+        MokshaTable *t = (MokshaTable *)tablePtr;
+
+        if (t->count + 1 > t->capacity * 0.75)
+        {
+            table_resize(t, t->capacity * 2);
+        }
+
+        TableEntry *entry = table_find_entry(t->entries, t->capacity, key);
+        bool isNewKey = (entry->key == nullptr);
+        if (isNewKey)
+            t->count++;
+
+        entry->key = key;
+        entry->value = val;
         return val;
     }
 
@@ -741,24 +876,26 @@ extern "C"
     {
         if (!tablePtr)
             return nullptr;
-        MokshaTable *table = (MokshaTable *)tablePtr;
-        auto it = table->data.find(key);
-        if (it != table->data.end())
-            return it->second;
-        return nullptr;
+        MokshaTable *t = (MokshaTable *)tablePtr;
+        if (t->count == 0)
+            return nullptr;
+        TableEntry *entry = table_find_entry(t->entries, t->capacity, key);
+        return (entry->key == nullptr) ? nullptr : entry->value;
     }
 
     void moksha_table_delete(void *tablePtr, void *key)
     {
         if (!tablePtr)
             return;
-        MokshaTable *table = (MokshaTable *)tablePtr;
-        auto it = table->data.find(key);
-        if (it != table->data.end())
-        {
-            moksha_free(it->second);
-            table->data.erase(it);
-        }
+        MokshaTable *t = (MokshaTable *)tablePtr;
+        if (t->count == 0)
+            return;
+        TableEntry *entry = table_find_entry(t->entries, t->capacity, key);
+        if (entry->key == nullptr)
+            return;
+        // Tombstone
+        entry->key = nullptr;
+        entry->value = (void *)1; // Mark as tombstone (non-null value, null key)
     }
 
     // --- I/O ---
@@ -825,16 +962,20 @@ extern "C"
     // --- Closures ---
     void *moksha_create_closure(void *funcPtr, int32_t captureSize, void *envInit)
     {
-        MokshaClosure *closure = new MokshaClosure();
+        size_t totalSize = sizeof(MokshaClosure) + captureSize;
+        MokshaClosure *closure = (MokshaClosure *)malloc(totalSize);
+
         closure->header.type = TYPE_CLOSURE;
+        closure->header.isStatic = false;
         closure->funcPtr = funcPtr;
+        closure->envSize = captureSize;
+
         if (captureSize > 0)
         {
-            closure->envData.resize(captureSize);
             if (envInit)
-                std::memcpy(closure->envData.data(), envInit, captureSize);
+                memcpy(closure->envData, envInit, captureSize);
             else
-                std::memset(closure->envData.data(), 0, captureSize);
+                memset(closure->envData, 0, captureSize);
         }
         return (void *)closure;
     }
@@ -844,17 +985,14 @@ extern "C"
         if (!closurePtr)
             return nullptr;
         MokshaClosure *closure = (MokshaClosure *)closurePtr;
-        if (closure->envData.empty())
+        if (closure->envSize == 0)
             return nullptr;
-        return (void *)closure->envData.data();
+        return (void *)closure->envData;
     }
 
     void *moksha_get_closure_func(void *closurePtr)
     {
-        if (!closurePtr)
-            return nullptr;
-        MokshaClosure *closure = (MokshaClosure *)closurePtr;
-        return closure->funcPtr;
+        return closurePtr ? ((MokshaClosure *)closurePtr)->funcPtr : nullptr;
     }
 
     extern "C" char *moksha_ptr_to_str(void *ptr)

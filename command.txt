@@ -16,7 +16,7 @@ hyperfine `
   "java Iterable < input.txt"
   ".\Iterable_cpp < input.txt" `
 
-hyperfine --warmup 10 --runs 50  ".\Iterable_c < input.txt" ".\Iterable < input.txt" ".\Iterable_cpp < input.txt" "python Iterable.py < input.txt"
+hyperfine --warmup 10 --runs 50  ".\Iterable_c < input.txt" ".\Iterable < input.txt" ".\Iterable_cpp < input.txt"
 
 hyperfine --shell=none --warmup 20 --runs 250  './errorHandEnumMacro_c'  './errorHandEnumMacro'  './errorHandEnumMacro_cpp'
 

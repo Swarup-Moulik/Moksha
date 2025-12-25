@@ -40,6 +40,7 @@ namespace Moksha
         llvm::Function::Create(llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, true), llvm::Function::ExternalLinkage, "printf", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getInt64Ty()}, false), llvm::Function::ExternalLinkage, "malloc", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getInt64Ty(), builder.getInt64Ty()}, false), llvm::Function::ExternalLinkage, "calloc", module);
+        llvm::Function::Create(llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy(), builder.getInt32Ty()}, false), llvm::Function::ExternalLinkage, "moksha_print_val", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "moksha_free", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getPtrTy()}, false), llvm::Function::ExternalLinkage, "strcpy", module);
         llvm::Function::Create(llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getPtrTy(), builder.getInt64Ty()}, false), llvm::Function::ExternalLinkage, "memcpy", module);
@@ -191,23 +192,19 @@ namespace Moksha
 
     llvm::Value *CodeGenerator::generateArrayAllocation(const std::vector<ExpressionNode *> &dims, size_t dimIndex, llvm::Value *leafDefault)
     {
-        // 1. Evaluate current dimension size
         dims[dimIndex]->accept(*this);
         llvm::Value *size = lastValue;
 
-        // Ensure size is i32
         if (size->getType()->isDoubleTy())
             size = builder.CreateFPToSI(size, builder.getInt32Ty());
         if (!size->getType()->isIntegerTy(32))
             size = builder.CreateZExtOrTrunc(size, builder.getInt32Ty());
 
-        // 2. Base Case: Last Dimension -> Just Allocate and Fill with Leaf Value
         if (dimIndex == dims.size() - 1)
         {
             return builder.CreateCall(module->getFunction("moksha_alloc_array_fill"), {size, leafDefault}, "arr_leaf");
         }
 
-        // 3. Recursive Case: Multidimensional (e.g., int arr[3][3])
         llvm::Value *outerArr = builder.CreateCall(module->getFunction("moksha_alloc_array"), {size}, "outer_arr");
 
         llvm::Function *func = builder.GetInsertBlock()->getParent();
@@ -215,27 +212,36 @@ namespace Moksha
         llvm::BasicBlock *bodyBB = llvm::BasicBlock::Create(context, "alloc_body", func);
         llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(context, "alloc_after", func);
 
-        llvm::AllocaInst *idx = CreateEntryBlockAlloca(func, "alloc_idx", builder.getInt32Ty());
-        builder.CreateStore(builder.getInt32(0), idx);
-
+        // We need a Phi node for outerArr because it changes inside the loop
         builder.CreateBr(condBB);
         builder.SetInsertPoint(condBB);
 
-        llvm::Value *currIdx = builder.CreateLoad(builder.getInt32Ty(), idx);
-        llvm::Value *cmp = builder.CreateICmpSLT(currIdx, size);
+        llvm::PHINode *currentArrPtr = builder.CreatePHI(builder.getPtrTy(), 2, "arr_ptr_phi");
+        currentArrPtr->addIncoming(outerArr, builder.GetInsertBlock()->getSinglePredecessor());
+
+        llvm::PHINode *idx = builder.CreatePHI(builder.getInt32Ty(), 2, "idx_phi");
+        idx->addIncoming(builder.getInt32(0), builder.GetInsertBlock()->getSinglePredecessor());
+
+        llvm::Value *cmp = builder.CreateICmpSLT(idx, size);
         builder.CreateCondBr(cmp, bodyBB, afterBB);
 
         // Loop Body
         builder.SetInsertPoint(bodyBB);
         llvm::Value *innerArr = generateArrayAllocation(dims, dimIndex + 1, leafDefault);
-        builder.CreateCall(module->getFunction("moksha_array_push_val"), {outerArr, innerArr});
 
-        llvm::Value *nextIdx = builder.CreateAdd(currIdx, builder.getInt32(1));
-        builder.CreateStore(nextIdx, idx);
+        // Update the pointer
+        llvm::Value *updatedArrPtr = builder.CreateCall(module->getFunction("moksha_array_push_val"), {currentArrPtr, innerArr});
+
+        llvm::Value *nextIdx = builder.CreateAdd(idx, builder.getInt32(1));
+
+        // Update Phi inputs
+        currentArrPtr->addIncoming(updatedArrPtr, bodyBB);
+        idx->addIncoming(nextIdx, bodyBB);
+
         builder.CreateBr(condBB);
 
         builder.SetInsertPoint(afterBB);
-        return outerArr;
+        return currentArrPtr;
     }
 
     llvm::Value *CodeGenerator::getAddress(ASTNode *node)
@@ -1134,7 +1140,7 @@ namespace Moksha
             }
         }
 
-        if (isAny || isArray || isTable || isBoxedPrimitive || (type && type->isNullable))
+        if (isAny || isArray || isTable || isBool || isBoxedPrimitive || (type && type->isNullable))
         {
             // Box primitives if we have a raw primitive value (e.g. printing a literal)
             if (val->getType()->isIntegerTy(32))
@@ -1155,18 +1161,9 @@ namespace Moksha
             if (val->getType() != builder.getPtrTy())
                 val = builder.CreateBitCast(val, builder.getPtrTy());
 
-            llvm::Function *anyToStr = module->getFunction("moksha_any_to_str");
-            val = builder.CreateCall(llvm::FunctionCallee(anyToStr), {val}, "to_str");
-            formatStr = builder.CreateGlobalString("%s" + suffix);
-        }
-        else if (isBool)
-        {
-            // Print boolean as string (true/false) by boxing it temporarily
-            llvm::Value *i32Val = builder.CreateZExt(val, builder.getInt32Ty());
-            llvm::Value *boxed = builder.CreateCall(module->getFunction("moksha_box_bool"), {i32Val});
-            llvm::Function *anyToStr = module->getFunction("moksha_any_to_str");
-            val = builder.CreateCall(llvm::FunctionCallee(anyToStr), {boxed});
-            formatStr = builder.CreateGlobalString("%s" + suffix);
+            llvm::Function *printFunc = module->getFunction("moksha_print_val");
+            builder.CreateCall(printFunc, {val, builder.getInt32(isNewLine)});
+            return;
         }
         else if (val->getType()->isFloatingPointTy())
         {
@@ -1687,13 +1684,37 @@ namespace Moksha
         else if (node.token.type == TokenType::STRING_LITERAL || node.token.type == TokenType::STRING_CHUNK)
         {
             llvm::Value *rawStr = builder.CreateGlobalString(node.token.lexeme);
+
             if (isFreestanding)
             {
                 lastValue = rawStr; // Return raw char* in kernel mode
             }
             else
             {
-                lastValue = builder.CreateCall(module->getFunction("moksha_box_string"), {rawStr});
+                // 1. Generate a unique name for this literal's cache variable
+                static int strLitId = 0;
+                std::string globalCacheName = "__str_lit_cache_" + std::to_string(strLitId++);
+
+                // 2. Create a global variable: static void* cache = NULL;
+                module->getOrInsertGlobal(globalCacheName, builder.getPtrTy());
+                llvm::GlobalVariable *gCache = module->getNamedGlobal(globalCacheName);
+                gCache->setLinkage(llvm::GlobalValue::InternalLinkage); // Private to this module
+                gCache->setInitializer(llvm::ConstantPointerNull::get(builder.getPtrTy()));
+
+                // 3. Get or Declare the runtime helper function
+                llvm::Function *getStaticFunc = module->getFunction("moksha_get_static_string");
+                if (!getStaticFunc)
+                {
+                    llvm::FunctionType *ft = llvm::FunctionType::get(
+                        builder.getPtrTy(),                       // Returns: void* (String Object)
+                        {builder.getPtrTy(), builder.getPtrTy()}, // Args: (void** cachePtr, char* content)
+                        false);
+                    getStaticFunc = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, "moksha_get_static_string", module.get());
+                }
+
+                // 4. Call helper: moksha_get_static_string(&cache, rawStr)
+                // This will check 'cache'. If null, it allocates. If not null, it returns the cached value.
+                lastValue = builder.CreateCall(getStaticFunc, {gCache, rawStr});
             }
         }
         else if (node.token.type == TokenType::CHAR_LITERAL)
@@ -3548,8 +3569,8 @@ namespace Moksha
         llvm::Function *boxInt = module->getFunction("moksha_box_int");
         llvm::Function *boxDouble = module->getFunction("moksha_box_double");
         llvm::Function *boxBool = module->getFunction("moksha_box_bool");
-        llvm::Function *boxString = module->getFunction("moksha_box_string");
 
+        // 1. Allocate initial array
         llvm::Value *arrPtr = builder.CreateCall(llvm::FunctionCallee(arrayAllocFunc), {builder.getInt32(node.elements.size())});
 
         for (auto &el : node.elements)
@@ -3557,7 +3578,8 @@ namespace Moksha
             if (dynamic_cast<SpreadElementNode *>(el.get()))
             {
                 el->accept(*this);
-                builder.CreateCall(llvm::FunctionCallee(spreadFunc), {arrPtr, lastValue});
+                // Spread also might realloc, so update arrPtr
+                arrPtr = builder.CreateCall(llvm::FunctionCallee(spreadFunc), {arrPtr, lastValue});
             }
             else
             {
@@ -3568,31 +3590,21 @@ namespace Moksha
 
                 llvm::Value *boxedVal = val;
 
-                // --- FIX: BOX PRIMITIVES ---
+                // Boxing logic
                 if (val->getType()->isIntegerTy(32))
-                {
-                    boxedVal = builder.CreateCall(llvm::FunctionCallee(boxInt), {val}, "box_i");
-                }
+                    boxedVal = builder.CreateCall(llvm::FunctionCallee(boxInt), {val});
                 else if (val->getType()->isIntegerTy(1))
                 {
-                    // Bool is i1, promote to i32 for box function
                     llvm::Value *i32bool = builder.CreateZExt(val, builder.getInt32Ty());
-                    boxedVal = builder.CreateCall(llvm::FunctionCallee(boxBool), {i32bool}, "box_b");
+                    boxedVal = builder.CreateCall(llvm::FunctionCallee(boxBool), {i32bool});
                 }
                 else if (val->getType()->isDoubleTy())
-                {
-                    boxedVal = builder.CreateCall(llvm::FunctionCallee(boxDouble), {val}, "box_d");
-                }
-                else if (val->getType()->isPointerTy())
-                {
-                    if (val->getType() != builder.getPtrTy())
-                    {
-                        boxedVal = builder.CreateBitCast(val, builder.getPtrTy());
-                    }
-                }
+                    boxedVal = builder.CreateCall(llvm::FunctionCallee(boxDouble), {val});
+                else if (val->getType()->isPointerTy() && val->getType() != builder.getPtrTy())
+                    boxedVal = builder.CreateBitCast(val, builder.getPtrTy());
 
                 std::vector<llvm::Value *> args = {arrPtr, boxedVal};
-                builder.CreateCall(llvm::FunctionCallee(arrayPushFunc), args);
+                arrPtr = builder.CreateCall(llvm::FunctionCallee(arrayPushFunc), args);
             }
         }
         lastValue = arrPtr;
@@ -3672,26 +3684,58 @@ namespace Moksha
 
     void CodeGenerator::visit(LengthExpressionNode &node)
     {
-        if (node.target->resolvedType)
-        {
-            if (auto arrType = std::dynamic_pointer_cast<ArrayType>(node.target->resolvedType))
-            {
-                if (arrType->isFixedSize)
-                {
-                    lastValue = builder.getInt32(arrType->fixedSize);
-                    return;
-                }
-            }
-        }
+        // 1. Compile the target expression
         node.target->accept(*this);
-        if (std::dynamic_pointer_cast<StringType>(node.target->resolvedType))
-        {
-            lastValue = builder.CreateCall(module->getFunction("moksha_strlen"), {lastValue});
+        llvm::Value *targetPtr = lastValue;
+
+        // Safety: Ensure pointer is generic char* (i8*) before math
+        if (targetPtr->getType() != builder.getPtrTy()) {
+            targetPtr = builder.CreateBitCast(targetPtr, builder.getPtrTy());
         }
-        else
-        {
-            lastValue = builder.CreateCall(module->getFunction("moksha_get_length"), {lastValue}, "len_tmp");
+
+        // Determine offset based on type
+        int offset = -1;
+        if (std::dynamic_pointer_cast<ArrayType>(node.target->resolvedType)) {
+            offset = 12; // Array Length Offset
+        } else if (std::dynamic_pointer_cast<StringType>(node.target->resolvedType)) {
+            offset = 16; // String Length Offset
         }
+
+        if (offset != -1) {
+            // --- OPTIMIZATION: INLINE LOAD WITH NULL CHECK ---
+            
+            llvm::Function *func = builder.GetInsertBlock()->getParent();
+            llvm::BasicBlock *safeBB = llvm::BasicBlock::Create(context, "len_safe", func);
+            llvm::BasicBlock *nullBB = llvm::BasicBlock::Create(context, "len_null", func);
+            llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(context, "len_merge", func);
+
+            // 1. Check for Null (Fast integer comparison)
+            llvm::Value *isNull = builder.CreateICmpEQ(targetPtr, llvm::ConstantPointerNull::get(builder.getPtrTy()));
+            builder.CreateCondBr(isNull, nullBB, safeBB);
+
+            // 2. Null Block: Return 0 (Safe fallback)
+            builder.SetInsertPoint(nullBB);
+            builder.CreateBr(mergeBB);
+
+            // 3. Safe Block: Load Length directly from memory
+            builder.SetInsertPoint(safeBB);
+            llvm::Value *lenPtr = builder.CreateConstInBoundsGEP1_32(builder.getInt8Ty(), targetPtr, offset);
+            llvm::Value *lenTypedPtr = builder.CreateBitCast(lenPtr, llvm::PointerType::get(context, 0));
+            llvm::Value *realLen = builder.CreateLoad(builder.getInt32Ty(), lenTypedPtr, "inline_len");
+            builder.CreateBr(mergeBB);
+
+            // 4. Merge results using PHI node
+            builder.SetInsertPoint(mergeBB);
+            llvm::PHINode *phi = builder.CreatePHI(builder.getInt32Ty(), 2, "len_res");
+            phi->addIncoming(builder.getInt32(0), nullBB);
+            phi->addIncoming(realLen, safeBB);
+
+            lastValue = phi;
+            return;
+        }
+
+        // Fallback for unknown types
+        lastValue = builder.CreateCall(module->getFunction("moksha_get_length"), {targetPtr});
     }
 
     void CodeGenerator::visit(IndexNode &node)
@@ -3856,18 +3900,23 @@ namespace Moksha
             }
             else
             {
-                llvm::StructType *arrayStruct = llvm::StructType::get(context, {
-                                                                                   builder.getInt32Ty(), // size
-                                                                                   builder.getInt32Ty(), // capacity
-                                                                                   builder.getPtrTy()    // data*
-                                                                               });
-                llvm::Value *typedPtr = builder.CreateBitCast(target, builder.getPtrTy());
-                llvm::Value *dataPtrAddr = builder.CreateStructGEP(arrayStruct, typedPtr, 2);
-                llvm::Value *dataPtr = builder.CreateLoad(builder.getPtrTy(), dataPtrAddr);
+                llvm::Function *getRawPtrFunc = module->getFunction("moksha_get_raw_ptr");
+                if (!getRawPtrFunc)
+                {
+                    // Fallback if not declared in module yet (add declaration)
+                    llvm::FunctionType *ft = llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy()}, false);
+                    getRawPtrFunc = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, "moksha_get_raw_ptr", module.get());
+                }
+
+                // This returns void** (pointer to the first element of the vector)
+                llvm::Value *rawDataPtr = builder.CreateCall(getRawPtrFunc, {target}, "raw_vec_ptr");
+
+                // Handle Unboxing the Index (if needed)
                 if (idx->getType()->isPointerTy())
                     idx = builder.CreateCall(module->getFunction("moksha_unbox_int"), {idx});
 
-                llvm::Value *elementPtr = builder.CreateGEP(builder.getPtrTy(), dataPtr, idx);
+                // NOW you can do pointer arithmetic (GEP)
+                llvm::Value *elementPtr = builder.CreateGEP(builder.getPtrTy(), rawDataPtr, idx, "unsafe_idx");
                 result = builder.CreateLoad(builder.getPtrTy(), elementPtr);
             }
         }
@@ -3893,11 +3942,56 @@ namespace Moksha
                 idx = builder.CreateFPToSI(idx, builder.getInt32Ty());
             result = builder.CreateCall(llvm::FunctionCallee(fnStringGetChar), {target, idx});
         }
-        else
-        {
-            // SAFE PATH: Call Runtime (Includes Bounds Check)
-            llvm::Function *getFunc = module->getFunction("moksha_array_get");
-            result = builder.CreateCall(llvm::FunctionCallee(getFunc), {target, idx});
+        else {
+            // 1. Get Array Length (Inline Load at Offset 12)
+            llvm::Value* rawTarget = target; 
+            if (rawTarget->getType() != builder.getPtrTy()) 
+                rawTarget = builder.CreateBitCast(rawTarget, builder.getPtrTy());
+
+            llvm::Value* lenPtr = builder.CreateConstInBoundsGEP1_32(builder.getInt8Ty(), rawTarget, 12);
+            llvm::Value* lenTypedPtr = builder.CreateBitCast(lenPtr, llvm::PointerType::get(context, 0));
+            llvm::Value* length = builder.CreateLoad(builder.getInt32Ty(), lenTypedPtr, "arr_len");
+
+            // 2. Normalize Index to i32
+            llvm::Value* idx32 = idx;
+            if (idx->getType()->isDoubleTy()) idx32 = builder.CreateFPToSI(idx, builder.getInt32Ty());
+            else if (idx->getType() != builder.getInt32Ty()) idx32 = builder.CreateIntCast(idx, builder.getInt32Ty(), true);
+
+            // 3. Create Blocks for Control Flow
+            llvm::Function* func = builder.GetInsertBlock()->getParent();
+            llvm::BasicBlock* boundsOK = llvm::BasicBlock::Create(context, "bounds_ok", func);
+            llvm::BasicBlock* boundsFail = llvm::BasicBlock::Create(context, "bounds_fail", func);
+
+            // 4. Bounds Check: (idx >= length)
+            llvm::Value* outOfBounds = builder.CreateICmpUGE(idx32, length);
+            builder.CreateCondBr(outOfBounds, boundsFail, boundsOK);
+
+            // 5. Fail Block: Throw Exception
+            builder.SetInsertPoint(boundsFail);
+            llvm::Function* throwEx = module->getFunction("moksha_throw_exception");
+            llvm::Function* boxStr = module->getFunction("moksha_box_string");
+            
+            llvm::Value* msg = builder.CreateGlobalString("IndexOutOfBounds");
+            llvm::Value* errObj = builder.CreateCall(boxStr, {msg});
+            
+            builder.CreateCall(throwEx, {errObj});
+            builder.CreateStore(errObj, globalExceptionVal);
+            builder.CreateStore(builder.getInt32(1), globalExceptionFlag);
+            
+            // Return dummy to satisfy LLVM block termination
+            if (func->getReturnType()->isVoidTy()) builder.CreateRetVoid();
+            else builder.CreateRet(llvm::Constant::getNullValue(func->getReturnType()));
+
+            // 6. Success Block: Load Data
+            builder.SetInsertPoint(boundsOK);
+            llvm::Value* dataBaseAddr = builder.CreateConstInBoundsGEP1_32(builder.getInt8Ty(), rawTarget, 16);
+            
+            // Cast to void** (array of pointers)
+            llvm::Value* dataPtr = builder.CreateBitCast(dataBaseAddr, llvm::PointerType::get(context, 0));
+
+            // Load element at index
+            llvm::Value* elemPtr = builder.CreateGEP(builder.getPtrTy(), dataPtr, idx32);
+            result = builder.CreateLoad(builder.getPtrTy(), elemPtr, "fast_elem");
         }
 
         // 4. Handle Optional Chaining Merge
@@ -4541,8 +4635,73 @@ namespace Moksha
         // 1. Evaluate the Iterable Expression
         node.iterable->accept(*this);
         llvm::Value *iterablePtr = lastValue; // The original Array, String, or Table
-
         std::shared_ptr<Type> type = node.iterable->resolvedType;
+
+        auto arrType = std::dynamic_pointer_cast<ArrayType>(type);
+        if (arrType && arrType->isFixedSize)
+        {
+            // 1. Setup Blocks
+            llvm::BasicBlock *condBB = llvm::BasicBlock::Create(context, "fast_cond", func);
+            llvm::BasicBlock *bodyBB = llvm::BasicBlock::Create(context, "fast_body", func);
+            llvm::BasicBlock *incBB = llvm::BasicBlock::Create(context, "fast_inc", func);
+            llvm::BasicBlock *endBB = llvm::BasicBlock::Create(context, "fast_end", func);
+            loopStack.push_back({incBB, endBB});
+
+            // 2. Loop Variable (int i = 0)
+            llvm::Value *idxVar = CreateEntryBlockAlloca(func, "fast_idx", builder.getInt32Ty());
+            builder.CreateStore(builder.getInt32(0), idxVar);
+            builder.CreateBr(condBB);
+
+            // 3. Condition (i < CONSTANT)
+            builder.SetInsertPoint(condBB);
+            llvm::Value *currIdx = builder.CreateLoad(builder.getInt32Ty(), idxVar);
+            llvm::Value *limit = builder.getInt32(arrType->fixedSize); // Constant!
+            llvm::Value *cond = builder.CreateICmpSLT(currIdx, limit);
+            builder.CreateCondBr(cond, bodyBB, endBB);
+
+            // 4. Body (Pure Pointer Math)
+            builder.SetInsertPoint(bodyBB);
+
+            // GEP: base[i]
+            llvm::Type *elemTy = getLLVMType(arrType->elementType, context, module.get());
+            llvm::Value *elemPtr = builder.CreateGEP(elemTy, iterablePtr, currIdx, "fast_ptr");
+            llvm::Value *val = builder.CreateLoad(elemTy, elemPtr, "fast_val");
+
+            // 5. Assign to User Vars
+            if (node.hasValueVar)
+            {
+                // for (idx, val in arr)
+                llvm::AllocaInst *kAlloc = CreateEntryBlockAlloca(func, node.keyVar.lexeme, builder.getInt32Ty());
+                builder.CreateStore(currIdx, kAlloc);
+                namedValues[node.keyVar.lexeme] = kAlloc;
+
+                llvm::AllocaInst *vAlloc = CreateEntryBlockAlloca(func, node.valVar.lexeme, val->getType());
+                builder.CreateStore(val, vAlloc);
+                namedValues[node.valVar.lexeme] = vAlloc;
+            }
+            else
+            {
+                // for (val in arr)
+                llvm::AllocaInst *vAlloc = CreateEntryBlockAlloca(func, node.keyVar.lexeme, val->getType());
+                builder.CreateStore(val, vAlloc);
+                namedValues[node.keyVar.lexeme] = vAlloc;
+            }
+
+            node.body->accept(*this);
+            builder.CreateBr(incBB);
+
+            // 6. Increment
+            builder.SetInsertPoint(incBB);
+            llvm::Value *nextIdx = builder.CreateAdd(currIdx, builder.getInt32(1));
+            builder.CreateStore(nextIdx, idxVar);
+            builder.CreateBr(condBB);
+
+            // 7. Cleanup
+            builder.SetInsertPoint(endBB);
+            loopStack.pop_back();
+            return; // DONE! Skip the slow path.
+        }
+
         bool isString = std::dynamic_pointer_cast<StringType>(type) != nullptr;
         bool isTable = std::dynamic_pointer_cast<TableType>(type) != nullptr;
 
@@ -4550,9 +4709,94 @@ namespace Moksha
 
         if (isTable)
         {
-            // Convert Table -> Array of Keys
-            llvm::Function *keysFunc = module->getFunction("moksha_table_keys");
-            loopTargetPtr = builder.CreateCall(llvm::FunctionCallee(keysFunc), {iterablePtr}, "table_keys");
+            llvm::Function *capFunc = module->getFunction("moksha_table_capacity");
+            if (!capFunc)
+            {
+                // Register if missing
+                llvm::FunctionType *ft = llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, false);
+                capFunc = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, "moksha_table_capacity", module.get());
+            }
+
+            llvm::Function *getKeyFunc = module->getFunction("moksha_table_get_entry_key");
+            if (!getKeyFunc)
+            {
+                llvm::FunctionType *ft = llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getInt32Ty()}, false);
+                getKeyFunc = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, "moksha_table_get_entry_key", module.get());
+            }
+
+            llvm::Function *getValFunc = module->getFunction("moksha_table_get_entry_val");
+            if (!getValFunc)
+            {
+                llvm::FunctionType *ft = llvm::FunctionType::get(builder.getPtrTy(), {builder.getPtrTy(), builder.getInt32Ty()}, false);
+                getValFunc = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, "moksha_table_get_entry_val", module.get());
+            }
+
+            llvm::Value *cap = builder.CreateCall(capFunc, {iterablePtr}, "tbl_cap");
+
+            // Define Blocks
+            llvm::AllocaInst *idxVar = CreateEntryBlockAlloca(func, "tbl_idx", builder.getInt32Ty());
+            builder.CreateStore(builder.getInt32(0), idxVar);
+
+            llvm::BasicBlock *condBB = llvm::BasicBlock::Create(context, "tbl_cond", func);
+            llvm::BasicBlock *checkBB = llvm::BasicBlock::Create(context, "tbl_check", func); // Check if bucket occupied
+            llvm::BasicBlock *bodyBB = llvm::BasicBlock::Create(context, "tbl_body", func);
+            llvm::BasicBlock *incBB = llvm::BasicBlock::Create(context, "tbl_inc", func);
+            llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(context, "tbl_after", func);
+
+            loopStack.push_back({incBB, afterBB});
+
+            builder.CreateBr(condBB);
+
+            // 1. Loop Condition (i < capacity)
+            builder.SetInsertPoint(condBB);
+            llvm::Value *currIdx = builder.CreateLoad(builder.getInt32Ty(), idxVar);
+            llvm::Value *cmp = builder.CreateICmpSLT(currIdx, cap);
+            builder.CreateCondBr(cmp, checkBB, afterBB);
+
+            // 2. Check Bucket (key != null)
+            builder.SetInsertPoint(checkBB);
+            llvm::Value *keyPtr = builder.CreateCall(getKeyFunc, {iterablePtr, currIdx});
+            llvm::Value *isOccupied = builder.CreateICmpNE(keyPtr, llvm::ConstantPointerNull::get(builder.getPtrTy()));
+            builder.CreateCondBr(isOccupied, bodyBB, incBB); // If empty, skip to increment
+
+            // 3. Loop Body
+            builder.SetInsertPoint(bodyBB);
+            llvm::Value *valPtr = builder.CreateCall(getValFunc, {iterablePtr, currIdx});
+
+            if (node.hasValueVar)
+            {
+                // for (k, v in tab)
+                llvm::AllocaInst *kAlloc = CreateEntryBlockAlloca(func, node.keyVar.lexeme, builder.getPtrTy());
+                builder.CreateStore(keyPtr, kAlloc);
+                namedValues[node.keyVar.lexeme] = kAlloc;
+
+                llvm::AllocaInst *vAlloc = CreateEntryBlockAlloca(func, node.valVar.lexeme, builder.getPtrTy());
+                builder.CreateStore(valPtr, vAlloc);
+                namedValues[node.valVar.lexeme] = vAlloc;
+            }
+            else
+            {
+                // for (k in tab)
+                llvm::AllocaInst *kAlloc = CreateEntryBlockAlloca(func, node.keyVar.lexeme, builder.getPtrTy());
+                builder.CreateStore(keyPtr, kAlloc); // Only Key
+                namedValues[node.keyVar.lexeme] = kAlloc;
+            }
+
+            node.body->accept(*this);
+
+            if (!builder.GetInsertBlock()->getTerminator())
+                builder.CreateBr(incBB);
+
+            // 4. Increment
+            builder.SetInsertPoint(incBB);
+            llvm::Value *nextIdx = builder.CreateAdd(currIdx, builder.getInt32(1));
+            builder.CreateStore(nextIdx, idxVar);
+            builder.CreateBr(condBB);
+
+            // 5. End
+            builder.SetInsertPoint(afterBB);
+            loopStack.pop_back();
+            return;
         }
 
         // 2. Get Length of the Loop Target
@@ -4609,21 +4853,28 @@ namespace Moksha
         }
         else
         {
-            // Standard Array
-            keyVal = currIdx; // Index
-            valVal = builder.CreateCall(llvm::FunctionCallee(fnArrayGetUnsafe), {loopTargetPtr, currIdx}, "arr_val");
+            // Dynamic Array
+            keyVal = currIdx;
+            llvm::Value *rawArrPtr = loopTargetPtr;
+            if (rawArrPtr->getType() != builder.getPtrTy())
+                rawArrPtr = builder.CreateBitCast(rawArrPtr, builder.getPtrTy());
 
-            // [FIX START] Unbox primitive values!
-            if (auto arrType = std::dynamic_pointer_cast<ArrayType>(type))
+            // 1. Get address of 'data' field at offset 16
+            llvm::Value *dataFieldAddr = builder.CreateConstInBoundsGEP1_32(builder.getInt8Ty(), rawArrPtr, 16);
+            
+            // 2. Cast to void** (because 'data' is a flexible array of void*)
+            llvm::Value *dataFieldPtr = builder.CreateBitCast(dataFieldAddr, llvm::PointerType::get(context, 0));
+
+            // 3. Get the element at 'currIdx' directly
+            llvm::Value *elemPtr = builder.CreateGEP(builder.getPtrTy(), dataFieldPtr, currIdx, "fast_elem_ptr");
+            valVal = builder.CreateLoad(builder.getPtrTy(), elemPtr, "fast_val");
+
+            if (arrType)
             {
                 if (std::dynamic_pointer_cast<IntType>(arrType->elementType))
-                {
                     valVal = builder.CreateCall(module->getFunction("moksha_unbox_int"), {valVal}, "unbox_i");
-                }
                 else if (std::dynamic_pointer_cast<DoubleType>(arrType->elementType))
-                {
                     valVal = builder.CreateCall(module->getFunction("moksha_unbox_double"), {valVal}, "unbox_d");
-                }
                 else if (std::dynamic_pointer_cast<BooleanType>(arrType->elementType))
                 {
                     llvm::Value *b = builder.CreateCall(module->getFunction("moksha_unbox_bool"), {valVal}, "unbox_b");
@@ -4639,7 +4890,6 @@ namespace Moksha
             llvm::AllocaInst *kAlloc = CreateEntryBlockAlloca(func, node.keyVar.lexeme, keyVal->getType());
             builder.CreateStore(keyVal, kAlloc);
             namedValues[node.keyVar.lexeme] = kAlloc;
-
             llvm::AllocaInst *vAlloc = CreateEntryBlockAlloca(func, node.valVar.lexeme, valVal->getType());
             builder.CreateStore(valVal, vAlloc);
             namedValues[node.valVar.lexeme] = vAlloc;
@@ -4649,7 +4899,6 @@ namespace Moksha
             // Syntax: for (x in y)
             // Table -> x is Key. Array/String -> x is Value.
             llvm::Value *singleVarVal = isTable ? keyVal : valVal;
-
             llvm::AllocaInst *varAlloc = CreateEntryBlockAlloca(func, node.keyVar.lexeme, singleVarVal->getType());
             builder.CreateStore(singleVarVal, varAlloc);
             namedValues[node.keyVar.lexeme] = varAlloc;

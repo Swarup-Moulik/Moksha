@@ -11,62 +11,84 @@ source_filename = "moksha_module"
 @__exception_flag = external global i32
 @__exception_val = external global ptr
 @0 = private unnamed_addr constant [7 x i8] c"HOSTED\00", align 1
+@__str_lit_cache_0 = internal global ptr null
 @1 = private unnamed_addr constant [39 x i8] c"--- Consolidated Moksha Test Suite ---\00", align 1
+@__str_lit_cache_1 = internal global ptr null
 @2 = private unnamed_addr constant [4 x i8] c"%s\0A\00", align 1
 @3 = private unnamed_addr constant [23 x i8] c"Size of BitfieldTest: \00", align 1
+@__str_lit_cache_2 = internal global ptr null
 @4 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @5 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 @6 = private unnamed_addr constant [20 x i8] c"Size of int alias: \00", align 1
+@__str_lit_cache_3 = internal global ptr null
 @7 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @8 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 @9 = private unnamed_addr constant [47 x i8] c"Static If: Successfully compiled HOSTED block.\00", align 1
+@__str_lit_cache_4 = internal global ptr null
 @10 = private unnamed_addr constant [4 x i8] c"%s\0A\00", align 1
 @11 = private unnamed_addr constant [17 x i8] c"Bitfield Values:\00", align 1
+@__str_lit_cache_5 = internal global ptr null
 @12 = private unnamed_addr constant [4 x i8] c"%s\0A\00", align 1
 @13 = private unnamed_addr constant [19 x i8] c"  First (3 bits): \00", align 1
+@__str_lit_cache_6 = internal global ptr null
 @14 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @15 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 @16 = private unnamed_addr constant [20 x i8] c"  Second (5 bits): \00", align 1
+@__str_lit_cache_7 = internal global ptr null
 @17 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @18 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 @19 = private unnamed_addr constant [19 x i8] c"  Third (8 bits): \00", align 1
+@__str_lit_cache_8 = internal global ptr null
 @20 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @21 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 @22 = private unnamed_addr constant [19 x i8] c"Raw Memory Value: \00", align 1
+@__str_lit_cache_9 = internal global ptr null
 @23 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @24 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 @25 = private unnamed_addr constant [39 x i8] c"Offset of 'payload' in packed struct: \00", align 1
+@__str_lit_cache_10 = internal global ptr null
 @26 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @27 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 @28 = private unnamed_addr constant [25 x i8] c"Union raw hex as float: \00", align 1
+@__str_lit_cache_11 = internal global ptr null
 @29 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @30 = private unnamed_addr constant [4 x i8] c"%f\0A\00", align 1
 @31 = private unnamed_addr constant [12 x i8] c"Hello World\00", align 1
+@__str_lit_cache_12 = internal global ptr null
 @32 = private unnamed_addr constant [20 x i8] c"Modified C-Buffer: \00", align 1
+@__str_lit_cache_13 = internal global ptr null
 @33 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @34 = private unnamed_addr constant [4 x i8] c"%s\0A\00", align 1
 @35 = private unnamed_addr constant [30 x i8] c"Nested struct footer offset: \00", align 1
+@__str_lit_cache_14 = internal global ptr null
 @36 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @37 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 @38 = private unnamed_addr constant [20 x i8] c"Pointer index [1]: \00", align 1
+@__str_lit_cache_15 = internal global ptr null
 @39 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @40 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 @41 = private unnamed_addr constant [25 x i8] c"Dereferenced offset +2: \00", align 1
+@__str_lit_cache_16 = internal global ptr null
 @42 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @43 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 @44 = private unnamed_addr constant [26 x i8] c"Union Component 0 (LSB): \00", align 1
+@__str_lit_cache_17 = internal global ptr null
 @45 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @46 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 @47 = private unnamed_addr constant [26 x i8] c"Union Component 3 (MSB): \00", align 1
+@__str_lit_cache_18 = internal global ptr null
 @48 = private unnamed_addr constant [3 x i8] c"%s\00", align 1
 @49 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 @50 = private unnamed_addr constant [31 x i8] c"Variadic Printf: %d + %d = %d\0A\00", align 1
+@__str_lit_cache_19 = internal global ptr null
 
 declare i32 @printf(ptr, ...)
 
 declare ptr @malloc(i64)
 
 declare ptr @calloc(i64, i64)
+
+declare void @moksha_print_val(ptr, i32)
 
 declare void @moksha_free(ptr)
 
@@ -215,27 +237,27 @@ entry:
   %s1 = alloca i32, align 4
   %TEST_PLATFORM1 = alloca ptr, align 8
   %TEST_PLATFORM = alloca ptr, align 8
-  %0 = call ptr @moksha_box_string(ptr @0)
+  %0 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_0, ptr @0)
   store ptr %0, ptr %TEST_PLATFORM, align 8
   store ptr %0, ptr %TEST_PLATFORM1, align 8
-  %1 = call ptr @moksha_box_string(ptr @1)
+  %1 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_1, ptr @1)
   %print_unbox = call ptr @moksha_unbox_string(ptr %1)
   %2 = call i32 (ptr, ...) @printf(ptr @2, ptr %print_unbox)
   store i32 4, ptr %s1, align 4
   store i32 4, ptr %s12, align 4
   store i32 4, ptr %s2, align 4
   store i32 4, ptr %s23, align 4
-  %3 = call ptr @moksha_box_string(ptr @3)
+  %3 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_2, ptr @3)
   %print_unbox4 = call ptr @moksha_unbox_string(ptr %3)
   %4 = call i32 (ptr, ...) @printf(ptr @4, ptr %print_unbox4)
   %5 = load i32, ptr %s12, align 4
   %6 = call i32 (ptr, ...) @printf(ptr @5, i32 %5)
-  %7 = call ptr @moksha_box_string(ptr @6)
+  %7 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_3, ptr @6)
   %print_unbox5 = call ptr @moksha_unbox_string(ptr %7)
   %8 = call i32 (ptr, ...) @printf(ptr @7, ptr %print_unbox5)
   %9 = load i32, ptr %s23, align 4
   %10 = call i32 (ptr, ...) @printf(ptr @8, i32 %9)
-  %11 = call ptr @moksha_box_string(ptr @9)
+  %11 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_4, ptr @9)
   %print_unbox6 = call ptr @moksha_unbox_string(ptr %11)
   %12 = call i32 (ptr, ...) @printf(ptr @10, ptr %print_unbox6)
   %13 = load i32, ptr @__exception_flag, align 4
@@ -269,10 +291,10 @@ next_stmt:                                        ; preds = %entry
   %21 = and i32 %bf_old18, 65535
   %22 = or i32 %21, 80871424
   store i32 %22, ptr %member_ptr17, align 4
-  %23 = call ptr @moksha_box_string(ptr @11)
+  %23 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_5, ptr @11)
   %print_unbox19 = call ptr @moksha_unbox_string(ptr %23)
   %24 = call i32 (ptr, ...) @printf(ptr @12, ptr %print_unbox19)
-  %25 = call ptr @moksha_box_string(ptr @13)
+  %25 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_6, ptr @13)
   %print_unbox20 = call ptr @moksha_unbox_string(ptr %25)
   %26 = call i32 (ptr, ...) @printf(ptr @14, ptr %print_unbox20)
   %member_ptr21 = getelementptr inbounds nuw %BitfieldTest, ptr %bf8, i32 0, i32 0
@@ -280,7 +302,7 @@ next_stmt:                                        ; preds = %entry
   %27 = lshr i32 %bf_container, 0
   %28 = and i32 %27, 7
   %29 = call i32 (ptr, ...) @printf(ptr @15, i32 %28)
-  %30 = call ptr @moksha_box_string(ptr @16)
+  %30 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_7, ptr @16)
   %print_unbox22 = call ptr @moksha_unbox_string(ptr %30)
   %31 = call i32 (ptr, ...) @printf(ptr @17, ptr %print_unbox22)
   %member_ptr23 = getelementptr inbounds nuw %BitfieldTest, ptr %bf8, i32 0, i32 0
@@ -288,7 +310,7 @@ next_stmt:                                        ; preds = %entry
   %32 = lshr i32 %bf_container24, 3
   %33 = and i32 %32, 31
   %34 = call i32 (ptr, ...) @printf(ptr @18, i32 %33)
-  %35 = call ptr @moksha_box_string(ptr @19)
+  %35 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_8, ptr @19)
   %print_unbox25 = call ptr @moksha_unbox_string(ptr %35)
   %36 = call i32 (ptr, ...) @printf(ptr @20, ptr %print_unbox25)
   %member_ptr26 = getelementptr inbounds nuw %BitfieldTest, ptr %bf8, i32 0, i32 0
@@ -298,7 +320,7 @@ next_stmt:                                        ; preds = %entry
   %39 = call i32 (ptr, ...) @printf(ptr @21, i32 %38)
   store ptr %bf8, ptr %raw, align 8
   store ptr %bf8, ptr %raw28, align 8
-  %40 = call ptr @moksha_box_string(ptr @22)
+  %40 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_9, ptr @22)
   %print_unbox29 = call ptr @moksha_unbox_string(ptr %40)
   %41 = call i32 (ptr, ...) @printf(ptr @23, ptr %print_unbox29)
   %42 = load ptr, ptr %raw28, align 8
@@ -318,7 +340,7 @@ next_stmt:                                        ; preds = %entry
   %subtmp = sub i32 %ptr_to_int, %ptr_to_int35
   store i32 %subtmp, ptr %offset, align 4
   store i32 %subtmp, ptr %offset36, align 4
-  %47 = call ptr @moksha_box_string(ptr @25)
+  %47 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_10, ptr @25)
   %print_unbox37 = call ptr @moksha_unbox_string(ptr %47)
   %48 = call i32 (ptr, ...) @printf(ptr @26, ptr %print_unbox37)
   %49 = load i32, ptr %offset36, align 4
@@ -326,7 +348,7 @@ next_stmt:                                        ; preds = %entry
   store %Converter zeroinitializer, ptr %conv38, align 4
   store %Converter zeroinitializer, ptr %conv39, align 4
   store i32 1065353216, ptr %conv39, align 4
-  %51 = call ptr @moksha_box_string(ptr @28)
+  %51 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_11, ptr @28)
   %print_unbox40 = call ptr @moksha_unbox_string(ptr %51)
   %52 = call i32 (ptr, ...) @printf(ptr @29, ptr %print_unbox40)
   %member_val = load float, ptr %conv39, align 4
@@ -336,7 +358,7 @@ next_stmt:                                        ; preds = %entry
   store ptr %call, ptr %buffer, align 8
   store ptr %call, ptr %buffer41, align 8
   %54 = load ptr, ptr %buffer41, align 8
-  %55 = call ptr @moksha_box_string(ptr @31)
+  %55 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_12, ptr @31)
   %auto_unbox_str = call ptr @moksha_unbox_string(ptr %55)
   %call42 = call ptr @strcpy(ptr %54, ptr %auto_unbox_str)
   %56 = load ptr, ptr %buffer41, align 8
@@ -352,7 +374,7 @@ next_stmt:                                        ; preds = %entry
   store i8 115, ptr %ptr_idx46, align 1
   %ptr_idx47 = getelementptr i8, ptr %p43, i32 10
   store i8 104, ptr %ptr_idx47, align 1
-  %57 = call ptr @moksha_box_string(ptr @32)
+  %57 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_13, ptr @32)
   %print_unbox48 = call ptr @moksha_unbox_string(ptr %57)
   %58 = call i32 (ptr, ...) @printf(ptr @33, ptr %print_unbox48)
   %59 = load ptr, ptr %buffer41, align 8
@@ -371,7 +393,7 @@ next_stmt:                                        ; preds = %entry
   %subtmp56 = sub i32 %ptr_to_int54, %ptr_to_int55
   store i32 %subtmp56, ptr %nested_offset, align 4
   store i32 %subtmp56, ptr %nested_offset57, align 4
-  %63 = call ptr @moksha_box_string(ptr @35)
+  %63 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_14, ptr @35)
   %print_unbox58 = call ptr @moksha_unbox_string(ptr %63)
   %64 = call i32 (ptr, ...) @printf(ptr @36, ptr %print_unbox58)
   %65 = load i32, ptr %nested_offset57, align 4
@@ -387,14 +409,14 @@ next_stmt:                                        ; preds = %entry
   %69 = load ptr, ptr %data_ptr60, align 8
   %ptr_math61 = getelementptr i32, ptr %69, i32 2
   store i32 300, ptr %ptr_math61, align 4
-  %70 = call ptr @moksha_box_string(ptr @38)
+  %70 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_15, ptr @38)
   %print_unbox62 = call ptr @moksha_unbox_string(ptr %70)
   %71 = call i32 (ptr, ...) @printf(ptr @39, ptr %print_unbox62)
   %72 = load ptr, ptr %data_ptr60, align 8
   %ptr_idx63 = getelementptr i32, ptr %72, i32 1
   %ptr_val = load i32, ptr %ptr_idx63, align 4
   %73 = call i32 (ptr, ...) @printf(ptr @40, i32 %ptr_val)
-  %74 = call ptr @moksha_box_string(ptr @41)
+  %74 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_16, ptr @41)
   %print_unbox64 = call ptr @moksha_unbox_string(ptr %74)
   %75 = call i32 (ptr, ...) @printf(ptr @42, ptr %print_unbox64)
   %76 = load ptr, ptr %data_ptr60, align 8
@@ -404,14 +426,14 @@ next_stmt:                                        ; preds = %entry
   store %Color zeroinitializer, ptr %pixel66, align 4
   store %Color zeroinitializer, ptr %pixel67, align 4
   store i32 287454020, ptr %pixel67, align 4
-  %79 = call ptr @moksha_box_string(ptr @44)
+  %79 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_17, ptr @44)
   %print_unbox68 = call ptr @moksha_unbox_string(ptr %79)
   %80 = call i32 (ptr, ...) @printf(ptr @45, ptr %print_unbox68)
   %fixed_idx = getelementptr i8, ptr %pixel67, i32 0
   %fixed_val = load i8, ptr %fixed_idx, align 1
   %to_i32 = sext i8 %fixed_val to i32
   %81 = call i32 (ptr, ...) @printf(ptr @46, i32 %to_i32)
-  %82 = call ptr @moksha_box_string(ptr @47)
+  %82 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_18, ptr @47)
   %print_unbox69 = call ptr @moksha_unbox_string(ptr %82)
   %83 = call i32 (ptr, ...) @printf(ptr @48, ptr %print_unbox69)
   %fixed_idx70 = getelementptr i8, ptr %pixel67, i32 3
@@ -422,7 +444,7 @@ next_stmt:                                        ; preds = %entry
   store i32 10, ptr %a73, align 4
   store i32 20, ptr %b, align 4
   store i32 20, ptr %b74, align 4
-  %85 = call ptr @moksha_box_string(ptr @50)
+  %85 = call ptr @moksha_get_static_string(ptr @__str_lit_cache_19, ptr @50)
   %auto_unbox_str75 = call ptr @moksha_unbox_string(ptr %85)
   %86 = load i32, ptr %a73, align 4
   %87 = load i32, ptr %b74, align 4
@@ -435,6 +457,8 @@ next_stmt:                                        ; preds = %entry
 unwind:                                           ; preds = %entry
   ret i32 0
 }
+
+declare ptr @moksha_get_static_string(ptr, ptr)
 
 define x86_intrcc void @dummy_interrupt(ptr byval(i64) %frame) {
 entry:

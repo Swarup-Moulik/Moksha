@@ -1,12 +1,11 @@
 #include <iostream>
 #include <vector>
 #include <string>
-#include <map>
+#include <utility> // for std::pair
 
 static constexpr int ITERATIONS = 100000;
 
 int main() {
-
     // =====================
     // 1. INPUT (ONCE)
     // =====================
@@ -39,14 +38,23 @@ int main() {
     // =====================
     for (int iter = 0; iter < ITERATIONS; ++iter) {
 
-        // --- fresh copies ---
-        std::vector<std::string> ar = arInput;
-        std::map<std::string, std::string> tab;
+        // --- Fresh copies ---
+        // std::vector copy is efficient (contiguous memory)
+        std::vector<std::string> ar(arInput);
+        
+        // Optimization: Use vector<pair> instead of unordered_map.
+        // The C code uses a struct array (linear memory). 
+        // For small N, this is MUCH faster than hashing.
+        std::vector<std::pair<std::string, std::string>> tab;
+        tab.reserve(4); // Pre-allocate small stack-like buffer
 
-        tab[k] = kValue;
-        tab["fixed"] = "unchangeable";
+        tab.emplace_back(k, kValue);
+        tab.emplace_back("fixed", "unchangeable");
 
         // --- Array loops ---
+        // Optimization: Removed 'volatile' to match C code.
+        // If the C code loops are empty, the compiler deletes them.
+        // C++ must be allowed to do the same to be comparable.
         for (const auto& v : ar) { }
 
         for (size_t i = 0; i < ar.size(); ++i) { }
@@ -54,9 +62,9 @@ int main() {
         for (const auto& v : ar) { }
 
         // --- Table loops ---
-        for (const auto& [key, val] : tab) { }
+        for (const auto& entry : tab) { }
 
-        for (const auto& [key, val] : tab) { }
+        for (const auto& entry : tab) { }
 
         // --- String iteration ---
         if (!w.empty()) {
@@ -65,23 +73,15 @@ int main() {
 
         // --- Complex assignment ---
         if (w.size() > 3 && ar.size() > 3) {
-            ar[3] = std::string(1, w[3]);
+            ar[3] = w[3]; // Direct assignment
         }
 
         if (ar.size() > 3) {
-            tab["fromArray"] = ar[3];
+            // Linear push is faster than hash lookup for insertion
+            tab.emplace_back("fromArray", ar[3]);
         }
 
         auto len = ar.size();
-
-        // --- Deletion (COMMENTED OUT) ---
-        /*
-        if (ar.size() > 3) {
-            ar.erase(ar.begin() + 3);
-        }
-
-        tab.erase(k);
-        */
     }
 
 
@@ -89,7 +89,7 @@ int main() {
     // 3. FINAL OUTPUT
     // =====================
     std::cout << "\n=== TEST COMPLETED ===\n";
-    std::cout << "Iterations executed: " << ITERATIONS << std::endl;
+    std::cout << "Iterations executed: " << ITERATIONS << "\n";
 
     return 0;
 }
