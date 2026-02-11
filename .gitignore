@@ -1,0 +1,21 @@
+# Build directories
+build/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# Ninja
+.ninja_deps
+.ninja_log
+
+# Clangd index
+.cache/
+
+# Compile database
+compile_commands.json
+
+# OS
+.DS_Store
+Thumbs.db

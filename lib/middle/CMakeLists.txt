@@ -1,0 +1,23 @@
+add_library(MokshaMiddle
+    hir/HIRExpr.cpp
+    hir/HIRFunction.cpp
+    hir/HIRGen.cpp
+    hir/HIRModule.cpp
+    hir/HIRStmt.cpp
+    hir/HIRType.cpp
+    mir/MIRBlock.cpp
+    mir/MIRBuilder.cpp
+    mir/MIRFunction.cpp
+    mir/MIRInst.cpp
+    mir/MIRVerifier.cpp
+    analysis/MIRDominance.cpp
+    passes/LowerHIRToMIR.cpp
+    passes/VerifyNoMacros.cpp
+)
+
+target_link_libraries(MokshaMiddle
+    PUBLIC
+    mokshaSettings
+    MokshaSupport
+    LLVMCore
+)
