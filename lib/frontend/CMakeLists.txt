@@ -16,6 +16,9 @@ add_library(mokshaFrontend STATIC
   ast/Expr.cpp
   ast/Stmt.cpp
 
+  # --- Builtins ---
+  builtins/BuiltinRegistry.cpp
+
   # --- Macros ---
   macros/MacroExpander.cpp
 
@@ -29,12 +32,10 @@ add_library(mokshaFrontend STATIC
 # Include directories
 # ============================================================
 
-# Public: only stable API
 target_include_directories(mokshaFrontend PUBLIC
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
 )
 
-# Private: internal structure
 target_include_directories(mokshaFrontend PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
@@ -44,27 +45,22 @@ target_include_directories(mokshaFrontend PRIVATE
 # ============================================================
 
 if(MSVC)
-  target_compile_options(mokshaFrontend PRIVATE
-    /W4
-  )
+  target_compile_options(mokshaFrontend PRIVATE /W4)
 else()
   target_compile_options(mokshaFrontend PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Wno-unused-parameter
+    -Wall -Wextra -Wpedantic -Wno-unused-parameter
   )
 endif()
 
 # ============================================================
-# Dependencies
+# Dependencies (MERGED AND CORRECTED)
 # ============================================================
 
 target_link_libraries(mokshaFrontend
   PUBLIC
     mokshaSettings
-
   PRIVATE
+    MokshaSupport    # This provides the DiagnosticEngine/Builder implementation
     LLVMSupport
     LLVMBinaryFormat
 )

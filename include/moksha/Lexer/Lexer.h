@@ -10,6 +10,8 @@
 
 namespace moksha {
 
+class DiagnosticEngine;
+
 enum class TokenKind {
   Eof,
   Error,
@@ -31,6 +33,7 @@ enum class TokenKind {
 
   // --- Keywords ---
   KwClass,
+  KwOperator,
   KwThread,
   KwRef,
   KwWeak,
@@ -38,9 +41,11 @@ enum class TokenKind {
   KwNew,
   KwDelete,
   KwUnsafe,
+  KwUnsigned,
   KwConstructor,
   KwDestructor,
   KwThis,
+  KwSuper,
   KwNull,
   KwIf,
   KwElse,
@@ -74,12 +79,14 @@ enum class TokenKind {
   KwHalf,
   KwQuarter,
   KwAny,
+  KwAs,
   KwTrue,
   KwFalse,
   KwPublic,
   KwPrivate,
   KwProtected,
   KwConst,
+  KwCast,
   KwStatic,
   KwAsync,
   KwAwait,
@@ -97,9 +104,19 @@ enum class TokenKind {
   KwSizeof,
   KwInterrupt,
   KwNaked,
+  KwNoreturn,
+  KwNoinline,
   KwLock,
   KwView,
   KwMut,
+
+  // --- OS & Low-Level Additions ---
+  KwExtern,
+  KwUsing, // Replaces typedef
+  KwAsm,
+  KwSection, // For section(".data")
+  KwUsed,
+  KwThreadLocal,
 
   // --- Operators ---
   Plus,
@@ -129,6 +146,7 @@ enum class TokenKind {
   GreaterGreaterEqual,
   AmpAmp,
   PipePipe,
+  PipeGreater,
   Bang,
   EqualEqual,
   NotEqual,
@@ -209,12 +227,13 @@ public:
 
 class Lexer {
 public:
-  explicit Lexer(llvm::StringRef buffer);
+  explicit Lexer(llvm::StringRef buffer, DiagnosticEngine &Diags);
 
   Token next();
   SourceLocation getLoc() const;
 
 private:
+  DiagnosticEngine &Diags;
   const char *bufferStart;
   const char *bufferEnd;
   const char *curPtr;

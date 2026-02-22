@@ -26,11 +26,22 @@ enum class DiagID {
   err_type_mismatch,
   err_type_incompatible_assignment,
   err_type_incompatible_return,
+  err_const_violation,
   err_if_condition_bool,
   err_invalid_bin_op,
   err_invalid_unary_op,
   err_invalid_cast,
   err_missing_return,
+  err_invalid_access,
+  err_unreachable_code,
+  err_array_length,
+  err_ambiguous_inheritance,
+  err_ambiguous_reference,
+  err_null_assignment,
+  err_infinite_size,
+  err_generic_constraint,
+  err_generic_arity,
+  err_uninitialized_var,
 
   // MIR / Lowering Errors (Added these to fix the build error)
   err_unexpanded_macro,
@@ -43,7 +54,16 @@ enum class DiagID {
   warn_unused_variable,
 
   // General / Notes
-  note_previous_definition
+  note_previous_definition,
+  err_argument_count_mismatch,
+  err_no_member,
+  err_unknown_type,
+  err_break_outside_loop,
+  err_continue_outside_loop,
+  err_invalid_this,
+  err_invalid_super,
+  warn_implicit_bool_conv,
+  err_internal,
 };
 
 /// Forward declaration

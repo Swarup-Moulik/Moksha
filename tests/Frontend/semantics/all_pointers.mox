@@ -1,0 +1,53 @@
+// Verifies that the compiler can parse and type-check pointers to all primitive types
+// and handles complex multi-level pointer/array composite types.
+
+void test_all_pointers() {
+    // 1. Void and Boolean
+    void* void_ptr = null;
+    bool* bool_ptr = null;
+
+    // 2. Character and Strings
+    char* char_ptr = null;
+    unsigned char* uchar_ptr = null;
+    string* str_ptr = null;
+
+    // 3. Standard Integers (Signed)
+    short* short_ptr = null;
+    int* int_ptr = null;
+    long* long_ptr = null;
+
+    // 4. Standard Integers (Unsigned)
+    unsigned short* ushort_ptr = null;
+    unsigned int* uint_ptr = null;
+    unsigned long* ulong_ptr = null;
+
+    // 5. System-Dependent Integers
+    isize* isize_ptr = null;
+    usize* usize_ptr = null;
+
+    // 6. Floating Point Types (Hardware and Standard)
+    quarter* f8_ptr = null;
+    half* f16_ptr = null;
+    float* f32_ptr = null;
+    double* f64_ptr = null;
+
+    // 7. Multi-Level Pointers (Pointers to Pointers)
+    int** double_int_ptr = null;
+    void*** triple_void_ptr = null;
+    float** double_float_ptr = null;
+    char*** triple_char_ptr = null;
+    usize** double_usize_ptr = null;
+    bool**** quad_bool_ptr = null;
+
+    // 8. Arrays of Pointers (Type*[])
+    int*[10] array_of_int_ptrs;
+    float*[5] array_of_float_ptrs;
+    double**[20] array_of_double_ptrs;
+    string***[50] array_of_triple_string_ptrs;
+
+    // 9. Pointers to Arrays (Type[]*)
+    // The parser successfully evaluates [10] first, then wraps it in a PointerType!
+    int[10]* ptr_to_int_array = null;
+    char[256]* ptr_to_char_buffer = null;
+    isize[4]** ptr_to_ptr_to_isize_array = null;
+}

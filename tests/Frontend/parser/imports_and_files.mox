@@ -1,0 +1,20 @@
+import "std/io"
+from "std/collections" import { table, list }
+import { table, list } from "std/collections"
+
+// File Handling using functional syntax
+// 'io.open' is a namespace access, not an object method
+any file = io.open("data.txt", "r")
+
+// Functional usage: readFile(file) instead of file.readFile()
+string line = readFile(file)
+close(file)
+
+// Map usage
+table<string, int> scores = {
+    "Alice": 95,
+    "Bob": 88
+}
+
+// Array/Map access via operator [] remains standard C-style
+int aliceScore = scores["Alice"]

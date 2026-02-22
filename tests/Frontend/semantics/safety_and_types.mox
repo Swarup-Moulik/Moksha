@@ -1,0 +1,28 @@
+// --- 1. Type Aliasing ---
+// Verifies 'using' alias registration in the Symbol Table
+using addr_t = usize;
+using status_t = int;
+
+addr_t vga_buffer = 0xB8000_usize;
+
+void kernel_init() {
+    // --- 2. Raw Pointers & Unsafe Blocks ---
+    // Verifies that raw pointers require 'unsafe' for dereferencing
+    unsigned int* ptr = cast<unsigned int*>(vga_buffer);
+
+    unsafe {
+        *ptr = 0x0F41_u32; // Legal inside unsafe block
+    }
+
+    // --- 3. Mutability Model ---
+    // Verifies aliasing rules for lock, mut, and view
+    mut int counter = 0;
+    view int v = counter;
+
+    // Negative Test: Should trigger err_type_mismatch
+    // v = 10;
+
+    lock int static_val = 100;
+    // Negative Test: Should trigger err_type_mismatch
+    // static_val = 200;
+}

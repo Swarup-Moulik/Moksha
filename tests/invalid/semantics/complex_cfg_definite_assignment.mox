@@ -1,0 +1,26 @@
+int data;
+bool flag1 = true;
+bool flag2 = false;
+
+try {
+    if (flag1) {
+        if (flag2) {
+            data = 1;
+        } else {
+            // Missing assignment in this specific sub-branch!
+            print("Processing...");
+        }
+    } else {
+        data = 2;
+    }
+} catch (any e) {
+    data = 3;
+} finally {
+    // Finally blocks execute regardless, but we still don't know
+    // if 'data' was assigned in the try block's nested if/else.
+    print("Cleanup");
+}
+
+// FATAL: 'data' is uninitialized if (flag1 == true) and (flag2 == false).
+// The compiler must trace the CFG and flag this.
+print(data);

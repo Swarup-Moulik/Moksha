@@ -1,9 +1,9 @@
 #include "moksha/Sema/GenericResolver.h"
-#include "llvm/Support/raw_ostream.h"
 #include "moksha/AST/Expr.h"
 #include "moksha/AST/Stmt.h"
 #include "moksha/AST/Type.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace moksha {
 
@@ -59,6 +59,10 @@ static std::unique_ptr<Expr> cloneExpr(const Expr *expr) {
                                        un->isPostfixOp(), loc);
   }
 
+  if (const auto *sz = llvm::dyn_cast<SizeOfExpr>(expr)) {
+    return std::make_unique<SizeOfExpr>(cloneExpr(sz->getExpr()), loc);
+  }
+
 #ifndef NDEBUG
   llvm::errs() << "Unsupported expression kind in cloneExpr\n";
   llvm_unreachable("Unsupported expression in cloneExpr");
@@ -69,7 +73,7 @@ static std::unique_ptr<Expr> cloneExpr(const Expr *expr) {
 GenericResolver::GenericResolver(ASTContext &ctx) : context(ctx) {}
 
 std::optional<GenericError> GenericResolver::validateGenericArgs(
-    const std::vector<llvm::StringRef> &typeParams,
+    const std::vector<std::string> &typeParams,
     const std::vector<NamedType::GenericArg> &args) {
 
   if (typeParams.size() != args.size()) {
@@ -77,7 +81,15 @@ std::optional<GenericError> GenericResolver::validateGenericArgs(
   }
 
   for (const auto &arg : args) {
-    if (arg.type->is<AnyType>()) {
+    bool isAny = arg.type->is<AnyType>();
+    if (!isAny) {
+      if (auto named = dynamic_cast<const NamedType *>(arg.type.get())) {
+        if (named->getName() == "any")
+          isAny = true;
+      }
+    }
+
+    if (isAny) {
       return GenericError::ConstraintViolation;
     }
   }
@@ -97,9 +109,6 @@ TypePtr GenericResolver::substituteType(
     auto *prim = llvm::cast<PrimitiveType>(type);
     return std::make_unique<PrimitiveType>(prim->getScalar(), loc);
   }
-
-  case TypeKind::Any:
-    return std::make_unique<AnyType>(loc);
 
   case TypeKind::Named: {
     auto *named = llvm::cast<NamedType>(type);
@@ -123,19 +132,24 @@ TypePtr GenericResolver::substituteType(
   }
 
   case TypeKind::Lock: {
-      auto *l = llvm::cast<LockType>(type);
-      return std::make_unique<LockType>(substituteType(l->getInner(), substitutions), loc);
-    }
-
-    case TypeKind::View: {
-      auto *v = llvm::cast<ViewType>(type);
-      return std::make_unique<ViewType>(substituteType(v->getInner(), substitutions), loc);
-    }
-
-    case TypeKind::Mut: {
-      auto *m = llvm::cast<MutType>(type);
-      return std::make_unique<MutType>(substituteType(m->getInner(), substitutions), loc);
-    }
+    auto *l = llvm::cast<LockType>(type);
+    return std::make_unique<LockType>(
+        substituteType(l->getInner(), substitutions), loc);
+  }
+  case TypeKind::View: {
+    auto *v = llvm::cast<ViewType>(type);
+    return std::make_unique<ViewType>(
+        substituteType(v->getInner(), substitutions), loc);
+  }
+  case TypeKind::Mut: {
+    auto *m = llvm::cast<MutType>(type);
+    return std::make_unique<MutType>(
+        substituteType(m->getInner(), substitutions), loc);
+  }
+  case TypeKind::Null:
+    return std::make_unique<NullType>(loc);
+  case TypeKind::Any:
+    return std::make_unique<AnyType>(loc);
 
   case TypeKind::Pointer: {
     auto *ptr = llvm::cast<PointerType>(type);
@@ -179,8 +193,21 @@ TypePtr GenericResolver::substituteType(
       newParams.push_back(substituteType(p.get(), substitutions));
     }
 
-    return std::make_unique<FunctionType>(std::move(newRet),
-                                          std::move(newParams), loc);
+    // Pass func->isInterruptFunc() to the constructor
+    return std::make_unique<FunctionType>(
+        std::move(newRet), std::move(newParams), func->isVariadicFunc(),
+        func->isInterruptFunc(), loc);
+  }
+
+  case TypeKind::Const: {
+    auto *c = llvm::cast<ConstType>(type);
+    return std::make_unique<ConstType>(
+        substituteType(c->getInner(), substitutions), loc);
+  }
+  case TypeKind::Volatile: {
+    auto *v = llvm::cast<VolatileType>(type);
+    return std::make_unique<VolatileType>(
+        substituteType(v->getInner(), substitutions), loc);
   }
 
   default:

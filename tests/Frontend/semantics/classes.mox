@@ -1,0 +1,25 @@
+// Stack allocated value type
+class Vector2 {
+    public int x;
+    public int y;
+    constructor(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+    destructor() {
+        // Cleanup logic
+    }
+}
+
+// Heap allocated reference type
+ref class Player {
+    public string name;
+    constructor(string name) {
+        this.name = name;
+    }
+}
+
+Vector2 v = new Vector2(1, 2);
+
+// 'shared' keyword forces heap allocation for value types
+shared Vector2 heapV = new Vector2(3, 4);

@@ -2,6 +2,7 @@
 #include "moksha/AST/Expr.h"
 #include "moksha/AST/Stmt.h"
 #include "moksha/AST/Type.h"
+#include "moksha/Support/Diagnostics.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace moksha {
@@ -10,8 +11,9 @@ namespace moksha {
 
 static std::string tokenKindToString(TokenKind kind);
 
-Parser::Parser(Lexer &lexer, ASTContext &context, llvm::SourceMgr &srcMgr)
-    : lexer(lexer), context(context), srcMgr(srcMgr) {
+Parser::Parser(Lexer &lexer, ASTContext &context, llvm::SourceMgr &srcMgr,
+               DiagnosticEngine &diags)
+    : lexer(lexer), context(context), srcMgr(srcMgr), Diags(diags) {
   curTok = lexer.next();
   nextTok = lexer.next();
 }
@@ -66,12 +68,16 @@ static std::string tokenKindToString(TokenKind kind) {
     return "'delete'";
   case TokenKind::KwUnsafe:
     return "'unsafe'";
+  case TokenKind::KwUnsigned:
+    return "'unsigned'";
   case TokenKind::KwConstructor:
     return "'constructor'";
   case TokenKind::KwDestructor:
     return "'destructor'";
   case TokenKind::KwThis:
     return "'this'";
+  case TokenKind::KwSuper:
+    return "'super'";
   case TokenKind::KwNull:
     return "'null'";
   case TokenKind::KwIf:
@@ -124,6 +130,8 @@ static std::string tokenKindToString(TokenKind kind) {
     return "'char'";
   case TokenKind::KwAny:
     return "'any'";
+  case TokenKind::KwAs:
+    return "'as'";
   case TokenKind::KwTrue:
     return "'true'";
   case TokenKind::KwFalse:
@@ -168,12 +176,26 @@ static std::string tokenKindToString(TokenKind kind) {
     return "'interrupt'";
   case TokenKind::KwNaked:
     return "'naked'";
+  case TokenKind::KwNoreturn:
+    return "'noreturn'";
   case TokenKind::KwLock:
     return "'lock'";
   case TokenKind::KwView:
     return "'view'";
   case TokenKind::KwMut:
     return "'mut'";
+  case TokenKind::KwExtern:
+    return "'extern'";
+  case TokenKind::KwUsing:
+    return "'using'";
+  case TokenKind::KwAsm:
+    return "'asm'";
+  case TokenKind::KwSection:
+    return "'section'";
+  case TokenKind::KwUsed:
+    return "'used'";
+  case TokenKind::KwThreadLocal:
+    return "'thread_local'";
 
   // --- Operators ---
   case TokenKind::Plus:
@@ -230,6 +252,8 @@ static std::string tokenKindToString(TokenKind kind) {
     return "'&&'";
   case TokenKind::PipePipe:
     return "'||'";
+  case TokenKind::PipeGreater:
+    return "'|>'";
   case TokenKind::Bang:
     return "'!'";
   case TokenKind::EqualEqual:
@@ -253,7 +277,9 @@ static std::string tokenKindToString(TokenKind kind) {
   case TokenKind::QuestionDot:
     return "'?.'";
   case TokenKind::QuestionQuestion:
-    return "'??'";
+    return "'?"
+           "?"
+           "'";
   case TokenKind::Question:
     return "'?'";
   case TokenKind::Colon:
@@ -280,6 +306,29 @@ static std::string tokenKindToString(TokenKind kind) {
   }
 }
 
+// [NEW HELPER] Safely parse { a, b } without hanging
+void Parser::parseImportSymbolList(std::vector<std::string> &symbols) {
+  while (curTok.isNot(TokenKind::RBrace) && curTok.isNot(TokenKind::Eof)) {
+
+    // Allow Identifiers AND type keywords like 'table' and 'list'
+    if (curTok.is(TokenKind::Identifier) || curTok.is(TokenKind::KwTable)) {
+      symbols.push_back(curTok.getSpelling().str());
+      consume();
+    } else {
+      error("Expected identifier or type in import list");
+      consume(); // [CRITICAL] Force advance to break infinite loops!
+    }
+
+    if (curTok.isNot(TokenKind::RBrace)) {
+      if (!consumeIf(TokenKind::Comma)) {
+        error("Expected ',' between imported symbols");
+        consume(); // Force advance on syntax error
+      }
+    }
+  }
+  expect(TokenKind::RBrace);
+}
+
 void Parser::consume() { advance(); }
 
 bool Parser::consumeIf(TokenKind kind) {
@@ -302,15 +351,31 @@ bool Parser::expect(TokenKind kind) {
   return false;
 }
 
-void Parser::error(const std::string &message) {
-  srcMgr.PrintMessage(curTok.location, llvm::SourceMgr::DK_Error, message);
+bool Parser::expectGreater() {
+  if (curTok.is(TokenKind::Greater)) {
+    advance();
+    return true;
+  }
+
+  //  The Right-Angle-Bracket Hack
+  if (curTok.is(TokenKind::GreaterGreater)) {
+    curTok.kind = TokenKind::Greater;
+    return true; // Notice we DO NOT call advance() here!
+  }
+
+  // Handle '>>=' edge cases just in case
+  if (curTok.is(TokenKind::GreaterGreaterEqual)) {
+    curTok.kind = TokenKind::GreaterEqual;
+    return true;
+  }
+
+  // Fallback to standard error reporting
+  return expect(TokenKind::Greater);
 }
 
-// void Parser::error(const std::string &message) {
-//   llvm::errs() << "Error at " << curTok.location.getPointer() << ": " <<
-//   message
-//                << "\n";
-// }
+void Parser::error(const std::string &message) {
+  Diags.report(curTok.location, DiagID::err_expected_token) << message;
+}
 
 void Parser::synchronize() {
   advance();
@@ -335,18 +400,37 @@ void Parser::synchronize() {
 
 bool Parser::isStartOfDeclaration() {
   // 1. keywords that always start a declaration
-  if (curTok.isAny(TokenKind::KwImport, TokenKind::KwFrom, TokenKind::KwGeneric,
-                   TokenKind::KwEnum, TokenKind::KwClass, TokenKind::KwStruct,
-                   TokenKind::KwUnion, TokenKind::KwRef, TokenKind::KwThread))
+  if (curTok.isAny(
+          TokenKind::KwImport, TokenKind::KwFrom, TokenKind::KwGeneric,
+          TokenKind::KwEnum, TokenKind::KwClass, TokenKind::KwStruct,
+          TokenKind::KwUnion, TokenKind::KwRef, TokenKind::KwThread,
+          TokenKind::KwTable, TokenKind::KwUnsigned, TokenKind::KwWeak,
+          TokenKind::KwAsync, TokenKind::KwShared, TokenKind::KwMacro,
+          TokenKind::KwConst, TokenKind::KwStatic, TokenKind::KwPublic,
+          TokenKind::KwPrivate, TokenKind::KwProtected, TokenKind::KwExtern,
+          TokenKind::KwUsing, TokenKind::KwPacked, TokenKind::KwAlign,
+          TokenKind::KwSection, TokenKind::KwInterrupt, TokenKind::KwNaked,
+          TokenKind::KwNoreturn, TokenKind::KwNoinline, TokenKind::KwVolatile,
+          TokenKind::KwLock, TokenKind::KwView, TokenKind::KwMut,
+          TokenKind::KwUsed, TokenKind::KwThreadLocal)) {
+    if (curTok.isAny(TokenKind::KwLock, TokenKind::KwView, TokenKind::KwMut) &&
+        nextTok.is(TokenKind::LBrace)) {
+      return false;
+    }
     return true;
+  }
 
   // 2. Primitive types start declarations (int x, void foo)
   if (curTok.isAny(TokenKind::KwInt, TokenKind::KwFloat, TokenKind::KwBool,
                    TokenKind::KwString, TokenKind::KwVoid, TokenKind::KwAny,
                    TokenKind::KwChar, TokenKind::KwISize, TokenKind::KwUSize,
                    TokenKind::KwShort, TokenKind::KwLong, TokenKind::KwDouble,
-                   TokenKind::KwHalf, TokenKind::KwQuarter))
+                   TokenKind::KwHalf, TokenKind::KwQuarter)) {
+    if (nextTok.is(TokenKind::LParen)) {
+      return false;
+    }
     return true;
+  }
 
   // 3. Identifier Ambiguity: "MyType x" (Decl) vs "myVar = 5" (Stmt)
   if (curTok.is(TokenKind::Identifier)) {
@@ -359,8 +443,8 @@ bool Parser::isStartOfDeclaration() {
     // "Type[] Name" -> Declaration
     if (nextTok.is(TokenKind::LBracket))
       return true;
-    // "Type* Name" -> Declaration
-    if (nextTok.is(TokenKind::Star))
+    // "Type* Name" or "Type** Name" -> Declaration
+    if (nextTok.is(TokenKind::Star) || nextTok.is(TokenKind::Power))
       return true;
     // "Type? Name" -> Declaration
     if (nextTok.is(TokenKind::Question))
@@ -381,11 +465,8 @@ std::unique_ptr<ModuleDecl> Parser::parseModule() {
     if (isStartOfDeclaration()) {
       DeclPtr decl = parseTopLevelDecl();
       if (decl) {
-        // [FIX] If it's a Variable, move it to the script body (inside main)
-        // This ensures 'int x = 10;' runs in order with other statements.
         if (decl->getKind() == StmtKind::VariableDecl) {
-          scriptStatements.push_back(
-              std::make_unique<DeclStmt>(std::move(decl), decl->getLoc()));
+          decls.push_back(std::move(decl));
         } else {
           // Functions, Classes, Enums stay global
           decls.push_back(std::move(decl));
@@ -423,8 +504,9 @@ std::unique_ptr<ModuleDecl> Parser::parseModule() {
           PrimitiveType::Scalar::Void, startLoc);
 
       auto mainFunc = std::make_unique<FunctionDecl>(
-          std::move(voidType), "main", std::vector<FunctionDecl::Param>{},
-          std::move(body), false, startLoc);
+          "main", std::vector<FunctionDecl::Param>{}, std::move(voidType),
+          std::move(body), false, false, false, false, Visibility::Default,
+          startLoc);
 
       decls.push_back(std::move(mainFunc));
     }
@@ -434,119 +516,385 @@ std::unique_ptr<ModuleDecl> Parser::parseModule() {
 }
 
 DeclPtr Parser::parseTopLevelDecl() {
+  // 1. Parse Modifiers
+  Visibility vis = Visibility::Default;
+  bool isStatic = false;
+  bool isConst = false;
+  bool isAsync = false;
+  bool isShared = false;
+  bool isWeak = false;
+  bool isExtern = false, isInterrupt = false, isNaked = false;
+  bool isPacked = false, isVolatile = false;
+  bool isNoReturn = false;
+  bool isNoInline = false;
+  bool isUsed = false;
+  bool isThreadLocal = false;
+  int alignment = 0;
+  std::string externLinkage = "", sectionName = "";
+
+  while (true) {
+    if (consumeIf(TokenKind::KwPublic))
+      vis = Visibility::Public;
+    else if (consumeIf(TokenKind::KwPrivate))
+      vis = Visibility::Private;
+    else if (consumeIf(TokenKind::KwProtected))
+      vis = Visibility::Protected;
+    else if (consumeIf(TokenKind::KwStatic))
+      isStatic = true;
+    else if (consumeIf(TokenKind::KwConst))
+      isConst = true;
+    else if (consumeIf(TokenKind::KwAsync))
+      isAsync = true;
+    else if (consumeIf(TokenKind::KwShared))
+      isShared = true;
+    else if (consumeIf(TokenKind::KwWeak))
+      isWeak = true;
+    else if (consumeIf(TokenKind::KwExtern)) {
+      isExtern = true;
+      if (curTok.is(TokenKind::StringLiteral)) {
+        externLinkage = curTok.getSpelling().str();
+        if (externLinkage.size() >= 2)
+          externLinkage = externLinkage.substr(1, externLinkage.size() - 2);
+        consume();
+      }
+    } else if (consumeIf(TokenKind::KwInterrupt))
+      isInterrupt = true;
+    else if (consumeIf(TokenKind::KwNaked))
+      isNaked = true;
+    else if (consumeIf(TokenKind::KwNoreturn))
+      isNoReturn = true;
+    else if (consumeIf(TokenKind::KwNoinline))
+      isNoInline = true;
+    else if (consumeIf(TokenKind::KwPacked))
+      isPacked = true;
+    else if (consumeIf(TokenKind::KwVolatile))
+      isVolatile = true;
+    else if (consumeIf(TokenKind::KwAlign)) {
+      expect(TokenKind::LParen);
+      if (curTok.is(TokenKind::IntegerLiteral)) {
+        alignment = std::stoull(curTok.getSpelling().str());
+        consume();
+      } else {
+        error("Expected integer alignment");
+      }
+      expect(TokenKind::RParen);
+    } else if (consumeIf(TokenKind::KwSection)) {
+      expect(TokenKind::LParen);
+      if (curTok.is(TokenKind::StringLiteral)) {
+        sectionName = curTok.getSpelling().str();
+        if (sectionName.size() >= 2)
+          sectionName = sectionName.substr(1, sectionName.size() - 2);
+        consume();
+      } else {
+        error("Expected section name");
+      }
+      expect(TokenKind::RParen);
+    } else if (consumeIf(TokenKind::KwUsed)) {
+      isUsed = true;
+    } else if (consumeIf(TokenKind::KwThreadLocal)) {
+      isThreadLocal = true;
+    } else
+      break;
+  }
+
+  if (consumeIf(TokenKind::KwUsing)) {
+    SourceLocation loc = curTok.location;
+    std::string name = curTok.getSpelling().str();
+    expect(TokenKind::Identifier);
+    expect(TokenKind::Equal);
+    TypePtr target = parseType();
+    consumeIf(TokenKind::Semicolon);
+    return std::make_unique<UsingDecl>(std::move(name), std::move(target), loc);
+  }
+
   if (curTok.is(TokenKind::KwImport) || curTok.is(TokenKind::KwFrom))
     return parseImportDecl();
+  if (curTok.is(TokenKind::KwMacro))
+    return parseMacroDecl();
   if (curTok.is(TokenKind::KwGeneric))
     return parseGenericDecl();
   if (curTok.is(TokenKind::KwEnum))
     return parseEnumDecl();
   if (curTok.isAny(TokenKind::KwClass, TokenKind::KwStruct, TokenKind::KwRef,
-                   TokenKind::KwUnion))
-    return parseClassDecl();
+                   TokenKind::KwUnion)) {
+    auto decl = parseClassDecl();
+    if (auto cls = dynamic_cast<ClassDecl *>(decl.get())) {
+      cls->isPacked = isPacked;
+      cls->alignment = alignment;
+      cls->section = sectionName;
+    }
+    return decl;
+  }
 
+  // Parse Type (for Variables and Functions)
   TypePtr type = parseType();
-  if (!type)
+  if (!type) {
+    // If we parsed modifiers but found no type, it's an error
+    if (vis != Visibility::Default || isStatic || isConst || isAsync) {
+      error("Expected declaration after modifiers");
+    }
     return nullptr;
+  }
+  if (isConst)
+    type = std::make_unique<ConstType>(std::move(type), type->getLoc());
+  if (isVolatile)
+    type = std::make_unique<VolatileType>(std::move(type), type->getLoc());
 
   std::string name = curTok.getSpelling().str();
   expect(TokenKind::Identifier);
 
+  DeclPtr decl;
   if (curTok.is(TokenKind::LParen)) {
-    return parseFunctionRest(std::move(type), name);
+    decl = parseFunctionRest(std::move(type), name, isAsync, isStatic, isWeak,
+                             vis);
+    if (auto fn = dynamic_cast<FunctionDecl *>(decl.get())) {
+      fn->isExtern = isExtern;
+      fn->externLinkage = externLinkage;
+      fn->isInterrupt = isInterrupt;
+      fn->isNaked = isNaked;
+      fn->isNoReturn = isNoReturn;
+      fn->isNoInline = isNoInline;
+      fn->isUsed = isUsed;
+    }
   } else {
-    return parseVariableRest(std::move(type), name);
+    decl = parseVariableRest(std::move(type), name, isConst, isStatic, isShared,
+                             vis);
+    if (auto var = dynamic_cast<VariableDecl *>(decl.get())) {
+      var->isVolatile = isVolatile;
+      var->isExtern = isExtern;
+      var->alignment = alignment;
+      var->section = sectionName;
+      var->isUsed = isUsed;
+      var->isThreadLocal = isThreadLocal;
+    }
   }
+  return decl;
 }
 
-DeclPtr Parser::parseFunctionRest(TypePtr type, std::string name) {
-  expect(TokenKind::LParen);
+DeclPtr Parser::parseFunctionRest(TypePtr returnType, std::string name,
+                                  bool isAsync, bool isStatic, bool isWeak,
+                                  Visibility vis) {
+  // [FIX] Capture location from the type or current token
+  SourceLocation loc = returnType->getLoc();
 
-  // [FIX] Use FunctionDecl::Param instead of std::pair
   std::vector<FunctionDecl::Param> params;
+  bool isVariadic = false;
 
+  expect(TokenKind::LParen);
   if (curTok.isNot(TokenKind::RParen)) {
     do {
-      consumeIf(TokenKind::KwRef);
-      TypePtr paramType = parseType();
-      if (!paramType)
+      // [FIX] Handle Variadic Argument
+      if (consumeIf(TokenKind::DotDotDot)) {
+        isVariadic = true;
         break;
+      }
 
-      std::string paramName;
+      TypePtr paramType = parseType();
+      std::string paramName = "";
+      SourceLocation paramLoc = curTok.location;
+
       if (curTok.is(TokenKind::Identifier)) {
         paramName = curTok.getSpelling().str();
         consume();
       }
-      // Construct the struct
-      params.push_back({std::move(paramType), paramName});
+
+      // [FIX] Explicit construction for vector push_back
+      params.push_back(
+          FunctionDecl::Param{paramName, std::move(paramType), paramLoc});
+
     } while (consumeIf(TokenKind::Comma));
   }
   expect(TokenKind::RParen);
 
   StmtPtr body = nullptr;
-  if (curTok.is(TokenKind::LBrace)) {
-    body = parseBlock();
+  if (consumeIf(TokenKind::Semicolon)) {
+    // Bodiless function (e.g. extern printf);
   } else {
-    expect(TokenKind::Semicolon);
+    body = parseBlock();
   }
 
-  return std::make_unique<FunctionDecl>(std::move(type), name,
-                                        std::move(params), std::move(body),
-                                        false, curTok.location);
+  // [FIX] Pass all new flags (isVariadic)
+  return std::make_unique<FunctionDecl>(
+      name, std::move(params), std::move(returnType), std::move(body), isAsync,
+      isStatic, isVariadic, isWeak, vis, loc);
 }
 
-DeclPtr Parser::parseVariableRest(TypePtr type, std::string name) {
+DeclPtr Parser::parseVariableRest(TypePtr type, std::string name, bool isConst,
+                                  bool isStatic, bool isShared,
+                                  Visibility vis) {
   ExprPtr init = nullptr;
-  if (consumeIf(TokenKind::Equal)) {
+  int bitFieldWidth = -1;
+  if (consumeIf(TokenKind::Colon)) {
+    if (curTok.is(TokenKind::IntegerLiteral)) {
+      bitFieldWidth = std::stoi(curTok.getSpelling().str());
+      consume();
+    } else {
+      error("Expected integer literal for bitfield width");
+    }
+  } else if (consumeIf(TokenKind::Equal)) {
     init = parseExpression();
+    if (!init)
+      return nullptr;
   }
   consumeIf(TokenKind::Semicolon);
-  return std::make_unique<VariableDecl>(std::move(type), name, std::move(init),
-                                        curTok.location);
+  auto varDecl = std::make_unique<VariableDecl>(
+      std::move(type), name, std::move(init), isConst, isStatic, isShared, vis,
+      type->getLoc());
+  varDecl->bitWidth = bitFieldWidth;
+  return varDecl;
 }
 
 DeclPtr Parser::parseVariableDecl() {
+  // 1. Initialize all possible modifiers
+  Visibility vis = Visibility::Default;
+  bool isStatic = false;
+  bool isConst = false;
+  bool isShared = false;
+  bool isExtern = false;
+  bool isVolatile = false;
+  bool isUsed = false;
+  bool isThreadLocal = false;
+  int alignment = 0;
+  std::string sectionName = "";
+
+  // 2. Parse modifiers in any order
+  while (true) {
+    if (consumeIf(TokenKind::KwPublic))
+      vis = Visibility::Public;
+    else if (consumeIf(TokenKind::KwPrivate))
+      vis = Visibility::Private;
+    else if (consumeIf(TokenKind::KwProtected))
+      vis = Visibility::Protected;
+    else if (consumeIf(TokenKind::KwStatic))
+      isStatic = true;
+    else if (consumeIf(TokenKind::KwConst))
+      isConst = true;
+    else if (consumeIf(TokenKind::KwShared))
+      isShared = true;
+    else if (consumeIf(TokenKind::KwExtern)) {
+      isExtern = true;
+      // Extern linkage strings (e.g., extern "C") are usually global,
+      // but we consume it here safely if it appears on a local declaration
+      if (curTok.is(TokenKind::StringLiteral))
+        consume();
+    } else if (consumeIf(TokenKind::KwVolatile))
+      isVolatile = true;
+    else if (consumeIf(TokenKind::KwUsed))
+      isUsed = true;
+    else if (consumeIf(TokenKind::KwThreadLocal))
+      isThreadLocal = true;
+    else if (consumeIf(TokenKind::KwAlign)) {
+      expect(TokenKind::LParen);
+      if (curTok.is(TokenKind::IntegerLiteral)) {
+        alignment = std::stoull(curTok.getSpelling().str());
+        consume();
+      } else {
+        error("Expected integer alignment");
+      }
+      expect(TokenKind::RParen);
+    } else if (consumeIf(TokenKind::KwSection)) {
+      expect(TokenKind::LParen);
+      if (curTok.is(TokenKind::StringLiteral)) {
+        sectionName = curTok.getSpelling().str();
+        if (sectionName.size() >= 2)
+          sectionName = sectionName.substr(1, sectionName.size() - 2);
+        consume();
+      } else {
+        error("Expected section name");
+      }
+      expect(TokenKind::RParen);
+    } else {
+      // No more modifiers, break out of the loop
+      break;
+    }
+  }
+
+  // 3. Parse Type
   TypePtr type = parseType();
-  if (!type)
+  if (!type) {
+    if (vis != Visibility::Default || isStatic || isConst || isVolatile ||
+        isThreadLocal) {
+      error("Expected type after modifiers");
+    }
     return nullptr;
+  }
+
+  if (isConst)
+    type = std::make_unique<ConstType>(std::move(type), type->getLoc());
+  if (isVolatile)
+    type = std::make_unique<VolatileType>(std::move(type), type->getLoc());
+
+  // 4. Parse Name
   std::string name = curTok.getSpelling().str();
   expect(TokenKind::Identifier);
-  return parseVariableRest(std::move(type), name);
+
+  // 5. Construct the base AST Node
+  auto decl = parseVariableRest(std::move(type), name, isConst, isStatic,
+                                isShared, vis);
+
+  // 6. Apply all the additional parsed properties to the VariableDecl
+  if (auto var = dynamic_cast<VariableDecl *>(decl.get())) {
+    var->isVolatile = isVolatile;
+    var->isExtern = isExtern;
+    var->alignment = alignment;
+    var->section = sectionName;
+    var->isUsed = isUsed;
+    var->isThreadLocal = isThreadLocal;
+  }
+
+  return decl;
 }
 
 StmtPtr Parser::parseVariableStmt() {
+  SourceLocation loc = curTok.location;
   DeclPtr decl = parseVariableDecl();
   if (!decl)
     return nullptr;
-  return std::make_unique<DeclStmt>(std::move(decl), curTok.location);
+  return std::make_unique<DeclStmt>(std::move(decl), loc);
 }
 
 DeclPtr Parser::parseImportDecl() {
+  SourceLocation loc = curTok.location;
   std::string moduleName;
   std::vector<std::string> symbols;
-  SourceLocation loc = curTok.location;
 
+  // Helper to strip quotes
+  auto stripQuotes = [](std::string s) {
+    if (s.size() >= 2 &&
+        (s.front() == '"' || s.front() == '`' || s.front() == '\''))
+      return s.substr(1, s.size() - 2);
+    return s;
+  };
+
+  // Pattern 1: from "std/collections" import { table, list }
   if (consumeIf(TokenKind::KwFrom)) {
     if (curTok.is(TokenKind::StringLiteral)) {
-      moduleName = curTok.getSpelling().str();
+      moduleName = stripQuotes(curTok.getSpelling().str());
       consume();
     }
     expect(TokenKind::KwImport);
     expect(TokenKind::LBrace);
-    while (curTok.isNot(TokenKind::RBrace) && curTok.isNot(TokenKind::Eof)) {
-      if (curTok.is(TokenKind::Identifier)) {
-        symbols.push_back(curTok.getSpelling().str());
+    parseImportSymbolList(symbols);
+  } else if (consumeIf(TokenKind::KwImport)) {
+    // Pattern 2: import { table, list } from "std/collections"
+    if (curTok.is(TokenKind::LBrace)) {
+      consume(); // Eat '{'
+      parseImportSymbolList(symbols);
+      expect(TokenKind::KwFrom);
+      if (curTok.is(TokenKind::StringLiteral)) {
+        moduleName = stripQuotes(curTok.getSpelling().str());
         consume();
       }
-      consumeIf(TokenKind::Comma);
     }
-    expect(TokenKind::RBrace);
-  } else {
-    expect(TokenKind::KwImport);
-    if (curTok.is(TokenKind::StringLiteral)) {
-      moduleName = curTok.getSpelling().str();
+    // Pattern 3: import "std/io" (Whole Module)
+    else if (curTok.is(TokenKind::StringLiteral)) {
+      moduleName = stripQuotes(curTok.getSpelling().str());
       consume();
+    } else {
+      error("Expected '{' or string literal after 'import'");
     }
   }
+
   consumeIf(TokenKind::Semicolon);
   return std::make_unique<ImportDecl>(moduleName, symbols, loc);
 }
@@ -555,8 +903,16 @@ DeclPtr Parser::parseGenericDecl() {
   SourceLocation loc = curTok.location;
   expect(TokenKind::KwGeneric);
 
-  // Parse Type Parameters: <T, U>
+  std::string name = "";
   std::vector<std::string> typeParams;
+
+  // Check for Syntax: generic Box<T>
+  if (curTok.is(TokenKind::Identifier)) {
+    name = curTok.getSpelling().str();
+    consume();
+  }
+
+  // Parse Type Parameters: <T, U>
   if (consumeIf(TokenKind::Less)) {
     do {
       if (curTok.is(TokenKind::Identifier)) {
@@ -566,25 +922,121 @@ DeclPtr Parser::parseGenericDecl() {
         error("Expected type parameter name");
       }
     } while (consumeIf(TokenKind::Comma));
-    expect(TokenKind::Greater);
+    expectGreater();
   }
 
-  // Parse Inner Declaration (Class, Function, etc.)
+  // If a name was provided and we see '{' or '(', it's a generic class/struct
+  // definition
+  if (!name.empty() &&
+      (curTok.is(TokenKind::LBrace) || curTok.is(TokenKind::LParen))) {
+
+    std::vector<std::string> parentNames;
+    if (consumeIf(TokenKind::LParen)) {
+      do {
+        if (curTok.is(TokenKind::Identifier)) {
+          parentNames.push_back(curTok.getSpelling().str());
+          consume();
+        } else {
+          error("Expected parent class name");
+        }
+      } while (consumeIf(TokenKind::Comma));
+
+      expect(TokenKind::RParen);
+    }
+
+    expect(TokenKind::LBrace);
+    std::vector<DeclPtr> members;
+    while (curTok.isNot(TokenKind::RBrace) && curTok.isNot(TokenKind::Eof)) {
+      // 1. Parse Member Modifiers (vis, static, etc.)
+      Visibility memVis = Visibility::Default;
+      bool isStatic = false, isConst = false, isAsync = false, isShared = false,
+           isWeak = false;
+      while (true) {
+        if (consumeIf(TokenKind::KwPublic))
+          memVis = Visibility::Public;
+        else if (consumeIf(TokenKind::KwPrivate))
+          memVis = Visibility::Private;
+        else if (consumeIf(TokenKind::KwProtected))
+          memVis = Visibility::Protected;
+        else if (consumeIf(TokenKind::KwStatic))
+          isStatic = true;
+        else if (consumeIf(TokenKind::KwConst))
+          isConst = true;
+        else if (consumeIf(TokenKind::KwAsync))
+          isAsync = true;
+        else if (consumeIf(TokenKind::KwShared))
+          isShared = true;
+        else if (consumeIf(TokenKind::KwWeak))
+          isWeak = true;
+        else
+          break;
+      }
+
+      // Add constructor/destructor parsing to Generic classes!
+      if (curTok.isAny(TokenKind::KwConstructor, TokenKind::KwDestructor)) {
+        TokenKind kind = curTok.kind;
+        std::string memName =
+            (kind == TokenKind::KwConstructor) ? "constructor" : "destructor";
+        SourceLocation mLoc = curTok.location;
+        consume(); // eat constructor/destructor
+
+        auto voidType =
+            std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, mLoc);
+        members.push_back(parseFunctionRest(std::move(voidType), memName, false,
+                                            false, false, memVis));
+        continue;
+      }
+
+      // 2. Parse Member Type and Name
+      TypePtr memberType = parseType();
+      if (!memberType) {
+        synchronize();
+        continue;
+      }
+
+      std::string memName = curTok.getSpelling().str();
+      expect(TokenKind::Identifier);
+
+      if (curTok.is(TokenKind::LParen)) {
+        members.push_back(parseFunctionRest(std::move(memberType), memName,
+                                            isAsync, isStatic, isWeak, memVis));
+      } else {
+        members.push_back(parseVariableRest(std::move(memberType), memName,
+                                            isConst, isStatic, isShared,
+                                            memVis));
+      }
+    }
+    expect(TokenKind::RBrace);
+
+    // Pass parentName to the ClassDecl constructor so Generic classes can
+    // inherit!
+    auto classDecl = std::make_unique<ClassDecl>(
+        name, parentNames, std::move(members), false, AggregateKind::Class,
+        Visibility::Default, loc);
+    return std::make_unique<GenericDecl>(name, std::move(typeParams),
+                                         std::move(classDecl), loc);
+  }
+
+  // Fallback: Support "generic <T> class Box" by wrapping the next declaration
   DeclPtr innerDecl = parseTopLevelDecl();
-  if (!innerDecl) {
-    error("Expected declaration after generic parameters");
+  if (!innerDecl)
     return nullptr;
-  }
 
-  return std::make_unique<GenericDecl>("generic_wrapper", std::move(typeParams),
-                                       std::move(innerDecl), loc);
+  return std::make_unique<GenericDecl>(
+      innerDecl->getName(), std::move(typeParams), std::move(innerDecl), loc);
 }
 
 DeclPtr Parser::parseClassDecl() {
   bool isRef = consumeIf(TokenKind::KwRef);
   SourceLocation loc = curTok.location;
 
-  // [FIX] Explicitly check for class/struct/union keywords
+  AggregateKind aggKind = AggregateKind::Class;
+  if (curTok.is(TokenKind::KwStruct)) {
+    aggKind = AggregateKind::Struct;
+  } else if (curTok.is(TokenKind::KwUnion)) {
+    aggKind = AggregateKind::Union;
+  }
+
   if (curTok.isAny(TokenKind::KwClass, TokenKind::KwStruct,
                    TokenKind::KwUnion)) {
     consume();
@@ -594,19 +1046,100 @@ DeclPtr Parser::parseClassDecl() {
   }
 
   std::string name = curTok.getSpelling().str();
-  expect(TokenKind::Identifier);
+  if (!expect(TokenKind::Identifier)) {
+    return nullptr;
+  }
 
-  if (consumeIf(TokenKind::Colon)) {
-    parseType(); // Inheritance placeholder
+  // Multiple Inheritance Parsing
+  std::vector<std::string> parentNames;
+  if (consumeIf(TokenKind::LParen)) {
+    do {
+      if (curTok.is(TokenKind::Identifier)) {
+        parentNames.push_back(curTok.getSpelling().str());
+        consume();
+      } else {
+        error("Expected parent class name");
+      }
+    } while (consumeIf(TokenKind::Comma)); // Loop as long as there are commas!
+
+    expect(TokenKind::RParen); // Strictly require the closing parenthesis
   }
 
   expect(TokenKind::LBrace);
   std::vector<DeclPtr> members;
 
   while (curTok.isNot(TokenKind::RBrace) && curTok.isNot(TokenKind::Eof)) {
-    if (curTok.isAny(TokenKind::KwPublic, TokenKind::KwPrivate,
-                     TokenKind::KwProtected))
-      consume();
+    // 1. Parse Member Modifiers
+    Visibility memVis = Visibility::Default;
+    bool isStatic = false;
+    bool isConst = false;
+    bool isAsync = false;
+    bool isShared = false;
+    bool isWeak = false;
+    int alignment = 0;
+    std::string sectionName = "";
+    bool isVolatile = false;
+    bool isThreadLocal = false;
+
+    while (true) {
+      if (consumeIf(TokenKind::KwPublic))
+        memVis = Visibility::Public;
+      else if (consumeIf(TokenKind::KwPrivate))
+        memVis = Visibility::Private;
+      else if (consumeIf(TokenKind::KwProtected))
+        memVis = Visibility::Protected;
+      else if (consumeIf(TokenKind::KwStatic))
+        isStatic = true;
+      else if (consumeIf(TokenKind::KwConst))
+        isConst = true;
+      else if (consumeIf(TokenKind::KwAsync))
+        isAsync = true;
+      else if (consumeIf(TokenKind::KwShared))
+        isShared = true;
+      else if (consumeIf(TokenKind::KwWeak))
+        isWeak = true;
+      else if (consumeIf(TokenKind::KwVolatile))
+        isVolatile = true;
+      else if (consumeIf(TokenKind::KwThreadLocal))
+        isThreadLocal = true;
+      else if (consumeIf(TokenKind::KwAlign)) {
+        expect(TokenKind::LParen);
+        if (curTok.is(TokenKind::IntegerLiteral)) {
+          alignment = std::stoull(curTok.getSpelling().str());
+          consume();
+        } else {
+          error("Expected integer alignment");
+        }
+        expect(TokenKind::RParen);
+      } else if (consumeIf(TokenKind::KwSection)) {
+        expect(TokenKind::LParen);
+        if (curTok.is(TokenKind::StringLiteral)) {
+          sectionName = curTok.getSpelling().str();
+          if (sectionName.size() >= 2)
+            sectionName = sectionName.substr(1, sectionName.size() - 2);
+          consume();
+        } else {
+          error("Expected section name");
+        }
+        expect(TokenKind::RParen);
+      } else
+        break;
+    }
+
+    if (curTok.isAny(TokenKind::KwConstructor, TokenKind::KwDestructor)) {
+      TokenKind kind = curTok.kind;
+      std::string memName =
+          (kind == TokenKind::KwConstructor) ? "constructor" : "destructor";
+      SourceLocation mLoc = curTok.location;
+      consume(); // eat constructor/destructor
+
+      // Implicitly returns void
+      auto voidType =
+          std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, mLoc);
+      members.push_back(parseFunctionRest(std::move(voidType), memName, false,
+                                          false, false, memVis));
+      continue;
+    }
 
     TypePtr memberType = parseType();
     if (!memberType) {
@@ -614,17 +1147,99 @@ DeclPtr Parser::parseClassDecl() {
       continue;
     }
 
-    std::string memName = curTok.getSpelling().str();
-    expect(TokenKind::Identifier);
+    if (isConst)
+      memberType = std::make_unique<ConstType>(std::move(memberType),
+                                               memberType->getLoc());
+    if (isVolatile)
+      memberType = std::make_unique<VolatileType>(std::move(memberType),
+                                                  memberType->getLoc());
+
+    std::string memName;
+    if (consumeIf(TokenKind::KwOperator)) {
+      memName = "operator";
+      switch (curTok.kind) {
+      case TokenKind::Plus:
+        memName += "+";
+        consume();
+        break;
+      case TokenKind::Minus:
+        memName += "-";
+        consume();
+        break;
+      case TokenKind::Star:
+        memName += "*";
+        consume();
+        break;
+      case TokenKind::Slash:
+        memName += "/";
+        consume();
+        break;
+      case TokenKind::EqualEqual:
+        memName += "==";
+        consume();
+        break;
+      case TokenKind::NotEqual:
+        memName += "!=";
+        consume();
+        break;
+      case TokenKind::Less:
+        memName += "<";
+        consume();
+        break;
+      case TokenKind::Greater:
+        memName += ">";
+        consume();
+        break;
+      case TokenKind::LessEqual:
+        memName += "<=";
+        consume();
+        break;
+      case TokenKind::GreaterEqual:
+        memName += ">=";
+        consume();
+        break;
+      case TokenKind::LBracket:
+        memName += "[";
+        consume();
+        if (consumeIf(TokenKind::RBracket))
+          memName += "]";
+        break;
+      default:
+        error("Invalid operator for overloading");
+        break;
+      }
+    } else {
+      memName = curTok.getSpelling().str();
+      expect(TokenKind::Identifier);
+    }
 
     if (curTok.is(TokenKind::LParen)) {
-      members.push_back(parseFunctionRest(std::move(memberType), memName));
+      if (isConst)
+        error("'const' on methods not supported yet");
+      auto fnDecl = parseFunctionRest(std::move(memberType), memName, isAsync,
+                                      isStatic, isWeak, memVis);
+      if (auto fn = dynamic_cast<FunctionDecl *>(fnDecl.get())) {
+        fn->section = sectionName;
+      }
+      members.push_back(std::move(fnDecl));
     } else {
-      members.push_back(parseVariableRest(std::move(memberType), memName));
+      if (isAsync)
+        error("'async' on fields not supported");
+      auto varDecl = parseVariableRest(std::move(memberType), memName, isConst,
+                                       isStatic, isShared, memVis);
+      if (auto var = dynamic_cast<VariableDecl *>(varDecl.get())) {
+        var->isVolatile = isVolatile;
+        var->alignment = alignment;
+        var->section = sectionName;
+        var->isThreadLocal = isThreadLocal;
+      }
+      members.push_back(std::move(varDecl));
     }
   }
   expect(TokenKind::RBrace);
-  return std::make_unique<ClassDecl>(name, std::move(members), isRef, loc);
+
+  return std::make_unique<ClassDecl>(name, parentNames, std::move(members),
+                                     isRef, aggKind, Visibility::Default, loc);
 }
 
 DeclPtr Parser::parseEnumDecl() {
@@ -654,6 +1269,48 @@ DeclPtr Parser::parseEnumDecl() {
   return std::make_unique<EnumDecl>(name, std::move(cases), loc);
 }
 
+DeclPtr Parser::parseMacroDecl() {
+  SourceLocation loc = curTok.location;
+  consume(); // eat 'macro'
+
+  std::string name = curTok.getSpelling().str();
+  expect(TokenKind::Identifier);
+
+  bool isFunctionMacro = false;
+  std::vector<std::string> params;
+
+  if (consumeIf(TokenKind::LParen)) {
+    isFunctionMacro = true;
+    if (curTok.isNot(TokenKind::RParen)) {
+      do {
+        if (curTok.is(TokenKind::Identifier)) {
+          params.push_back(curTok.getSpelling().str());
+          consume();
+        }
+      } while (consumeIf(TokenKind::Comma));
+    }
+    expect(TokenKind::RParen);
+  }
+
+  std::vector<StmtPtr> body;
+  if (curTok.is(TokenKind::LBrace)) {
+    consume(); // eat '{'
+    while (curTok.isNot(TokenKind::RBrace) && curTok.isNot(TokenKind::Eof)) {
+      if (auto s = parseStatement())
+        body.push_back(std::move(s));
+      else
+        synchronize();
+    }
+    expect(TokenKind::RBrace);
+  } else {
+    auto expr = parseExpression();
+    body.push_back(std::make_unique<ExpressionStmt>(std::move(expr), loc));
+  }
+
+  return std::make_unique<MacroDecl>(name, std::move(params), std::move(body),
+                                     isFunctionMacro, loc);
+}
+
 // --- Statements ---
 
 StmtPtr Parser::parseStatement() {
@@ -680,29 +1337,79 @@ StmtPtr Parser::parseStatement() {
     return parseDeferStmt();
   case TokenKind::KwTry:
     return parseTryCatchStmt();
+  case TokenKind::KwThrow:
+    return parseThrowStmt();
   case TokenKind::KwUnsafe:
     return parseUnsafeBlock();
+  case TokenKind::KwLock:
+  case TokenKind::KwView:
+  case TokenKind::KwMut:
+    if (nextTok.is(TokenKind::LBrace)) {
+      return parseLockStmt();
+    }
+    if (isStartOfDeclaration()) {
+      SourceLocation loc = curTok.location;
+      DeclPtr decl = parseTopLevelDecl();
+      if (decl) {
+        return std::make_unique<DeclStmt>(std::move(decl), loc);
+      }
+      return nullptr;
+    }
+    return nullptr;
+  case TokenKind::KwAsm: {
+    SourceLocation loc = curTok.location;
+    consume();
+    expect(TokenKind::LParen);
+    std::string asmStr = "";
+    std::string constraints = "";
+    if (curTok.is(TokenKind::StringLiteral)) {
+      asmStr = curTok.getSpelling().str();
+      if (asmStr.size() >= 2)
+        asmStr = asmStr.substr(1, asmStr.size() - 2);
+      consume();
+    } else {
+      error("Expected string literal");
+    }
+    if (consumeIf(TokenKind::Comma)) {
+      if (curTok.is(TokenKind::StringLiteral)) {
+        constraints = curTok.getSpelling().str();
+        if (constraints.size() >= 2)
+          constraints = constraints.substr(1, constraints.size() - 2);
+        consume();
+      } else {
+        error("Expected string literal for inline asm constraints");
+      }
+    }
+    expect(TokenKind::RParen);
+    consumeIf(TokenKind::Semicolon);
+    return std::make_unique<AsmStmt>(std::move(asmStr), std::move(constraints),
+                                     loc);
+  }
   default: {
     // Variable Declaration
-    if (curTok.isAny(TokenKind::KwInt, TokenKind::KwFloat, TokenKind::KwBool,
-                     TokenKind::KwString, TokenKind::KwVoid)) {
-      return parseVariableStmt();
+    if (isStartOfDeclaration()) {
+      SourceLocation loc = curTok.location;
+      DeclPtr decl = parseTopLevelDecl();
+      if (decl) {
+        return std::make_unique<DeclStmt>(std::move(decl), loc);
+      }
+      return nullptr;
     }
     // Ambiguity Check
     if (curTok.is(TokenKind::Identifier) && peekIs(TokenKind::Identifier)) {
       return parseVariableStmt();
     }
-
+    SourceLocation loc = curTok.location;
     // Expression Statement
     ExprPtr expr = parseExpression();
 
-    // [FIX] Check for null to ensure we don't create an invalid statement
+    // Check for null to ensure we don't create an invalid statement
     if (!expr) {
       return nullptr; // Caller (parseBlock) will call synchronize()
     }
 
     consumeIf(TokenKind::Semicolon);
-    return std::make_unique<ExpressionStmt>(std::move(expr), curTok.location);
+    return std::make_unique<ExpressionStmt>(std::move(expr), loc);
   }
   }
 }
@@ -762,8 +1469,6 @@ StmtPtr Parser::parseDoWhileStmt() {
   return std::make_unique<DoWhileStmt>(std::move(body), std::move(cond), loc);
 }
 
-// [REPLACE] parseForStmt
-
 StmtPtr Parser::parseForStmt() {
   SourceLocation loc = curTok.location;
   consume(); // consume 'for'
@@ -812,10 +1517,12 @@ StmtPtr Parser::parseForStmt() {
 
   // --- Standard For-Loop (Typed Decl or Expression) ---
 
-  // [FIX] Simplified declaration detection for standard 'for (int i = 0; ...)'
   bool isTypedDeclaration =
-      curTok.isAny(TokenKind::KwInt, TokenKind::KwFloat, TokenKind::KwBool,
-                   TokenKind::KwString, TokenKind::KwVoid, TokenKind::KwAny);
+      curTok.isAny(TokenKind::KwInt, TokenKind::KwFloat, TokenKind::KwDouble,
+                   TokenKind::KwBool, TokenKind::KwString, TokenKind::KwChar,
+                   TokenKind::KwShort, TokenKind::KwLong, TokenKind::KwISize,
+                   TokenKind::KwUSize, TokenKind::KwHalf, TokenKind::KwQuarter,
+                   TokenKind::KwVoid, TokenKind::KwAny);
 
   if (isTypedDeclaration) {
     varDecl1 = parseVariableDecl();
@@ -825,8 +1532,6 @@ StmtPtr Parser::parseForStmt() {
       ExprPtr collection = parseExpression();
       expect(TokenKind::RParen);
       StmtPtr body = parseStatement();
-      // Typed loop usually only supports 1 variable in standard syntax,
-      // passed as the first arg. Second is null.
       return std::make_unique<ForInStmt>(std::move(varDecl1), nullptr,
                                          std::move(collection), std::move(body),
                                          loc);
@@ -869,20 +1574,31 @@ StmtPtr Parser::parseForStmt() {
 
 StmtPtr Parser::parseSwitchStmt() {
   SourceLocation loc = curTok.location;
-  consume();
+  consume(); // Eat 'switch'
   expect(TokenKind::LParen);
   auto cond = parseExpression();
   expect(TokenKind::RParen);
   expect(TokenKind::LBrace);
-
+  loopDepth++;
   std::vector<SwitchCase> cases;
-
   while (consumeIf(TokenKind::KwCase)) {
     std::vector<ExprPtr> values;
     do {
-      values.push_back(parseExpression());
+      auto val = parseExpression();
+
+      if (curTok.is(TokenKind::Colon) &&
+          nextTok.isAny(TokenKind::IntegerLiteral, TokenKind::FloatLiteral,
+                        TokenKind::StringLiteral, TokenKind::CharLiteral)) {
+        consume(); // Eat range separator ':'
+        auto endVal = parseExpression();
+        val = std::make_unique<BinaryExpr>(std::move(val), TokenKind::Colon,
+                                           std::move(endVal), curTok.location);
+      }
+
+      values.push_back(std::move(val));
     } while (consumeIf(TokenKind::Comma));
-    expect(TokenKind::Colon);
+
+    expect(TokenKind::Colon); // Case terminator
 
     std::vector<StmtPtr> blockStmts;
     while (curTok.isNot(TokenKind::KwCase) &&
@@ -911,7 +1627,7 @@ StmtPtr Parser::parseSwitchStmt() {
         std::make_unique<BlockStmt>(std::move(blockStmts), curTok.location);
     cases.emplace_back(std::vector<ExprPtr>{}, std::move(block), true);
   }
-
+  loopDepth--;
   expect(TokenKind::RBrace);
   return std::make_unique<SwitchStmt>(std::move(cond), std::move(cases), loc);
 }
@@ -1002,6 +1718,14 @@ StmtPtr Parser::parseLockStmt() {
   return parseBlock();
 }
 
+StmtPtr Parser::parseThrowStmt() {
+  SourceLocation loc = curTok.location;
+  consume(); // Eat 'throw'
+  auto expr = parseExpression();
+  consumeIf(TokenKind::Semicolon); // Optional semicolon
+  return std::make_unique<ThrowStmt>(std::move(expr), loc);
+}
+
 // --- Expressions ---
 
 ExprPtr Parser::parseExpression() { return parseAssignment(); }
@@ -1011,8 +1735,11 @@ ExprPtr Parser::parseAssignment() {
   if (!left)
     return nullptr; // Safety check
 
-  if (curTok.isAny(TokenKind::Equal, TokenKind::PlusEqual,
-                   TokenKind::MinusEqual)) {
+  if (curTok.isAny(
+          TokenKind::Equal, TokenKind::PlusEqual, TokenKind::MinusEqual,
+          TokenKind::StarEqual, TokenKind::SlashEqual, TokenKind::PercentEqual,
+          TokenKind::AmpEqual, TokenKind::PipeEqual, TokenKind::CaretEqual,
+          TokenKind::LessLessEqual, TokenKind::GreaterGreaterEqual)) {
     TokenKind op = curTok.kind;
     SourceLocation opLoc = curTok.location; // Capture operator location
     consume();
@@ -1025,15 +1752,65 @@ ExprPtr Parser::parseAssignment() {
   return left;
 }
 
+ExprPtr Parser::parsePipe() {
+  auto left = parseNullCoalescing();
+  if (!left)
+    return nullptr;
+
+  while (curTok.is(TokenKind::PipeGreater)) {
+    SourceLocation opLoc = curTok.location;
+    consume(); // Eat '|>'
+
+    auto right = parsePostfix();
+    if (!right)
+      return nullptr;
+
+    // 2. Recursive Search: Find the 'functional' target in a postfix chain
+    // This allows us to reach 'processNode()' inside 'processNode()?.next'
+    Expr *target = right.get();
+    while (true) {
+      if (auto *mem = dynamic_cast<MemberExpr *>(target))
+        target = const_cast<Expr *>(mem->getObject());
+      else if (auto *idx = dynamic_cast<IndexExpr *>(target))
+        target = const_cast<Expr *>(idx->getArray());
+      else
+        break;
+    }
+
+    // 3. Transformation Logic
+    if (auto *call = dynamic_cast<CallExpr *>(target)) {
+      // Case A: Right side contains a function call.
+      // Inject LHS as the first argument.
+      call->insertFirstArg(std::move(left));
+      left = std::move(right);
+    } else if (dynamic_cast<IdentifierExpr *>(target) ||
+               dynamic_cast<MemberExpr *>(target)) {
+      // Case B: Right side is a bare identifier or member (e.g., data |> print)
+      // We wrap the entire 'right' expression as the callee of a new CallExpr.
+      std::vector<ExprPtr> newArgs;
+      newArgs.push_back(std::move(left));
+
+      left = std::make_unique<CallExpr>(std::move(right), std::move(newArgs),
+                                        opLoc);
+    } else {
+      error("Right side of '|>' must be a function call, identifier, or member "
+            "access");
+      return nullptr;
+    }
+  }
+
+  return left;
+}
+
 ExprPtr Parser::parseTernary() {
-  auto cond = parseNullCoalescing();
+  auto cond = parseLogicalOr();
   if (!cond)
     return nullptr;
 
   if (consumeIf(TokenKind::Question)) {
-    auto trueBranch = parseExpression();
+    auto trueBranch = parseTernary();
     expect(TokenKind::Colon);
-    auto falseBranch = parseExpression();
+    auto falseBranch = parseTernary();
     return std::make_unique<TernaryExpr>(std::move(cond), std::move(trueBranch),
                                          std::move(falseBranch),
                                          cond->getLoc());
@@ -1042,9 +1819,9 @@ ExprPtr Parser::parseTernary() {
 }
 
 ExprPtr Parser::parseNullCoalescing() {
-  auto left = parseLogicalOr();
+  auto left = parseShift();
   while (consumeIf(TokenKind::QuestionQuestion)) {
-    auto right = parseLogicalOr();
+    auto right = parseShift();
     left = std::make_unique<BinaryExpr>(std::move(left),
                                         TokenKind::QuestionQuestion,
                                         std::move(right), left->getLoc());
@@ -1054,11 +1831,10 @@ ExprPtr Parser::parseNullCoalescing() {
 
 ExprPtr Parser::parseLogicalOr() {
   auto left = parseLogicalAnd();
-  while (
-      curTok.is(TokenKind::PipePipe)) { // [FIX] Check kind instead of consumeIf
+  while (curTok.is(TokenKind::PipePipe)) {
     if (!left)
       return nullptr;
-    SourceLocation opLoc = curTok.location; // [FIX] Capture correct op location
+    SourceLocation opLoc = curTok.location;
     consume();
     auto right = parseLogicalAnd();
     left = std::make_unique<BinaryExpr>(std::move(left), TokenKind::PipePipe,
@@ -1148,7 +1924,7 @@ ExprPtr Parser::parseEquality() {
 }
 
 ExprPtr Parser::parseRelational() {
-  auto left = parseShift();
+  auto left = parsePipe();
   while (true) {
     TokenKind op = curTok.kind;
     // Check for <, <=, >, >= explicitly
@@ -1161,7 +1937,7 @@ ExprPtr Parser::parseRelational() {
       return nullptr;
     SourceLocation opLoc = curTok.location;
     consume();
-    auto right = parseShift();
+    auto right = parsePipe();
     if (!right)
       return nullptr;
     left = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right),
@@ -1205,14 +1981,14 @@ ExprPtr Parser::parseAdditive() {
 }
 
 ExprPtr Parser::parseMultiplicative() {
-  auto left = parsePrefix();
+  auto left = parsePower();
   while (curTok.isAny(TokenKind::Star, TokenKind::Slash, TokenKind::Percent)) {
     if (!left)
       return nullptr;
     TokenKind op = curTok.kind;
-    SourceLocation opLoc = curTok.location; // [FIX] Capture opLoc
+    SourceLocation opLoc = curTok.location;
     consume();
-    auto right = parsePrefix();
+    auto right = parsePower();
     if (!right)
       return nullptr;
     left = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right),
@@ -1221,9 +1997,38 @@ ExprPtr Parser::parseMultiplicative() {
   return left;
 }
 
+ExprPtr Parser::parsePower() {
+  auto left = parsePrefix();
+
+  // Right-Associative: a ** b ** c -> a ** (b ** c)
+  if (curTok.is(TokenKind::Power)) {
+    if (!left)
+      return nullptr;
+    SourceLocation opLoc = curTok.location;
+    consume(); // Eat '**'
+
+    auto right = parsePower(); // Recursion!
+    if (!right)
+      return nullptr;
+
+    return std::make_unique<BinaryExpr>(std::move(left), TokenKind::Power,
+                                        std::move(right), opLoc);
+  }
+  return left;
+}
+
 ExprPtr Parser::parsePrefix() {
-  if (curTok.isAny(TokenKind::Bang, TokenKind::Minus, TokenKind::PlusPlus,
-                   TokenKind::MinusMinus, TokenKind::DotDotDot)) {
+  if (curTok.is(TokenKind::KwAwait)) {
+    SourceLocation loc = curTok.location;
+    consume();
+    auto operand = parsePrefix(); // Recursive to allow 'await await x'
+    return std::make_unique<AwaitExpr>(std::move(operand), loc);
+  }
+
+  // Existing Unary Ops
+  if (curTok.isAny(TokenKind::Bang, TokenKind::Minus, TokenKind::Tilde,
+                   TokenKind::PlusPlus, TokenKind::MinusMinus,
+                   TokenKind::DotDotDot, TokenKind::Amp, TokenKind::Star)) {
     TokenKind op = curTok.kind;
     SourceLocation loc = curTok.location;
     consume();
@@ -1247,15 +2052,15 @@ ExprPtr Parser::parsePostfix() {
       expect(TokenKind::RParen);
       left = std::make_unique<CallExpr>(std::move(left), std::move(args),
                                         left->getLoc());
-    } else if (consumeIf(TokenKind::Dot)) {
-      // MemberExpr
+    } else if (curTok.is(TokenKind::Dot) || curTok.is(TokenKind::QuestionDot)) {
+      bool isOptional = (curTok.kind == TokenKind::QuestionDot);
+      consume(); // Eat the . or ?.
+
       std::string name = curTok.getSpelling().str();
       expect(TokenKind::Identifier);
-      left = std::make_unique<MemberExpr>(std::move(left), name, false,
+      left = std::make_unique<MemberExpr>(std::move(left), name, isOptional,
                                           left->getLoc());
-    }
-    // [NEW] Handle Postfix Increment (x++)
-    else if (consumeIf(TokenKind::PlusPlus)) {
+    } else if (consumeIf(TokenKind::PlusPlus)) {
       left = std::make_unique<UnaryExpr>(TokenKind::PlusPlus, std::move(left),
                                          true, left->getLoc());
     }
@@ -1282,13 +2087,41 @@ ExprPtr Parser::parsePrimary() {
   switch (curTok.kind) {
   case TokenKind::KwNew:
     return parseNewExpr();
+  case TokenKind::KwCast: {
+    consume();
+    if (!expect(TokenKind::Less))
+      return nullptr;
+    TypePtr type = parseType();
+    if (!type)
+      return nullptr;
+    expectGreater();
+    if (!expect(TokenKind::LParen))
+      return nullptr;
+    ExprPtr expr = parseExpression();
+    if (!expr)
+      return nullptr;
+    expect(TokenKind::RParen);
+    return std::make_unique<CastExpr>(std::move(type), std::move(expr), loc);
+  }
   case TokenKind::IntegerLiteral: {
     std::string text = curTok.getSpelling().str();
+
+    // [FIX 1] Strip underscores so '1_000_000' becomes '1000000'
+    text.erase(std::remove(text.begin(), text.end(), '_'), text.end());
+
     uint64_t val = 0;
     try {
-      val = std::stoull(text, nullptr, 0);
+      // [FIX 2] Handle binary '0b' prefix manually
+      if (text.size() >= 2 && text[0] == '0' &&
+          (text[1] == 'b' || text[1] == 'B')) {
+        val = std::stoull(text.substr(2), nullptr, 2);
+      } else {
+        // Base 0 automatically handles hex (0x) and decimal
+        val = std::stoull(text, nullptr, 0);
+      }
     } catch (...) {
-      error("Invalid integer literal (out of range)"); // [ADDED]
+      Diags.report(curTok.location, DiagID::err_type_mismatch)
+          << "Integer literal '" << text << "' is out of range for i64";
     }
     NumericSuffix suffix = curTok.suffix;
     consume();
@@ -1296,11 +2129,15 @@ ExprPtr Parser::parsePrimary() {
   }
   case TokenKind::FloatLiteral: {
     std::string text = curTok.getSpelling().str();
+
+    // [FIX 3] Strip underscores for floats too (e.g., 1_000.50)
+    text.erase(std::remove(text.begin(), text.end(), '_'), text.end());
+
     double val = 0.0;
     try {
       val = std::stod(text);
     } catch (...) {
-      error("Invalid float literal"); // [ADDED]
+      error("Invalid float literal");
     }
     NumericSuffix suffix = curTok.suffix;
     consume();
@@ -1335,16 +2172,13 @@ ExprPtr Parser::parsePrimary() {
         case 'U': { // Handle Hex and Unicode
           // Determine length: \xHH (4), \uAAAA (6), \UAAAAAAAA (10)
           size_t hexLen = (text[2] == 'x') ? 2 : (text[2] == 'u') ? 4 : 8;
-          size_t prefixLen = (text[2] == 'x')   ? 3
-                             : (text[2] == 'u') ? 3
-                                                : 3; // text is ' \ x ... '
-          // Actually index in text: ' is 0, \ is 1, x is 2. Start hex at 3.
+          const size_t prefixOffset = 3;
 
-          if (text.size() >= 3 + hexLen) {
+          if (text.size() >= prefixOffset + hexLen) {
             unsigned long long intVal = 0;
             // Simple hex parser loop
             for (size_t i = 0; i < hexLen; i++) {
-              char c = text[3 + i];
+              char c = text[prefixOffset + i];
               int v = (c >= '0' && c <= '9')   ? c - '0'
                       : (c >= 'a' && c <= 'f') ? c - 'a' + 10
                       : (c >= 'A' && c <= 'F') ? c - 'A' + 10
@@ -1390,6 +2224,23 @@ ExprPtr Parser::parsePrimary() {
     consume();
     return std::make_unique<IdentifierExpr>(name, loc);
   }
+  case TokenKind::KwInt:
+  case TokenKind::KwFloat:
+  case TokenKind::KwDouble:
+  case TokenKind::KwBool:
+  case TokenKind::KwString:
+  case TokenKind::KwChar:
+  case TokenKind::KwShort:
+  case TokenKind::KwLong:
+  case TokenKind::KwISize:
+  case TokenKind::KwUSize:
+  case TokenKind::KwHalf:
+  case TokenKind::KwQuarter:
+  case TokenKind::KwAny: {
+    std::string name = curTok.getSpelling().str();
+    consume(); // Eat the type keyword
+    return std::make_unique<IdentifierExpr>(name, loc);
+  }
   case TokenKind::LParen: {
     consume(); // Eat '('
 
@@ -1404,26 +2255,36 @@ ExprPtr Parser::parsePrimary() {
 
     // 2. Typed Lambda: (int x, ...)
     if (curTok.isAny(TokenKind::KwInt, TokenKind::KwFloat, TokenKind::KwBool,
-                     TokenKind::KwString, TokenKind::KwVoid,
-                     TokenKind::KwAny)) {
-      std::vector<LambdaParam> params;
-      do {
-        TypePtr t = parseType();
-        if (!t)
-          break;
-        std::string n;
-        if (curTok.is(TokenKind::Identifier)) {
-          n = curTok.getSpelling().str();
-          consume();
-        } else
-          error("Expected parameter name");
-        params.emplace_back(std::move(t), std::move(n));
-      } while (consumeIf(TokenKind::Comma));
-      expect(TokenKind::RParen);
-      if (consumeIf(TokenKind::FatArrow))
-        return parseLambdaBody(std::move(params));
-      error("Expected '=>' after typed lambda parameters");
-      return nullptr;
+                     TokenKind::KwString, TokenKind::KwVoid, TokenKind::KwAny,
+                     TokenKind::KwChar, TokenKind::KwDouble, TokenKind::KwHalf,
+                     TokenKind::KwQuarter, TokenKind::KwShort,
+                     TokenKind::KwLong, TokenKind::KwUSize,
+                     TokenKind::KwISize)) {
+
+      // Ensure an identifier actually follows before assuming it's a
+      // lambda
+      if (nextTok.is(TokenKind::Identifier)) {
+        std::vector<LambdaParam> params;
+        do {
+          TypePtr t = parseType();
+          if (!t)
+            break;
+          std::string n;
+          if (curTok.is(TokenKind::Identifier)) {
+            n = curTok.getSpelling().str();
+            consume();
+          } else
+            error("Expected parameter name");
+          params.emplace_back(std::move(t), std::move(n));
+        } while (consumeIf(TokenKind::Comma));
+        expect(TokenKind::RParen);
+        if (consumeIf(TokenKind::FatArrow))
+          return parseLambdaBody(std::move(params));
+        error("Expected '=>' after typed lambda parameters");
+        return nullptr;
+      }
+      // If there is NO identifier (e.g. `(int(x))`), we fall through to the
+      // grouping fallback!
     }
 
     // 3. Untyped Lambda Candidate: (x) or (x, y)
@@ -1471,11 +2332,36 @@ ExprPtr Parser::parsePrimary() {
   case TokenKind::LBracket: {
     return parseArrayLiteral();
   }
+  case TokenKind::LBrace:
+    return parseMapLiteral();
   case TokenKind::TemplateString:
   case TokenKind::StringFragment:
   case TokenKind::InterpolationStart:
     return parseTemplateString();
+  case TokenKind::KwThis: {
+    consume();
+    return std::make_unique<ThisExpr>(loc);
+  }
+  case TokenKind::KwSuper: {
+    consume();
+    return std::make_unique<SuperExpr>(loc);
+  }
+  case TokenKind::Error:
+    consume();
+    return nullptr;
+  case TokenKind::KwSizeof: {
+    consume(); // Eat 'sizeof'
+    expect(TokenKind::LParen);
 
+    // Sizeof usually takes an expression (or type). We parse it as an
+    // expression so the Sema pass can resolve its byte size.
+    auto expr = parseExpression();
+
+    expect(TokenKind::RParen);
+
+    // Note: Ensure you define `SizeOfExpr` in `Expr.h` / `Expr.cpp`!
+    return std::make_unique<SizeOfExpr>(std::move(expr), loc);
+  }
   default:
     error("Expected expression");
     return nullptr;
@@ -1496,6 +2382,25 @@ ExprPtr Parser::parseArrayLiteral() {
   }
   expect(TokenKind::RBracket);
   return std::make_unique<ArrayLiteral>(std::move(elements), loc);
+}
+
+ExprPtr Parser::parseMapLiteral() {
+  SourceLocation loc = curTok.location;
+  consume(); // Eat '{'
+
+  std::vector<std::pair<ExprPtr, ExprPtr>> entries;
+
+  if (curTok.isNot(TokenKind::RBrace)) {
+    do {
+      ExprPtr key = parseExpression();
+      expect(TokenKind::Colon);
+      ExprPtr val = parseExpression();
+      entries.emplace_back(std::move(key), std::move(val));
+    } while (consumeIf(TokenKind::Comma));
+  }
+
+  expect(TokenKind::RBrace);
+  return std::make_unique<MapLiteral>(std::move(entries), loc);
 }
 
 ExprPtr Parser::parseTemplateString() {
@@ -1589,28 +2494,29 @@ ExprPtr Parser::parseNewExpr() {
   }
 
   // --- Case 1: Thread Creation ---
-  // Syntax: new [weak] Thread() => { ... }
   if (curTok.is(TokenKind::KwThread)) {
     consume(); // Eat 'Thread'
 
-    // Optional: Parse arguments ()
-    if (consumeIf(TokenKind::LParen)) {
-      expect(TokenKind::RParen);
-    }
-
-    // Expect Fat Arrow '=>'
-    if (!expect(TokenKind::FatArrow)) {
+    // Match the syntax: Thread(() => { ... })
+    if (!expect(TokenKind::LParen))
       return nullptr;
-    }
 
-    // Parse Lambda Body
-    ExprPtr bodyExpr = parseLambdaBody({});
-    if (auto lambda = llvm::dyn_cast<LambdaExpr>(bodyExpr.get())) {
-      bodyExpr.release(); // Release ownership from ExprPtr
+    auto expr =
+        parseExpression(); // This will correctly parse the lambda () => { ... }
+    if (!expr)
+      return nullptr;
+
+    // Verify it's actually a lambda
+    if (auto lambda = llvm::dyn_cast<LambdaExpr>(expr.get())) {
+      expr.release(); // Transfer ownership from the generic ExprPtr
       std::unique_ptr<LambdaExpr> typedBody(lambda);
+
+      if (!expect(TokenKind::RParen))
+        return nullptr;
+
       return std::make_unique<ThreadExpr>(isWeak, std::move(typedBody), loc);
     } else {
-      error("Expected lambda body for Thread");
+      error("Expected lambda expression inside Thread constructor");
       return nullptr;
     }
   }
@@ -1642,19 +2548,36 @@ ExprPtr Parser::parseNewExpr() {
 TypePtr Parser::parseType() {
   SourceLocation loc = curTok.location;
   TypePtr type = nullptr;
+  bool isVolatile = consumeIf(TokenKind::KwVolatile);
+  bool isConst = consumeIf(TokenKind::KwConst);
+  bool isUnsigned = consumeIf(TokenKind::KwUnsigned);
 
   switch (curTok.kind) {
-    // --- Primitives ---
+  // --- Primitives ---
   case TokenKind::KwInt:
-    type = std::make_unique<PrimitiveType>(PrimitiveType::Scalar::I32, loc);
+    // If 'unsigned' was present, map to U32 instead of I32
+    type = std::make_unique<PrimitiveType>(
+        isUnsigned ? PrimitiveType::Scalar::U32 : PrimitiveType::Scalar::I32,
+        loc);
     consume();
     break;
-  case TokenKind::KwLong: // [NEW] Handles 'long' -> i64
-    type = std::make_unique<PrimitiveType>(PrimitiveType::Scalar::I64, loc);
+  case TokenKind::KwShort:
+    type = std::make_unique<PrimitiveType>(
+        isUnsigned ? PrimitiveType::Scalar::U16 : PrimitiveType::Scalar::I16,
+        loc);
     consume();
     break;
-  case TokenKind::KwShort: // [NEW] Handles 'short' -> i16
-    type = std::make_unique<PrimitiveType>(PrimitiveType::Scalar::I16, loc);
+  case TokenKind::KwLong:
+    type = std::make_unique<PrimitiveType>(
+        isUnsigned ? PrimitiveType::Scalar::U64 : PrimitiveType::Scalar::I64,
+        loc);
+    consume();
+    break;
+  case TokenKind::KwChar:
+    // char is usually u8 or i8; apply logic as needed
+    type = std::make_unique<PrimitiveType>(
+        isUnsigned ? PrimitiveType::Scalar::U8 : PrimitiveType::Scalar::Char,
+        loc);
     consume();
     break;
   case TokenKind::KwFloat:
@@ -1681,12 +2604,12 @@ TypePtr Parser::parseType() {
     type = std::make_unique<PrimitiveType>(PrimitiveType::Scalar::String, loc);
     consume();
     break;
-  case TokenKind::KwChar:
-    type = std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Char, loc);
-    consume();
-    break;
   case TokenKind::KwVoid:
     type = std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc);
+    consume();
+    break;
+  case TokenKind::KwNull:
+    type = std::make_unique<NullType>(loc);
     consume();
     break;
   case TokenKind::KwAny:
@@ -1749,7 +2672,7 @@ TypePtr Parser::parseType() {
       TypePtr key = parseType();
       expect(TokenKind::Comma);
       TypePtr val = parseType();
-      expect(TokenKind::Greater);
+      expectGreater();
       type = std::make_unique<MapType>(std::move(key), std::move(val), loc);
     } else {
       error("Expected '<' after table");
@@ -1776,13 +2699,14 @@ TypePtr Parser::parseType() {
           }
         }
       } while (consumeIf(TokenKind::Comma));
-      expect(TokenKind::Greater);
+      expectGreater();
     }
     type = std::make_unique<NamedType>(name, std::move(args), loc);
     break;
   }
 
   // --- Function Type: (Args) => Ret ---
+  case TokenKind::KwInterrupt:
   case TokenKind::LParen: {
     consume();
     std::vector<TypePtr> params;
@@ -1796,7 +2720,7 @@ TypePtr Parser::parseType() {
     if (consumeIf(TokenKind::FatArrow)) {
       TypePtr ret = parseType();
       type = std::make_unique<FunctionType>(std::move(ret), std::move(params),
-                                            loc);
+                                            false, false, loc);
     } else {
       error("Expected '=>' for function type");
       return nullptr;
@@ -1812,19 +2736,39 @@ TypePtr Parser::parseType() {
   while (true) {
     if (consumeIf(TokenKind::Star)) {
       type = std::make_unique<PointerType>(std::move(type), loc);
-    } else if (consumeIf(TokenKind::LBracket)) {
-      ExprPtr sizeExpr = nullptr;
-      if (curTok.isNot(TokenKind::RBracket)) {
-        sizeExpr = parseExpression();
+    } else if (consumeIf(TokenKind::Power)) {
+      type = std::make_unique<PointerType>(std::move(type), loc);
+      type = std::make_unique<PointerType>(std::move(type), loc);
+    } else if (curTok.is(TokenKind::LBracket)) {
+      // Collect all consecutive brackets first: e.g., [3][2]
+      std::vector<ExprPtr> sizes;
+      do {
+        consume(); // Eat '['
+        ExprPtr sizeExpr = nullptr;
+        if (curTok.isNot(TokenKind::RBracket)) {
+          sizeExpr = parseExpression();
+        }
+        expect(TokenKind::RBracket);
+        sizes.push_back(std::move(sizeExpr));
+      } while (curTok.is(TokenKind::LBracket));
+
+      // Apply them from right to left so int[3][4] becomes Array(Array(int, 4),
+      // 3)
+      for (auto it = sizes.rbegin(); it != sizes.rend(); ++it) {
+        type =
+            std::make_unique<ArrayType>(std::move(type), std::move(*it), loc);
       }
-      expect(TokenKind::RBracket);
-      type = std::make_unique<ArrayType>(std::move(type), std::move(sizeExpr),
-                                         loc);
-    } else if (consumeIf(TokenKind::Question)) { // [FIX] Added Nullable support
+    } else if (consumeIf(TokenKind::Question)) {
       type = std::make_unique<NullableType>(std::move(type), loc);
     } else {
       break;
     }
+  }
+  if (isConst) {
+    type = std::make_unique<ConstType>(std::move(type), loc);
+  }
+  if (isVolatile) {
+    type = std::make_unique<VolatileType>(std::move(type), loc);
   }
   return type;
 }

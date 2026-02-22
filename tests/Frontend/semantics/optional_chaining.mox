@@ -1,0 +1,16 @@
+ref class User {
+    public string? name
+    public Address? address
+}
+
+ref class Address {
+    public string city
+}
+
+User? u = null
+
+// Optional Chaining: Should result in null, not crash
+string? city = u?.address?.city
+
+// Null Coalescing
+string displayCity = city ?? "Unknown City"

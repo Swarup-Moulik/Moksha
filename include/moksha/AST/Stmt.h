@@ -9,7 +9,6 @@ namespace moksha {
 
 class ASTVisitor;
 
-// [FIX] Enum for LLVM RTTI
 enum class StmtKind {
   // Declarations
   ModuleDecl,
@@ -19,6 +18,8 @@ enum class StmtKind {
   GenericDecl,
   ImportDecl,
   EnumDecl,
+  MacroDecl,
+  UsingDecl,
   // Statements
   BlockStmt,
   ExpressionStmt,
@@ -34,40 +35,55 @@ enum class StmtKind {
   SwitchStmt,
   DeferStmt,
   UnsafeBlockStmt,
-  TryCatchStmt
+  TryCatchStmt,
+  ThrowStmt,
+  AsmStmt
+};
+
+enum class Visibility { Default, Public, Private, Protected };
+
+enum class AggregateKind { Class, Struct, Union };
+
+enum class IntrinsicKind {
+  None,
+  AtomicLoad,
+  AtomicStore,
+  AtomicAdd,
+  AtomicCAS,
+  AtomicFence,
+  Bswap32,
+  Clz
 };
 
 // --- AST Node Bases ---
 
-/// Base Declaration Node
 class Decl {
 public:
   virtual ~Decl() = default;
   [[nodiscard]] SourceLocation getLoc() const { return loc; }
   [[nodiscard]] const std::string &getName() const { return name; }
-  [[nodiscard]] StmtKind getKind() const {
-    return kind;
-  } // Treat Decls as Stmts for RTTI if needed, or separate DeclKind
+  [[nodiscard]] StmtKind getKind() const { return kind; }
+  [[nodiscard]] Visibility getVisibility() const { return visibility; }
 
   virtual void accept(ASTVisitor &v) const = 0;
 
 protected:
-  Decl(StmtKind kind, std::string name, SourceLocation loc)
-      : kind(kind), name(std::move(name)), loc(loc) {}
+  Decl(StmtKind kind, std::string name, Visibility visibility,
+       SourceLocation loc)
+      : kind(kind), name(std::move(name)), visibility(visibility), loc(loc) {}
   StmtKind kind;
   std::string name;
+  Visibility visibility;
   SourceLocation loc;
 };
 
 using DeclPtr = std::unique_ptr<Decl>;
 
-/// Base Statement Node
 class Stmt {
 public:
   virtual ~Stmt() = default;
   [[nodiscard]] SourceLocation getLoc() const { return loc; }
   [[nodiscard]] StmtKind getKind() const { return kind; }
-
   virtual void accept(ASTVisitor &v) const = 0;
 
 protected:
@@ -78,12 +94,19 @@ protected:
 
 using StmtPtr = std::unique_ptr<Stmt>;
 
-// --- Implementations ---
+// --- Declarations ---
 
 class ModuleDecl : public Decl {
 public:
+  // Constructor matching Parser usage (name, decls, loc)
   ModuleDecl(std::string name, std::vector<DeclPtr> decls, SourceLocation loc)
-      : Decl(StmtKind::ModuleDecl, std::move(name), loc),
+      : Decl(StmtKind::ModuleDecl, std::move(name), Visibility::Default, loc),
+        decls(std::move(decls)) {}
+
+  // Full Constructor
+  ModuleDecl(std::string name, std::vector<DeclPtr> decls, Visibility vis,
+             SourceLocation loc)
+      : Decl(StmtKind::ModuleDecl, std::move(name), vis, loc),
         decls(std::move(decls)) {}
 
   void accept(ASTVisitor &v) const override;
@@ -98,77 +121,140 @@ private:
 
 class VariableDecl : public Decl {
 public:
+  // Constructor matching Parser usage (type, name, init, loc)
   VariableDecl(TypePtr type, std::string name, ExprPtr init, SourceLocation loc)
-      : Decl(StmtKind::VariableDecl, std::move(name), loc),
-        type(std::move(type)), initializer(std::move(init)) {}
+      : Decl(StmtKind::VariableDecl, std::move(name), Visibility::Default, loc),
+        type(std::move(type)), initializer(std::move(init)), isConst(false),
+        isStatic(false) {}
+
+  // Full Constructor
+  VariableDecl(TypePtr type, std::string name, ExprPtr init, bool isConst,
+               bool isStatic, bool isShared, Visibility vis, SourceLocation loc)
+      : Decl(StmtKind::VariableDecl, std::move(name), vis, loc),
+        type(std::move(type)), initializer(std::move(init)), isConst(isConst),
+        isStatic(isStatic), isShared(isShared) {}
 
   void accept(ASTVisitor &v) const override;
+  [[nodiscard]] bool isSharedVar() const { return isShared; }
   [[nodiscard]] const Type *getType() const { return type.get(); }
   [[nodiscard]] const Expr *getInitializer() const { return initializer.get(); }
+  [[nodiscard]] bool isConstVar() const { return isConst; }
+  [[nodiscard]] bool isStaticVar() const { return isStatic; }
+  [[nodiscard]] bool hasExplicitType() const { return true; }
+
   static bool classof(const Decl *D) {
     return D->getKind() == StmtKind::VariableDecl;
   }
+  bool isVolatile = false;
+  bool isExtern = false;
+  int alignment = 0;
+  std::string section = "";
+  bool isUsed = false;
+  int bitWidth = -1;
+  bool isThreadLocal = false;
 
 private:
   TypePtr type;
   ExprPtr initializer;
+  bool isConst;
+  bool isStatic;
+  bool isShared;
 };
 
 class FunctionDecl : public Decl {
 public:
   struct Param {
-    TypePtr type;
     std::string name;
+    TypePtr type;
+    SourceLocation loc;
   };
 
-  FunctionDecl(TypePtr returnType, std::string name, std::vector<Param> params,
-               StmtPtr body, bool isAsync, SourceLocation loc)
-      : Decl(StmtKind::FunctionDecl, std::move(name), loc),
-        returnType(std::move(returnType)), params(std::move(params)),
-        body(std::move(body)), isAsync(isAsync) {}
+  // Constructor matching Parser usage (ret, name, params, body, async, loc)
+  FunctionDecl(std::string name, std::vector<Param> params, TypePtr returnType,
+               StmtPtr body, bool isAsync, bool isStatic, bool isVariadic,
+               bool isWeak, Visibility vis, SourceLocation loc)
+      : Decl(StmtKind::FunctionDecl, std::move(name), vis, loc),
+        params(std::move(params)), returnType(std::move(returnType)),
+        body(std::move(body)), isAsync(isAsync), isStatic(isStatic),
+        isVariadic(isVariadic), isWeak(isWeak) {}
 
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Type *getReturnType() const { return returnType.get(); }
   [[nodiscard]] const std::vector<Param> &getParams() const { return params; }
   [[nodiscard]] const Stmt *getBody() const { return body.get(); }
   [[nodiscard]] bool isAsyncFunc() const { return isAsync; }
+  [[nodiscard]] bool isStaticFunc() const { return isStatic; }
+  [[nodiscard]] bool isWeakFunc() const { return isWeak; }
+  bool isVariadicFunc() const { return isVariadic; }
   static bool classof(const Decl *D) {
     return D->getKind() == StmtKind::FunctionDecl;
   }
+  [[nodiscard]] bool isBuiltinFunc() const { return isBuiltin; }
+  void setBuiltin(bool builtin) { isBuiltin = builtin; }
+  [[nodiscard]] IntrinsicKind getIntrinsicKind() const { return intrinsicKind; }
+  void setIntrinsicKind(IntrinsicKind kind) { intrinsicKind = kind; }
+  bool isExtern = false;
+  std::string externLinkage = "";
+  bool isInterrupt = false;
+  bool isNaked = false;
+  bool isNoReturn = false;
+  bool isNoInline = false;
+  bool isUsed = false;
+  std::string section = "";
 
 private:
-  TypePtr returnType;
   std::vector<Param> params;
+  TypePtr returnType;
   StmtPtr body;
   bool isAsync;
+  bool isStatic;
+  bool isVariadic;
+  bool isWeak;
+  bool isBuiltin = false;
+  IntrinsicKind intrinsicKind = IntrinsicKind::None;
 };
 
 class ClassDecl : public Decl {
 public:
-  ClassDecl(std::string name, std::vector<DeclPtr> members, bool isRef,
-            SourceLocation loc)
-      : Decl(StmtKind::ClassDecl, std::move(name), loc),
-        members(std::move(members)), isRef(isRef) {}
+  // Updated constructor with aggKind (7 arguments total)
+  ClassDecl(std::string name, std::vector<std::string> parentNames,
+            std::vector<DeclPtr> members, bool isRef, AggregateKind aggKind,
+            Visibility vis, SourceLocation loc)
+      : Decl(StmtKind::ClassDecl, std::move(name), vis, loc),
+        parentNames(std::move(parentNames)), members(std::move(members)),
+        isRef(isRef), aggKind(aggKind) {}
 
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const std::vector<DeclPtr> &getMembers() const {
     return members;
   }
   [[nodiscard]] bool isReferenceType() const { return isRef; }
+  [[nodiscard]] const std::vector<std::string> &getParentNames() const {
+    return parentNames;
+  }
+  [[nodiscard]] AggregateKind getAggregateKind() const { return aggKind; }
+
   static bool classof(const Decl *D) {
     return D->getKind() == StmtKind::ClassDecl;
   }
 
+  bool isPacked = false;
+  int alignment = 0;
+  std::string section = "";
+
 private:
+  std::vector<std::string> parentNames;
   std::vector<DeclPtr> members;
   bool isRef;
+  AggregateKind aggKind;
 };
 
 class GenericDecl : public Decl {
 public:
+  // Constructor matching Parser usage (name, params, inner, loc)
   GenericDecl(std::string name, std::vector<std::string> typeParams,
               DeclPtr innerDecl, SourceLocation loc)
-      : Decl(StmtKind::GenericDecl, std::move(name), loc),
+      : Decl(StmtKind::GenericDecl, std::move(name), Visibility::Default, loc),
         typeParams(std::move(typeParams)), innerDecl(std::move(innerDecl)) {}
 
   void accept(ASTVisitor &v) const override;
@@ -187,9 +273,11 @@ private:
 
 class ImportDecl : public Decl {
 public:
+  // Constructor matching Parser usage (name, symbols, loc)
   ImportDecl(std::string moduleName, std::vector<std::string> symbols,
              SourceLocation loc)
-      : Decl(StmtKind::ImportDecl, std::move(moduleName), loc),
+      : Decl(StmtKind::ImportDecl, std::move(moduleName), Visibility::Default,
+             loc),
         symbols(std::move(symbols)) {}
 
   void accept(ASTVisitor &v) const override;
@@ -212,8 +300,14 @@ public:
     ExprPtr value;
   };
 
+  // Constructor matching Parser usage (name, cases, loc)
   EnumDecl(std::string name, std::vector<Case> cases, SourceLocation loc)
-      : Decl(StmtKind::EnumDecl, std::move(name), loc),
+      : Decl(StmtKind::EnumDecl, std::move(name), Visibility::Default, loc),
+        cases(std::move(cases)) {}
+
+  EnumDecl(std::string name, std::vector<Case> cases, Visibility vis,
+           SourceLocation loc)
+      : Decl(StmtKind::EnumDecl, std::move(name), vis, loc),
         cases(std::move(cases)) {}
 
   void accept(ASTVisitor &v) const override;
@@ -226,14 +320,52 @@ private:
   std::vector<Case> cases;
 };
 
-// --- Statements ---
+class MacroDecl : public Decl {
+public:
+  MacroDecl(std::string name, std::vector<std::string> params,
+            std::vector<StmtPtr> body, bool isFunction, SourceLocation loc)
+      : Decl(StmtKind::MacroDecl, std::move(name), Visibility::Default, loc),
+        params(std::move(params)), body(std::move(body)),
+        isFunction(isFunction) {}
+
+  void accept(ASTVisitor &v) const override;
+  [[nodiscard]] const std::vector<std::string> &getParams() const {
+    return params;
+  }
+  [[nodiscard]] const std::vector<StmtPtr> &getBody() const { return body; }
+  [[nodiscard]] bool isFunctionMacro() const { return isFunction; }
+
+  static bool classof(const Decl *D) {
+    return D->getKind() == StmtKind::MacroDecl;
+  }
+
+private:
+  std::vector<std::string> params;
+  std::vector<StmtPtr> body;
+  bool isFunction;
+};
+
+class UsingDecl : public Decl {
+public:
+  UsingDecl(std::string name, TypePtr targetType, SourceLocation loc)
+      : Decl(StmtKind::UsingDecl, std::move(name), Visibility::Default, loc),
+        targetType(std::move(targetType)) {}
+  void accept(ASTVisitor &v) const override;
+  [[nodiscard]] const Type *getTargetType() const { return targetType.get(); }
+  static bool classof(const Decl *D) {
+    return D->getKind() == StmtKind::UsingDecl;
+  }
+
+private:
+  TypePtr targetType;
+};
+
+// --- Statements (Same as before, included for completeness) ---
 
 class BlockStmt : public Stmt {
 public:
   BlockStmt(std::vector<StmtPtr> stmts, SourceLocation loc)
       : Stmt(StmtKind::BlockStmt, loc), statements(std::move(stmts)) {}
-
-  // Protected constructor for subclassing (UnsafeBlockStmt)
   BlockStmt(StmtKind kind, std::vector<StmtPtr> stmts, SourceLocation loc)
       : Stmt(kind, loc), statements(std::move(stmts)) {}
 
@@ -254,7 +386,6 @@ class ExpressionStmt : public Stmt {
 public:
   ExpressionStmt(ExprPtr expr, SourceLocation loc)
       : Stmt(StmtKind::ExpressionStmt, loc), expression(std::move(expr)) {}
-
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Expr *getExpr() const { return expression.get(); }
   static bool classof(const Stmt *S) {
@@ -269,7 +400,6 @@ class DeclStmt : public Stmt {
 public:
   DeclStmt(DeclPtr decl, SourceLocation loc)
       : Stmt(StmtKind::DeclStmt, loc), decl(std::move(decl)) {}
-
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Decl *getDecl() const { return decl.get(); }
   static bool classof(const Stmt *S) {
@@ -284,7 +414,6 @@ class ReturnStmt : public Stmt {
 public:
   ReturnStmt(ExprPtr value, SourceLocation loc)
       : Stmt(StmtKind::ReturnStmt, loc), returnValue(std::move(value)) {}
-
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Expr *getReturnValue() const { return returnValue.get(); }
   static bool classof(const Stmt *S) {
@@ -320,7 +449,6 @@ public:
          SourceLocation loc)
       : Stmt(StmtKind::IfStmt, loc), condition(std::move(cond)),
         thenStmt(std::move(thenBranch)), elseStmt(std::move(elseBranch)) {}
-
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Expr *getCondition() const { return condition.get(); }
   [[nodiscard]] const Stmt *getThenStmt() const { return thenStmt.get(); }
@@ -340,7 +468,6 @@ public:
   WhileStmt(ExprPtr cond, StmtPtr body, SourceLocation loc)
       : Stmt(StmtKind::WhileStmt, loc), condition(std::move(cond)),
         body(std::move(body)) {}
-
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Expr *getCondition() const { return condition.get(); }
   [[nodiscard]] const Stmt *getBody() const { return body.get(); }
@@ -358,7 +485,6 @@ public:
   DoWhileStmt(StmtPtr body, ExprPtr cond, SourceLocation loc)
       : Stmt(StmtKind::DoWhileStmt, loc), body(std::move(body)),
         condition(std::move(cond)) {}
-
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Stmt *getBody() const { return body.get(); }
   [[nodiscard]] const Expr *getCondition() const { return condition.get(); }
@@ -378,7 +504,6 @@ public:
       : Stmt(StmtKind::ForStmt, loc), init(std::move(init)),
         condition(std::move(cond)), increment(std::move(inc)),
         body(std::move(body)) {}
-
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Stmt *getInit() const { return init.get(); }
   [[nodiscard]] const Expr *getCondition() const { return condition.get(); }
@@ -402,7 +527,6 @@ public:
       : Stmt(StmtKind::ForInStmt, loc), variable(std::move(var)),
         indexVariable(std::move(indexVar)), collection(std::move(collection)),
         body(std::move(body)) {}
-
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Decl *getVariable() const { return variable.get(); }
   [[nodiscard]] const Decl *getIndexVariable() const {
@@ -425,10 +549,8 @@ class SwitchCase {
 public:
   SwitchCase(std::vector<ExprPtr> vals, std::unique_ptr<BlockStmt> b, bool def)
       : values(std::move(vals)), body(std::move(b)), isDefault(def) {}
-
   SwitchCase(SwitchCase &&) = default;
   SwitchCase &operator=(SwitchCase &&) = default;
-
   [[nodiscard]] const std::vector<ExprPtr> &getValues() const { return values; }
   [[nodiscard]] const BlockStmt *getBody() const { return body.get(); }
   [[nodiscard]] bool isDefaultCase() const { return isDefault; }
@@ -444,7 +566,6 @@ public:
   SwitchStmt(ExprPtr cond, std::vector<SwitchCase> cases, SourceLocation loc)
       : Stmt(StmtKind::SwitchStmt, loc), condition(std::move(cond)),
         cases(std::move(cases)) {}
-
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Expr *getCondition() const { return condition.get(); }
   [[nodiscard]] const std::vector<SwitchCase> &getCases() const {
@@ -463,7 +584,6 @@ class DeferStmt : public Stmt {
 public:
   DeferStmt(StmtPtr stmt, SourceLocation loc)
       : Stmt(StmtKind::DeferStmt, loc), deferredStmt(std::move(stmt)) {}
-
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Stmt *getDeferredStmt() const {
     return deferredStmt.get();
@@ -480,7 +600,6 @@ class UnsafeBlockStmt : public BlockStmt {
 public:
   UnsafeBlockStmt(std::vector<StmtPtr> stmts, SourceLocation loc)
       : BlockStmt(StmtKind::UnsafeBlockStmt, std::move(stmts), loc) {}
-
   void accept(ASTVisitor &v) const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::UnsafeBlockStmt;
@@ -494,7 +613,6 @@ public:
       : Stmt(StmtKind::TryCatchStmt, loc), tryBody(std::move(tryBlock)),
         catchVar(std::move(catchVar)), catchBody(std::move(catchBlock)),
         finallyBody(std::move(finallyBlock)) {}
-
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Stmt *getTryBody() const { return tryBody.get(); }
   [[nodiscard]] const Decl *getCatchVar() const { return catchVar.get(); }
@@ -509,6 +627,48 @@ private:
   DeclPtr catchVar;
   StmtPtr catchBody;
   StmtPtr finallyBody;
+};
+
+class ThrowStmt : public Stmt {
+public:
+  ThrowStmt(ExprPtr expr, SourceLocation loc)
+      : Stmt(StmtKind::ThrowStmt, loc), expression(std::move(expr)) {}
+  void accept(ASTVisitor &v) const override;
+  [[nodiscard]] const Expr *getExpr() const { return expression.get(); }
+  static bool classof(const Stmt *S) {
+    return S->getKind() == StmtKind::ThrowStmt;
+  }
+
+private:
+  ExprPtr expression;
+};
+
+class AsmStmt : public Stmt {
+public:
+  // 1. Update constructor to accept 'constraints'
+  AsmStmt(std::string assemblyStr, std::string constraints, SourceLocation loc)
+      : Stmt(StmtKind::AsmStmt, loc), assemblyStr(std::move(assemblyStr)),
+        constraints(std::move(constraints)) {}
+
+  void accept(ASTVisitor &v) const override;
+
+  [[nodiscard]] const std::string &getAssemblyStr() const {
+    return assemblyStr;
+  }
+
+  // 2. Add getter for constraints
+  [[nodiscard]] const std::string &getConstraints() const {
+    return constraints;
+  }
+
+  static bool classof(const Stmt *S) {
+    return S->getKind() == StmtKind::AsmStmt;
+  }
+
+private:
+  std::string assemblyStr;
+  // 3. Add private member field
+  std::string constraints;
 };
 
 } // namespace moksha

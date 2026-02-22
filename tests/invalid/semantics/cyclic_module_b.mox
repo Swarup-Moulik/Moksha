@@ -1,0 +1,7 @@
+// FILE: cyclic_module_b.mox
+from "cyclic_module_a" import { ClassA }
+
+public class ClassB {
+    public ClassA? aRef;
+    constructor() { this.aRef = null; }
+}

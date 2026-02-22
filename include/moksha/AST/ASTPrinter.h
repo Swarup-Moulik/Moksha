@@ -39,6 +39,9 @@ public:
   void visitViewType(const ViewType *type) override;
   void visitMutType(const MutType *type) override;
   void visitEnumType(const EnumType *type) override;
+  void visitNullType(const NullType *type) override;
+  void visitVolatileType(const VolatileType *type) override;
+  void visitConstType(const ConstType *type) override;
 
   // Expressions
   void visitIntegerLiteral(const IntegerLiteral *expr) override;
@@ -47,6 +50,7 @@ public:
   void visitBoolLiteral(const BoolLiteral *expr) override;
   void visitCharLiteral(const CharLiteral *expr) override;
   void visitNullLiteral(const NullLiteral *expr) override;
+  void visitMapLiteral(const MapLiteral *expr) override;
   void visitIdentifierExpr(const IdentifierExpr *expr) override;
   void visitBinaryExpr(const BinaryExpr *expr) override;
   void visitUnaryExpr(const UnaryExpr *expr) override;
@@ -60,10 +64,10 @@ public:
   void visitTemplateStringExpr(const TemplateStringExpr *expr) override;
   void visitThreadExpr(const ThreadExpr *expr) override;
   void visitArrayLiteral(const ArrayLiteral *expr) override;
-
-  // [FIX] These must be overridden to avoid being an abstract class
+  void visitAwaitExpr(const AwaitExpr *expr) override;
   void visitThisExpr(const ThisExpr *expr) override;
   void visitSuperExpr(const SuperExpr *expr) override;
+  void visitSizeOfExpr(const SizeOfExpr *expr) override;
 
   // Statements
   void visitBlockStmt(const BlockStmt *stmt) override;
@@ -81,6 +85,8 @@ public:
   void visitDeferStmt(const DeferStmt *stmt) override;
   void visitUnsafeBlockStmt(const UnsafeBlockStmt *stmt) override;
   void visitTryCatchStmt(const TryCatchStmt *stmt) override;
+  void visitThrowStmt(const ThrowStmt *stmt) override;
+  void visitAsmStmt(const AsmStmt *stmt) override;
 
   // Declarations
   void visitModuleDecl(const ModuleDecl *decl) override;
@@ -90,6 +96,8 @@ public:
   void visitGenericDecl(const GenericDecl *decl) override;
   void visitImportDecl(const ImportDecl *decl) override;
   void visitEnumDecl(const EnumDecl *decl) override;
+  void visitMacroDecl(const MacroDecl *decl) override;
+  void visitUsingDecl(const UsingDecl *decl) override;
 
 private:
   llvm::raw_ostream &OS;
@@ -97,6 +105,7 @@ private:
 
   void printIndent();
   std::string tokenToString(TokenKind kind);
+  void printVisibility(Visibility v);
 };
 
 /// \brief Helper function to print an AST declaration to a stream.

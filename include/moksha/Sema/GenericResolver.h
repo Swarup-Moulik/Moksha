@@ -21,7 +21,7 @@ public:
   /// parameters. Checks for: Argument count mismatch, 'any' type constraint.
   /// \return std::nullopt if valid, or a GenericError if invalid.
   [[nodiscard]] std::optional<GenericError>
-  validateGenericArgs(const std::vector<llvm::StringRef> &typeParams,
+  validateGenericArgs(const std::vector<std::string> &typeParams,
                       const std::vector<NamedType::GenericArg> &args);
 
   /// Creates a new Type with generic parameters substituted by concrete

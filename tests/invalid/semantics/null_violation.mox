@@ -1,0 +1,2 @@
+// Error: Non-nullable type cannot be null
+int id = null;

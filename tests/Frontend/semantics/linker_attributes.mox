@@ -1,0 +1,12 @@
+// Verifies weak linkage (allowing driver overrides)
+weak void driver_init() {
+    print("Default initialization");
+}
+
+// Verifies 'used' attribute (prevents DCE in optimizer)
+used section(".metadata") static int kernel_version = 1;
+
+// Verifies complex section names (linker script compatibility)
+section(".init.text") void arch_init() {
+    asm("cli");
+}

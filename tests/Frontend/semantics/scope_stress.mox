@@ -1,0 +1,17 @@
+int x = 100; // Global/Module scope
+
+// Testing top-level block scope shadowing
+{
+    int x = 50; // Shadows global
+    {
+        int x = 25; // Shadows local block
+
+        for (int x in [1, 2, 3]) { // Shadows outer block
+
+            any closure = (int x) => { // Shadows loop variable
+                int x = 5; // Shadows lambda param
+                return x;
+            };
+        }
+    }
+}

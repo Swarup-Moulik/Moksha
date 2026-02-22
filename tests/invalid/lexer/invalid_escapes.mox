@@ -1,0 +1,6 @@
+// Lexer must reject invalid escape sequences rather than passing
+// them blindly to the IR generator.
+string bad_slash = "Wait what is \q this?";
+
+// Malformed Hex/Unicode escapes (if Moksha supports \x or \u)
+string bad_hex = "Invalid hex \xZZ";

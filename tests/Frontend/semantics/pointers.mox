@@ -1,0 +1,25 @@
+void test_pointers() {
+    int val = 42;
+
+    // 1. Address-Of Operator (&)
+    // Verifies that taking the address of an 'int' yields an 'int*'
+    int* ptr = &val;
+
+    // 2. Dereference Operator (*)
+    // Verifies that we can write to and read from the pointer
+    unsafe {
+        *ptr = 100;
+        int read_val = *ptr;
+    }
+
+    // 3. Pointer Arithmetic (Pointer + Integer)
+    // Verifies that adding/subtracting an offset yields the same pointer type
+    unsafe {
+        int* next_ptr = ptr + 1;
+        int* prev_ptr = next_ptr - 1;
+
+        // 4. Pointer Difference (Pointer - Pointer)
+        // Verifies that subtracting two pointers yields an 'isize'
+        isize diff = next_ptr - ptr;
+    }
+}

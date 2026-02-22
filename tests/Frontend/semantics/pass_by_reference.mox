@@ -1,0 +1,37 @@
+// Pass by Value (Default)
+// 'val' is a copy; changes do not affect the caller
+void modifyValue(int val) {
+    val = 100
+}
+
+// Pass by Reference
+// Syntax: 'ref' keyword before the type
+// 'ptr' refers to the original variable
+void modifyRef(ref int ptr) {
+    ptr = 100
+}
+
+// Multiple Reference Parameters
+void swap(ref int a, ref int b) {
+    int temp = a
+    a = b
+    b = temp
+}
+
+// Test Execution (Implicit Main)
+int x = 10
+int y = 20
+
+// 1. Test Pass by Value
+modifyValue(x)
+print(x) // Should print 10 (unchanged)
+
+// 2. Test Pass by Reference
+modifyRef(x)
+print(x) // Should print 100 (changed)
+
+// 3. Test Multiple Refs (Swap)
+swap(x, y)
+// x is now 20, y is now 100
+print(x)
+print(y)

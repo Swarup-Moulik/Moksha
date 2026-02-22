@@ -1,0 +1,19 @@
+int val = 15;
+
+// Switch with Ranges
+switch (val) {
+  case 1: print("One");
+  case 10:20: print("Range 10 to 20");
+  case 'a':'z': print("Lowercase");
+  default: print("Other");
+}
+
+// Loops
+int[] list = [1, 2, 3];
+for (int x in list) {
+  print(x);
+}
+
+// Defer
+defer print("Last");
+print("First");

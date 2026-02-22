@@ -1,5 +1,6 @@
 #include "moksha/AST/Expr.h"
 #include "moksha/AST/ASTVisitor.h"
+#include "moksha/AST/Stmt.h"
 
 namespace moksha {
 
@@ -12,6 +13,7 @@ void BoolLiteral::accept(ASTVisitor &v) const { v.visitBoolLiteral(this); }
 void NullLiteral::accept(ASTVisitor &v) const { v.visitNullLiteral(this); }
 void CharLiteral::accept(ASTVisitor &v) const { v.visitCharLiteral(this); }
 void ArrayLiteral::accept(ASTVisitor &v) const { v.visitArrayLiteral(this); }
+void MapLiteral::accept(ASTVisitor &v) const { v.visitMapLiteral(this); }
 
 void BinaryExpr::accept(ASTVisitor &v) const { v.visitBinaryExpr(this); }
 void UnaryExpr::accept(ASTVisitor &v) const { v.visitUnaryExpr(this); }
@@ -24,6 +26,10 @@ void IdentifierExpr::accept(ASTVisitor &v) const {
 void CallExpr::accept(ASTVisitor &v) const { v.visitCallExpr(this); }
 void MemberExpr::accept(ASTVisitor &v) const { v.visitMemberExpr(this); }
 void IndexExpr::accept(ASTVisitor &v) const { v.visitIndexExpr(this); }
+void AwaitExpr::accept(ASTVisitor &v) const { v.visitAwaitExpr(this); }
+
+// [FIX] Define destructor here where Stmt is complete
+LambdaExpr::~LambdaExpr() = default;
 
 void LambdaExpr::accept(ASTVisitor &v) const { v.visitLambdaExpr(this); }
 void NewExpr::accept(ASTVisitor &v) const { v.visitNewExpr(this); }
@@ -33,5 +39,6 @@ void TemplateStringExpr::accept(ASTVisitor &v) const {
 void ThreadExpr::accept(ASTVisitor &v) const { v.visitThreadExpr(this); }
 void ThisExpr::accept(ASTVisitor &v) const { v.visitThisExpr(this); }
 void SuperExpr::accept(ASTVisitor &v) const { v.visitSuperExpr(this); }
+void SizeOfExpr::accept(ASTVisitor &v) const { v.visitSizeOfExpr(this); }
 
 } // namespace moksha

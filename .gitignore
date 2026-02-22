@@ -10,11 +10,34 @@ cmake_install.cmake
 .ninja_deps
 .ninja_log
 
+# Compile database
+compile_commands.json
+
 # Clangd index
 .cache/
 
-# Compile database
-compile_commands.json
+# Compiler artifacts
+*.o
+*.obj
+*.lo
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+*.pdb
+*.ilk
+
+# IR dumps
+*.ll
+*.bc
+*.mlir
+
+# Logs
+*.log
+*.tmp
 
 # OS
 .DS_Store

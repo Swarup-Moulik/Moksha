@@ -1,0 +1,11 @@
+void test_ub() {
+    // Verifies shift overflow detection
+    int x = 1 << 64; // ERROR or WARNING: Shift count >= width of type
+
+    // Verifies null dereference barrier
+    int* p = null;
+    unsafe {
+        // This is allowed but should be flagged in a safety pass
+        int y = *p;
+    }
+}

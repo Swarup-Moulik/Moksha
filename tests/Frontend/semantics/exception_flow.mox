@@ -1,0 +1,23 @@
+// 1. Added parameter 'x' and removed unreachable 'return 0'
+int riskyCall(int x) { throw 1; }
+int safeCall(int x) { return x; }
+
+// 2. Pass dummy arg to match new signature
+any fn = () => {
+    try { riskyCall(0); } catch(any e) {}
+};
+
+try {
+    defer print("Deferred 1");
+    // 3. Pipe now correctly passes 'int' into 'riskyCall(int x)'
+    10 |> safeCall() |> riskyCall();
+} catch (any e) {
+    try {
+        defer print("Deferred 2");
+        riskyCall(0);
+    } catch (any inner) {
+        print("Recovered");
+    }
+} finally {
+    safeCall(1);
+}

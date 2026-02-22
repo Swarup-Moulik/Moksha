@@ -1,0 +1,17 @@
+enum DeviceState { IDLE, BUSY, ERROR, DISCONNECTED }
+
+void handle_device(DeviceState state) {
+    // Verifies exhaustiveness checking
+    switch (state) {
+        case DeviceState.IDLE:
+            print("Device is ready");
+            // Implicit break is implemented here
+
+        case DeviceState.BUSY:
+        case DeviceState.ERROR:
+            // Verifies that empty cases fall through correctly
+            print("Action required: Device is busy or in error state");
+
+        // ERROR: Switch is not exhaustive. Missing: DISCONNECTED
+    }
+}

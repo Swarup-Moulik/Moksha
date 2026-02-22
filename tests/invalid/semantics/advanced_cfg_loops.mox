@@ -1,0 +1,39 @@
+int a;
+int b;
+int c;
+int d;
+
+// --- Test 1: While Loop ---
+// A while loop's condition might be false immediately, meaning it runs 0 times.
+// Variables assigned inside the body are NOT guaranteed to be initialized afterwards.
+while (false) {
+    a = 10;
+}
+print(a); // ERROR 1: 'a' is not definitely assigned
+
+// --- Test 2: For Loop ---
+// The initializer (int i = 0) is guaranteed, but the body might run 0 times.
+for (int i = 0; i < 5; i = i + 1) {
+    b = 20;
+}
+print(b); // ERROR 2: 'b' is not definitely assigned
+
+// --- Test 3: For-In Loop ---
+// If the collection is empty, the loop body never executes.
+int[] emptyArr = [];
+for (int x in emptyArr) {
+    c = 30;
+}
+print(c); // ERROR 3: 'c' is not definitely assigned
+
+// --- Test 4: Switch Statement ---
+// If a switch does not have a 'default' case (and isn't an exhaustive enum),
+// the compiler must assume all cases could be skipped.
+int choice = 1;
+switch (choice) {
+    case 1:
+        d = 40;
+    case 2:
+        d = 50;
+}
+print(d); // ERROR 4: 'd' is not definitely assigned

@@ -1,4 +1,6 @@
 #include "moksha/Sema/SymbolTable.h"
+#include "moksha/AST/ASTContext.h"
+#include "moksha/AST/Stmt.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace moksha {
@@ -47,7 +49,6 @@ const Symbol *Scope::findSymbol(llvm::StringRef name) const {
 
 SymbolTable::SymbolTable(DiagnosticEngine &Diags) : Diags(Diags) {
   enterScope(ScopeKind::Global);
-  addPrimitiveTypes();
 }
 
 SymbolTable::~SymbolTable() {
@@ -65,15 +66,7 @@ void SymbolTable::enterScope(ScopeKind kind) {
 }
 
 void SymbolTable::exitScope() {
-  // [CHANGE] Add assertion to crash early in Debug mode if logic is wrong
   assert(!scopeStack.empty() && "Cannot exit scope: stack is empty");
-
-  // Keep your existing safety check for runtime/release safety
-  if (scopeStack.size() <= 1) {
-    llvm::errs()
-        << "Compiler Internal Error: Attempting to pop Global scope.\n";
-    return;
-  }
   scopeStack.pop_back();
 }
 
@@ -84,8 +77,21 @@ bool SymbolTable::addSymbol(llvm::StringRef name, Symbol symbol,
 
   Scope *currentScope = scopeStack.back().get();
 
-  // Check for redefinition
-  if (currentScope->findSymbol(name)) {
+  // Check for redefinition OR overload
+  if (Symbol *existing = currentScope->findSymbol(name)) {
+
+    // Allow redundant Module or Variable imports (Idempotency)
+    if (existing->kind == symbol.kind &&
+        (symbol.kind == SymbolKind::Module ||
+         symbol.kind == SymbolKind::Variable)) {
+      return true;
+    }
+
+    if (existing->kind == SymbolKind::Function &&
+        symbol.kind == SymbolKind::Function) {
+      existing->overloads.push_back(symbol);
+      return true;
+    }
     Diags.report(loc, DiagID::err_symbol_redefinition) << name;
     return false;
   }
@@ -132,35 +138,37 @@ ScopeKind SymbolTable::getCurrentScopeKind() const {
 
 // === Helper: Built-in Primitives ===
 
-void SymbolTable::addPrimitiveTypes() {
-  // NOTE: Even with 'int a = 10' syntax, 'int' must be defined here
-  // so the Parser can look it up to verify it is a valid type.
+void SymbolTable::addPrimitiveTypes(ASTContext &ctx) {
+  // 1. Define the Canonical Types
+  addSymbol("i8", Symbol(SymbolKind::Type, "i8", ctx.getI8Type()));
+  addSymbol("i16", Symbol(SymbolKind::Type, "i16", ctx.getI16Type()));
+  addSymbol("i32", Symbol(SymbolKind::Type, "i32", ctx.getI32Type()));
+  addSymbol("i64", Symbol(SymbolKind::Type, "i64", ctx.getI64Type()));
+  addSymbol("u8", Symbol(SymbolKind::Type, "u8", ctx.getU8Type()));
+  addSymbol("u16", Symbol(SymbolKind::Type, "u16", ctx.getU16Type()));
+  addSymbol("u32", Symbol(SymbolKind::Type, "u32", ctx.getU32Type()));
+  addSymbol("u64", Symbol(SymbolKind::Type, "u64", ctx.getU64Type()));
 
-  // 1. Define the Canonical Types (The "Real" Types)
-  // In a real compiler, these would point to a Type* object.
-  addSymbol("i8", Symbol(SymbolKind::Type, "i8"));
-  addSymbol("i16", Symbol(SymbolKind::Type, "i16"));
-  addSymbol("i32", Symbol(SymbolKind::Type, "i32"));
-  addSymbol("i64", Symbol(SymbolKind::Type, "i64"));
+  addSymbol("f8", Symbol(SymbolKind::Type, "f8", ctx.getF8Type()));
+  addSymbol("f16", Symbol(SymbolKind::Type, "f16", ctx.getF16Type()));
+  addSymbol("f32", Symbol(SymbolKind::Type, "f32", ctx.getF32Type()));
+  addSymbol("f64", Symbol(SymbolKind::Type, "f64", ctx.getF64Type()));
+  addSymbol("float", Symbol(SymbolKind::Type, "float", ctx.getF32Type()));
+  addSymbol("double", Symbol(SymbolKind::Type, "double", ctx.getF64Type()));
 
-  addSymbol("u8", Symbol(SymbolKind::Type, "u8"));
-  addSymbol("u16", Symbol(SymbolKind::Type, "u16"));
-  addSymbol("u32", Symbol(SymbolKind::Type, "u32"));
-  addSymbol("u64", Symbol(SymbolKind::Type, "u64"));
-
-  addSymbol("float", Symbol(SymbolKind::Type, "float"));
-  addSymbol("double", Symbol(SymbolKind::Type, "double"));
-  addSymbol("quarter", Symbol(SymbolKind::Type, "quarter")); // f8
-    addSymbol("half",    Symbol(SymbolKind::Type, "half"));    // f16
-  addSymbol("boolean", Symbol(SymbolKind::Type, "boolean"));
-  addSymbol("void", Symbol(SymbolKind::Type, "void"));
+  addSymbol("boolean", Symbol(SymbolKind::Type, "boolean", ctx.getBoolType()));
+  addSymbol("void", Symbol(SymbolKind::Type, "void", ctx.getVoidType()));
+  addSymbol("any", Symbol(SymbolKind::Type, "any", ctx.getAnyType()));
 
   // 2. Define Aliases for C-Style Syntax
-  // If your syntax is 'int a = 10', 'int' acts as an alias for 'i32'.
-  // Both symbols should ideally point to the same internal Type representation.
+  addSymbol("int", Symbol(SymbolKind::Type, "int", ctx.getI32Type()));
+  addSymbol("char", Symbol(SymbolKind::Type, "char", ctx.getCharType()));
 
-  addSymbol("int", Symbol(SymbolKind::Type, "int"));   // Helper for i32
-  addSymbol("char", Symbol(SymbolKind::Type, "char")); // Helper for u8 or i8
+  addSymbol("isize", Symbol(SymbolKind::Type, "isize", ctx.getISizeType()));
+  addSymbol("usize", Symbol(SymbolKind::Type, "usize", ctx.getUSizeType()));
+
+  addSymbol("string", Symbol(SymbolKind::Type, "string", ctx.getStringType()));
+  addSymbol("bool", Symbol(SymbolKind::Type, "bool", ctx.getBoolType()));
 }
 
 void SymbolTable::dump() const {

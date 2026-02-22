@@ -1,0 +1,25 @@
+macro setDouble(target, val) {
+    // Hygiene ensures 'internal_temp' becomes something like 'internal_temp_h123'
+    // so it can never clash with a variable named 'internal_temp' in the caller's code.
+    int internal_temp = val;
+    target = internal_temp * 2;
+}
+
+// 1. Global variable to test that the macro doesn't "leak" its internal temp
+int internal_temp = 100;
+
+{
+    int safeVal = 5;
+    int result = 0; // Explicitly initialized to 0
+
+    // 2. Expand: { int internal_temp_hXXX = safeVal; result = internal_temp_hXXX * 2; }
+    // The hygiene system MUST preserve the name 'result' as it is a passed argument.
+    setDouble(result, safeVal);
+
+    // Should print 10
+    print(result);
+}
+
+// 3. This MUST still be 100.
+// If hygiene failed, the macro's 'internal_temp = 5' would have overwritten this.
+print(internal_temp);

@@ -17,7 +17,6 @@ void ASTPrinter::printIndent() {
 
 std::string ASTPrinter::tokenToString(TokenKind kind) {
   switch (kind) {
-  // Math
   case TokenKind::Plus:
     return "+";
   case TokenKind::Minus:
@@ -30,14 +29,10 @@ std::string ASTPrinter::tokenToString(TokenKind kind) {
     return "%";
   case TokenKind::Power:
     return "**";
-
-  // Increment/Decrement
   case TokenKind::PlusPlus:
     return "++";
   case TokenKind::MinusMinus:
     return "--";
-
-  // Assignment
   case TokenKind::Equal:
     return "=";
   case TokenKind::PlusEqual:
@@ -50,8 +45,6 @@ std::string ASTPrinter::tokenToString(TokenKind kind) {
     return "/=";
   case TokenKind::PercentEqual:
     return "%=";
-
-  // Bitwise
   case TokenKind::Amp:
     return "&";
   case TokenKind::Pipe:
@@ -64,16 +57,12 @@ std::string ASTPrinter::tokenToString(TokenKind kind) {
     return "<<";
   case TokenKind::GreaterGreater:
     return ">>";
-
-  // Logical
   case TokenKind::AmpAmp:
     return "&&";
   case TokenKind::PipePipe:
     return "||";
   case TokenKind::Bang:
     return "!";
-
-  // Comparison
   case TokenKind::EqualEqual:
     return "==";
   case TokenKind::NotEqual:
@@ -86,23 +75,21 @@ std::string ASTPrinter::tokenToString(TokenKind kind) {
     return "<=";
   case TokenKind::GreaterEqual:
     return ">=";
-
-  // Misc
   case TokenKind::FatArrow:
     return "=>";
+  case TokenKind::QuestionDot:
+    return "?.";
   case TokenKind::QuestionQuestion:
     return "??";
   case TokenKind::DotDotDot:
     return "...";
-
+  case TokenKind::Colon:
+    return ":";
   default:
-    llvm::errs() << "Warning: unknown token kind encountered: "
-                 << static_cast<int>(kind) << "\n";
     return "(unknown)";
   }
 }
 
-// Public Entry Points
 void ASTPrinter::print(const Decl *decl) {
   if (decl)
     decl->accept(*this);
@@ -118,6 +105,22 @@ void ASTPrinter::print(const Expr *expr) {
 void ASTPrinter::print(const Type *type) {
   if (type)
     type->accept(*this);
+}
+
+void ASTPrinter::printVisibility(Visibility v) {
+  switch (v) {
+  case Visibility::Public:
+    OS << "public ";
+    break;
+  case Visibility::Private:
+    OS << "private ";
+    break;
+  case Visibility::Protected:
+    OS << "protected ";
+    break;
+  default:
+    break;
+  }
 }
 
 // --- Types ---
@@ -178,6 +181,9 @@ void ASTPrinter::visitPrimitiveType(const PrimitiveType *type) {
   case PrimitiveType::Scalar::F64:
     OS << "f64";
     break;
+  case PrimitiveType::Scalar::Int:
+    OS << "int_literal";
+    break;
   }
 }
 
@@ -209,6 +215,9 @@ void ASTPrinter::visitNamedType(const NamedType *type) {
 }
 
 void ASTPrinter::visitFunctionType(const FunctionType *type) {
+  if (type->isInterruptFunc()) {
+    OS << "interrupt ";
+  }
   OS << "(";
   for (size_t i = 0; i < type->getParamTypes().size(); ++i) {
     if (i > 0)
@@ -237,7 +246,7 @@ void ASTPrinter::visitNullableType(const NullableType *type) {
   OS << "?";
 }
 
-void ASTPrinter::visitAnyType(const AnyType *type) { OS << "any"; }
+void ASTPrinter::visitAnyType(const AnyType *) { OS << "any"; }
 
 void ASTPrinter::visitLockType(const LockType *type) {
   OS << "lock ";
@@ -258,77 +267,46 @@ void ASTPrinter::visitEnumType(const EnumType *type) {
   OS << "enum " << type->getName();
 }
 
+void ASTPrinter::visitNullType(const NullType *) { OS << "null"; }
+
+void ASTPrinter::visitVolatileType(const VolatileType *type) {
+  OS << "volatile ";
+  print(type->getInner());
+}
+
+void ASTPrinter::visitConstType(const ConstType *type) {
+  OS << "const ";
+  print(type->getInner());
+}
+
 // --- Expressions ---
 
 void ASTPrinter::visitIntegerLiteral(const IntegerLiteral *expr) {
   OS << expr->getValue();
 }
-
 void ASTPrinter::visitFloatLiteral(const FloatLiteral *expr) {
   OS << expr->getValue();
 }
-
 void ASTPrinter::visitStringLiteral(const StringLiteral *expr) {
-  OS << "\"";
-  for (unsigned char c : expr->getValue()) {
-    if (c == '\\')
-      OS << "\\\\";
-    else if (c == '"')
-      OS << "\\\"";
-    else if (c == '\n')
-      OS << "\\n";
-    else if (c == '\t')
-      OS << "\\t";
-    else if (c == '\r')
-      OS << "\\r";
-    else if (std::isprint(c) || c >= 128)
-      OS << c;
-    else {
-      OS << "\\x";
-      OS.write_hex(c);
-    }
-  }
-  OS << "\"";
+  OS << "\"" << expr->getValue() << "\"";
 }
-
 void ASTPrinter::visitBoolLiteral(const BoolLiteral *expr) {
   OS << (expr->getValue() ? "true" : "false");
 }
-
 void ASTPrinter::visitCharLiteral(const CharLiteral *expr) {
-  OS << "'";
-  unsigned char c = static_cast<unsigned char>(expr->getValue());
-  if (c == '\\')
-    OS << "\\\\";
-  else if (c == '\'')
-    OS << "\\'";
-  else if (c == '\n')
-    OS << "\\n";
-  else if (c == '\t')
-    OS << "\\t";
-  else if (c == '\r')
-    OS << "\\r";
-  else if (std::isprint(c) || c >= 128)
-    OS << static_cast<char>(c);
-  else {
-    OS << "\\x";
-    OS.write_hex(c);
-  }
-  OS << "'";
+  OS << "'" << expr->getValue() << "'";
 }
-
-void ASTPrinter::visitNullLiteral(const NullLiteral *expr) { OS << "null"; }
-
+void ASTPrinter::visitNullLiteral(const NullLiteral *) { OS << "null"; }
 void ASTPrinter::visitIdentifierExpr(const IdentifierExpr *expr) {
   OS << expr->getName();
 }
 
 void ASTPrinter::visitBinaryExpr(const BinaryExpr *expr) {
-  OS << "(";
-  expr->getLHS()->accept(*this);
+  if (expr->getLHS())
+    expr->getLHS()->accept(*this);
   OS << " " << tokenToString(expr->getOp()) << " ";
-  expr->getRHS()->accept(*this);
-  OS << ")";
+  if (expr->getRHS())
+    expr->getRHS()->accept(*this);
 }
 
 void ASTPrinter::visitUnaryExpr(const UnaryExpr *expr) {
@@ -344,19 +322,27 @@ void ASTPrinter::visitUnaryExpr(const UnaryExpr *expr) {
 }
 
 void ASTPrinter::visitCallExpr(const CallExpr *expr) {
-  expr->getCallee()->accept(*this);
+  if (expr->getCallee())
+    expr->getCallee()->accept(*this);
   OS << "(";
   for (size_t i = 0; i < expr->getArgs().size(); ++i) {
-    if (i > 0)
+    if (expr->getArgs()[i]) {
+      expr->getArgs()[i]->accept(*this);
+    }
+    if (i < expr->getArgs().size() - 1)
       OS << ", ";
-    expr->getArgs()[i]->accept(*this);
   }
   OS << ")";
 }
 
+void ASTPrinter::visitAwaitExpr(const AwaitExpr *expr) {
+  OS << "await ";
+  expr->getExpr()->accept(*this);
+}
+
 void ASTPrinter::visitMemberExpr(const MemberExpr *expr) {
   expr->getObject()->accept(*this);
-  OS << (expr->isOptionalAccess() ? "?." : ".") << expr->getMemberName();
+  OS << (expr->isOptionalAccess() ? "?." : ".") << expr->getName();
 }
 
 void ASTPrinter::visitIndexExpr(const IndexExpr *expr) {
@@ -374,8 +360,6 @@ void ASTPrinter::visitLambdaExpr(const LambdaExpr *expr) {
     if (expr->getParams()[i].getType()) {
       print(expr->getParams()[i].getType());
       OS << " ";
-    } else {
-      OS << "_ ";
     }
     OS << expr->getParams()[i].getName();
   }
@@ -425,41 +409,35 @@ void ASTPrinter::visitTemplateStringExpr(const TemplateStringExpr *expr) {
 }
 
 void ASTPrinter::visitThreadExpr(const ThreadExpr *expr) {
-  OS << "new ";
-  if (expr->isWeakThread())
-    OS << "weak ";
-  OS << "Thread() => ";
+  OS << "new " << (expr->isWeakThread() ? "weak " : "") << "Thread() => ";
   expr->getBody()->accept(*this);
 }
 
 void ASTPrinter::visitArrayLiteral(const ArrayLiteral *expr) {
-  const auto &elements = expr->getElements();
-  if (elements.size() > 10) {
-    OS << "[\n";
-    indentLevel++;
-    for (const auto &e : elements) {
-      printIndent();
-      e->accept(*this);
-      OS << ",\n";
-    }
-    indentLevel--;
-    printIndent();
-    OS << "]";
-  } else {
-    OS << "[";
-    for (size_t i = 0; i < elements.size(); ++i) {
-      if (i > 0)
-        OS << ", ";
-      elements[i]->accept(*this);
-    }
-    OS << "]";
+  OS << "[";
+  for (size_t i = 0; i < expr->getElements().size(); ++i) {
+    if (i > 0)
+      OS << ", ";
+    expr->getElements()[i]->accept(*this);
   }
+  OS << "]";
 }
 
-// [FIX] Implemented missing methods
-void ASTPrinter::visitThisExpr(const ThisExpr *expr) { OS << "this"; }
+void ASTPrinter::visitMapLiteral(const MapLiteral *expr) {
+  OS << "{";
+  const auto &entries = expr->getEntries();
+  for (size_t i = 0; i < entries.size(); ++i) {
+    if (i > 0)
+      OS << ", ";
+    entries[i].first->accept(*this);
+    OS << ": ";
+    entries[i].second->accept(*this);
+  }
+  OS << "}";
+}
 
-void ASTPrinter::visitSuperExpr(const SuperExpr *expr) { OS << "super"; }
+void ASTPrinter::visitThisExpr(const ThisExpr *) { OS << "this"; }
+void ASTPrinter::visitSuperExpr(const SuperExpr *) { OS << "super"; }
 
 // --- Statements ---
 
@@ -510,20 +488,12 @@ void ASTPrinter::visitWhileStmt(const WhileStmt *stmt) {
   OS << "while (";
   stmt->getCondition()->accept(*this);
   OS << ")";
-  if (stmt->getBody()) {
-    stmt->getBody()->accept(*this);
-  } else {
-    OS << "{}";
-  }
+  stmt->getBody()->accept(*this);
 }
 
 void ASTPrinter::visitDoWhileStmt(const DoWhileStmt *stmt) {
   OS << "do ";
-  if (stmt->getBody()) {
-    stmt->getBody()->accept(*this);
-  } else {
-    OS << "{}";
-  }
+  stmt->getBody()->accept(*this);
   OS << " while (";
   stmt->getCondition()->accept(*this);
   OS << ");";
@@ -542,10 +512,7 @@ void ASTPrinter::visitForStmt(const ForStmt *stmt) {
   if (stmt->getIncrement())
     stmt->getIncrement()->accept(*this);
   OS << ")";
-  if (stmt->getBody())
-    stmt->getBody()->accept(*this);
-  else
-    OS << "{}";
+  stmt->getBody()->accept(*this);
 }
 
 void ASTPrinter::visitForInStmt(const ForInStmt *stmt) {
@@ -554,10 +521,7 @@ void ASTPrinter::visitForInStmt(const ForInStmt *stmt) {
   OS << " in ";
   stmt->getCollection()->accept(*this);
   OS << ")";
-  if (stmt->getBody())
-    stmt->getBody()->accept(*this);
-  else
-    OS << "{}";
+  stmt->getBody()->accept(*this);
 }
 
 void ASTPrinter::visitSwitchStmt(const SwitchStmt *stmt) {
@@ -567,21 +531,18 @@ void ASTPrinter::visitSwitchStmt(const SwitchStmt *stmt) {
   indentLevel++;
   for (const auto &c : stmt->getCases()) {
     printIndent();
-    if (c.isDefaultCase()) {
+    if (c.isDefaultCase())
       OS << "default";
-    } else {
+    else {
       OS << "case ";
-      bool first = true;
-      for (const auto &v : c.getValues()) {
-        if (!first)
+      for (size_t i = 0; i < c.getValues().size(); ++i) {
+        if (i > 0)
           OS << ", ";
-        v->accept(*this);
-        first = false;
+        c.getValues()[i]->accept(*this);
       }
     }
     OS << ":";
-    if (c.getBody())
-      c.getBody()->accept(*this);
+    c.getBody()->accept(*this);
     OS << "\n";
   }
   indentLevel--;
@@ -589,16 +550,12 @@ void ASTPrinter::visitSwitchStmt(const SwitchStmt *stmt) {
   OS << "}";
 }
 
-void ASTPrinter::visitBreakStmt(const BreakStmt *stmt) { OS << "break;"; }
-void ASTPrinter::visitContinueStmt(const ContinueStmt *stmt) {
-  OS << "continue;";
-}
-
+void ASTPrinter::visitBreakStmt(const BreakStmt *) { OS << "break;"; }
+void ASTPrinter::visitContinueStmt(const ContinueStmt *) { OS << "continue;"; }
 void ASTPrinter::visitDeferStmt(const DeferStmt *stmt) {
   OS << "defer ";
   stmt->getDeferredStmt()->accept(*this);
 }
-
 void ASTPrinter::visitUnsafeBlockStmt(const UnsafeBlockStmt *stmt) {
   OS << "unsafe";
   visitBlockStmt(stmt);
@@ -637,22 +594,64 @@ void ASTPrinter::visitModuleDecl(const ModuleDecl *decl) {
 }
 
 void ASTPrinter::visitFunctionDecl(const FunctionDecl *decl) {
+  printIndent();
+  if (decl->isExtern) {
+    OS << "extern ";
+    // Assuming you store the linkage string like "C" or "stdcall"
+    if (!decl->externLinkage.empty()) {
+      OS << "\"" << decl->externLinkage << "\" ";
+    }
+  }
+  if (decl->isInterrupt)
+    OS << "interrupt ";
+  if (decl->isNaked)
+    OS << "naked ";
+  if (decl->isUsed)
+    OS << "used ";
+  if (!decl->section.empty()) {
+    OS << "section(\"" << decl->section << "\") ";
+  }
+  printVisibility(decl->getVisibility());
+  if (decl->isStaticFunc())
+    OS << "static ";
   if (decl->isAsyncFunc())
     OS << "async ";
-  OS << "func " << decl->getName() << "(";
+  if (decl->isWeakFunc())
+    OS << "weak ";
+
+  bool isCtorDtor =
+      (decl->getName() == "constructor" || decl->getName() == "destructor");
+  if (!isCtorDtor) {
+    if (decl->getReturnType()) {
+      print(decl->getReturnType());
+      OS << " ";
+    } else {
+      OS << "void ";
+    }
+  }
+
+  // Then Function Name
+  OS << decl->getName() << "(";
+
+  // Then Parameters
   for (size_t i = 0; i < decl->getParams().size(); ++i) {
     if (i > 0)
       OS << ", ";
     print(decl->getParams()[i].type.get());
     OS << " " << decl->getParams()[i].name;
   }
-  OS << ") ";
-  if (decl->getReturnType()) {
-    OS << "-> ";
-    print(decl->getReturnType());
-    OS << " ";
+
+  if (decl->isVariadicFunc()) {
+    if (!decl->getParams().empty())
+      OS << ", ";
+    OS << "...";
   }
+
+  OS << ")";
+
+  // Then Body
   if (decl->getBody()) {
+    OS << " ";
     decl->getBody()->accept(*this);
   } else {
     OS << ";";
@@ -660,8 +659,29 @@ void ASTPrinter::visitFunctionDecl(const FunctionDecl *decl) {
 }
 
 void ASTPrinter::visitVariableDecl(const VariableDecl *decl) {
+  printIndent();
+  if (decl->isExtern)
+    OS << "extern ";
+  if (decl->isThreadLocal)
+    OS << "thread_local ";
+  if (decl->isUsed)
+    OS << "used ";
+  if (!decl->section.empty()) {
+    OS << "section(\"" << decl->section << "\") ";
+  }
+  if (decl->alignment > 0) {
+    OS << "align(" << decl->alignment << ") ";
+  }
+  printVisibility(decl->getVisibility());
+  if (decl->isStaticVar())
+    OS << "static ";
+  if (decl->isSharedVar())
+    OS << "shared ";
   print(decl->getType());
   OS << " " << decl->getName();
+  if (decl->bitWidth != -1) {
+    OS << " : " << decl->bitWidth;
+  }
   if (decl->getInitializer()) {
     OS << " = ";
     decl->getInitializer()->accept(*this);
@@ -669,28 +689,69 @@ void ASTPrinter::visitVariableDecl(const VariableDecl *decl) {
 }
 
 void ASTPrinter::visitClassDecl(const ClassDecl *decl) {
+  printIndent();
+  if (decl->isPacked)
+    OS << "packed ";
+  if (!decl->section.empty()) {
+    OS << "section(\"" << decl->section << "\") ";
+  }
+  if (decl->alignment > 0) {
+    OS << "align(" << decl->alignment << ") ";
+  }
+  if (decl->isPacked) {
+    OS << "packed ";
+  }
   if (decl->isReferenceType())
     OS << "ref ";
-  OS << "class " << decl->getName() << " {\n";
+  switch (decl->getAggregateKind()) {
+  case AggregateKind::Struct:
+    OS << "struct ";
+    break;
+  case AggregateKind::Union:
+    OS << "union ";
+    break;
+  default:
+    OS << "class ";
+    break;
+  }
+  OS << decl->getName();
+  if (!decl->getParentNames().empty()) {
+    OS << "(";
+    for (size_t i = 0; i < decl->getParentNames().size(); ++i) {
+      if (i > 0)
+        OS << ", ";
+      OS << decl->getParentNames()[i];
+    }
+    OS << ")";
+  }
+  OS << " {\n";
+
   indentLevel++;
   for (const auto &member : decl->getMembers()) {
-    printIndent();
     member->accept(*this);
-    OS << ";\n";
+    if (member->getKind() == StmtKind::VariableDecl) {
+      OS << ";\n";
+    } else if (member->getKind() == StmtKind::FunctionDecl) {
+      OS << "\n";
+    }
   }
   indentLevel--;
+
   printIndent();
-  OS << "}";
+  OS << "}\n";
 }
 
 void ASTPrinter::visitGenericDecl(const GenericDecl *decl) {
+  printIndent();
   OS << "generic <";
-  for (size_t i = 0; i < decl->getTypeParams().size(); ++i) {
-    if (i > 0)
+  const auto &params = decl->getTypeParams();
+  for (size_t i = 0; i < params.size(); ++i) {
+    OS << params[i];
+    if (i < params.size() - 1)
       OS << ", ";
-    OS << decl->getTypeParams()[i];
   }
-  OS << "> ";
+  OS << ">\n";
+
   decl->getInnerDecl()->accept(*this);
 }
 
@@ -726,10 +787,52 @@ void ASTPrinter::visitEnumDecl(const EnumDecl *decl) {
   OS << "}";
 }
 
-// Public API wrapper
-void printAST(const Decl *decl, llvm::raw_ostream &OS) {
-  ASTPrinter printer(OS);
-  printer.print(decl);
+void ASTPrinter::visitMacroDecl(const MacroDecl *decl) {
+  OS << "macro " << decl->getName();
+  if (decl->isFunctionMacro()) {
+    OS << "(";
+    for (size_t i = 0; i < decl->getParams().size(); ++i) {
+      if (i > 0)
+        OS << ", ";
+      OS << decl->getParams()[i];
+    }
+    OS << ")";
+  }
+  OS << " {\n";
+  indentLevel++;
+  for (const auto &s : decl->getBody()) {
+    printIndent();
+    s->accept(*this);
+    OS << "\n";
+  }
+  indentLevel--;
+  printIndent();
+  OS << "}";
+}
+
+void ASTPrinter::visitThrowStmt(const ThrowStmt *stmt) {
+  printIndent();
+  OS << "throw ";
+  if (stmt->getExpr()) {
+    stmt->getExpr()->accept(*this);
+  }
+  OS << ";\n";
+}
+
+void ASTPrinter::visitUsingDecl(const UsingDecl *decl) {
+  OS << "using " << decl->getName() << " = ";
+  print(decl->getTargetType());
+  OS << ";";
+}
+
+void ASTPrinter::visitAsmStmt(const AsmStmt *stmt) {
+  OS << "asm(\"" << stmt->getAssemblyStr() << "\");";
+}
+
+void ASTPrinter::visitSizeOfExpr(const SizeOfExpr *expr) {
+  OS << "sizeof(";
+  expr->getExpr()->accept(*this);
+  OS << ")";
 }
 
 } // namespace moksha

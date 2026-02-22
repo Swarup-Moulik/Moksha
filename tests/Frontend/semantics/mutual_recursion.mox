@@ -1,0 +1,18 @@
+ref class NodeA {
+    // Forward reference to NodeB
+    public NodeB? next;
+    constructor() { this.next = null; }
+}
+
+ref class NodeB {
+    // Backward reference to NodeA
+    public NodeA? prev;
+    constructor() { this.prev = null; }
+}
+
+NodeA a = new NodeA();
+NodeB b = new NodeB();
+
+// Linking mutually recursive types
+a.next = b;
+b.prev = a;

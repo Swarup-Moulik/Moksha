@@ -1,0 +1,27 @@
+ref class Buffer {
+    public int id;
+    constructor(int id) { this.id = id; }
+    destructor() { print("Freed"); }
+}
+
+Buffer b1 = new Buffer(1);
+
+// Move semantics: 'b1' ownership is transferred to 'b2'
+Buffer b2 = b1;
+
+// ERROR: Use after move. 'b1' is no longer valid.
+print(b1.id);
+
+// --- Closure Capture ---
+any escapeClosure;
+
+{
+    Buffer scopedBuffer = new Buffer(2);
+    // ERROR: Capturing a locally owned heap object into a closure
+    // that outlives the scope requires explicit 'shared' or a clone.
+    escapeClosure = () => {
+        print(scopedBuffer.id);
+    };
+} // scopedBuffer is destructed here!
+
+escapeClosure(); // Dangling pointer access!

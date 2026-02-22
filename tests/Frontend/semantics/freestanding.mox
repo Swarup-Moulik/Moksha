@@ -1,0 +1,11 @@
+// Verifies custom entry point for bootloaders
+extern "C" naked void _start() {
+    asm("mov $stack_top, %rsp");
+    asm("call kernel_main");
+}
+
+// Verifies no-std style manual panic implementation
+extern "C" noreturn void panic(char* msg) {
+    // Manual serial output logic
+    while(true) { asm("hlt"); }
+}

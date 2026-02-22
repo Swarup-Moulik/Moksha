@@ -9,17 +9,24 @@
 
 namespace moksha {
 
+class Decl;
+class ASTContext;
+
 enum class SymbolKind { Variable, Function, Type, Class, Module };
 
 // [Requirement 1] Symbol Definition
 struct Symbol {
   SymbolKind kind;
   std::string name;
-  Type *type = nullptr; // Needed for TypeChecker
+  const Type *type = nullptr;
+  const Decl *decl = nullptr;
+  std::vector<Symbol> overloads;
+  int bitWidth = -1;
 
   Symbol() : kind(SymbolKind::Variable) {}
-  Symbol(SymbolKind k, std::string n, Type *t = nullptr)
-      : kind(k), name(n), type(t) {}
+  Symbol(SymbolKind k, std::string n, const Type *t = nullptr,
+         const Decl *d = nullptr)
+      : kind(k), name(std::move(n)), type(t), decl(d) {}
 
   std::string kindToString() const {
     switch (kind) {
@@ -76,7 +83,7 @@ public:
   bool isDefinedInCurrentScope(llvm::StringRef name) const;
   ScopeKind getCurrentScopeKind() const;
   Scope *currentScope();
-
+  void addPrimitiveTypes(ASTContext &ctx);
   void dump() const;
 
 private:

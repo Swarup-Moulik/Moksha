@@ -1,0 +1,14 @@
+void test_pointer_math() {
+    usize phys_addr = 0x100000;
+
+    // Pointer-to-Int-to-Pointer roundtrip
+    void* ptr = cast<void*>(phys_addr);
+    usize back = cast<usize>(ptr);
+
+    unsafe {
+        // Unaligned Load/Store verification
+        // This validates that the parser allows arbitrary arithmetic in unsafe
+        unsigned int* unaligned = cast<unsigned int*>(phys_addr + 1);
+        *unaligned = 0xDEADBEEF_u32;
+    }
+}

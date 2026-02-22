@@ -37,6 +37,12 @@ ASTContext::ASTContext() {
 
 ASTContext::~ASTContext() = default;
 
+const Type *ASTContext::createPointerType(const Type *pointee) {
+  // Use saveType to store the unique_ptr in the context's ownedTypes vector
+  return saveType(
+      std::make_unique<PointerType>(pointee->clone(), pointee->getLoc()));
+}
+
 const Type *ASTContext::createNullableType(const Type *inner) {
   // In a real compiler, we would deduplicate (intern) types here.
   // For now, we clone the inner type and wrap it.
@@ -45,23 +51,45 @@ const Type *ASTContext::createNullableType(const Type *inner) {
 }
 
 const Type *ASTContext::createArrayType(const Type *element, uint64_t size) {
-  // Note: TypeChecker passes size, but ArrayType expects Expr*.
-  // We will ignore the size for type creation or create a dummy expression if
-  // strictly needed. For static analysis, often the array type structure
-  // matches regardless of size expression value.
-  return saveType(std::make_unique<ArrayType>(element->clone(), nullptr,
-                                              element->getLoc()));
+  auto sizeExpr = std::make_unique<IntegerLiteral>(size, NumericSuffix::None,
+                                                   element->getLoc());
+
+  return saveType(std::make_unique<ArrayType>(
+      element->clone(), std::move(sizeExpr), element->getLoc()));
+}
+
+const Type *ASTContext::createMapType(const Type *key, const Type *value) {
+  return saveType(
+      std::make_unique<MapType>(key->clone(), value->clone(), key->getLoc()));
 }
 
 const Type *
 ASTContext::createFunctionType(const std::vector<const Type *> &params,
-                               const Type *ret) {
+                               const Type *ret, bool isVariadic,
+                               bool isInterrupt) { // [FIX] Added parameter
   std::vector<TypePtr> clonedParams;
   for (const auto *p : params) {
     clonedParams.push_back(p->clone());
   }
-  return saveType(std::make_unique<FunctionType>(
-      ret->clone(), std::move(clonedParams), ret->getLoc()));
+  return saveType(
+      std::make_unique<FunctionType>(ret->clone(), std::move(clonedParams),
+                                     isVariadic, isInterrupt, ret->getLoc()));
+}
+
+const Type *ASTContext::createNamedType(const std::string &name) {
+  // Assuming invariant for simple creation
+  std::vector<TypePtr> args;
+  return saveType(
+      std::make_unique<NamedType>(name, std::move(args), SourceLocation()));
+}
+
+void ASTContext::registerClass(const ClassDecl *decl) {
+  classMap[decl->getName()] = decl;
+}
+
+const ClassDecl *ASTContext::lookupClass(llvm::StringRef name) const {
+  auto it = classMap.find(name);
+  return it != classMap.end() ? it->second : nullptr;
 }
 
 } // namespace moksha

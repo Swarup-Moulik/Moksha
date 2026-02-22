@@ -11,6 +11,8 @@ void ClassDecl::accept(ASTVisitor &v) const { v.visitClassDecl(this); }
 void GenericDecl::accept(ASTVisitor &v) const { v.visitGenericDecl(this); }
 void ImportDecl::accept(ASTVisitor &v) const { v.visitImportDecl(this); }
 void EnumDecl::accept(ASTVisitor &v) const { v.visitEnumDecl(this); }
+void MacroDecl::accept(ASTVisitor &v) const { v.visitMacroDecl(this); }
+void UsingDecl::accept(ASTVisitor &v) const { v.visitUsingDecl(this); }
 
 // --- Statements ---
 void BlockStmt::accept(ASTVisitor &v) const { v.visitBlockStmt(this); }
@@ -32,5 +34,7 @@ void UnsafeBlockStmt::accept(ASTVisitor &v) const {
   v.visitUnsafeBlockStmt(this);
 }
 void TryCatchStmt::accept(ASTVisitor &v) const { v.visitTryCatchStmt(this); }
+void ThrowStmt::accept(ASTVisitor &v) const { v.visitThrowStmt(this); }
+void AsmStmt::accept(ASTVisitor &v) const { v.visitAsmStmt(this); }
 
 } // namespace moksha

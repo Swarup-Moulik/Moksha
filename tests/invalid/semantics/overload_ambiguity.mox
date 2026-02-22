@@ -1,0 +1,6 @@
+// Type checker should throw an error because it cannot infer
+// which `process` to call.
+void process(int a) {}
+void process(any a) {}
+
+process(10);

@@ -1,0 +1,8 @@
+// 1. Unterminated standard string
+// The lexer must error at the newline, NOT swallow the rest of the file.
+string s = "This string has no closing quote
+int next_var = 10;
+
+// 2. Unterminated template string
+// Template strings usually allow newlines, so it must error at EOF.
+string t = `This template goes on forever...

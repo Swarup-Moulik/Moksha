@@ -1,0 +1,26 @@
+generic <T>
+T[] map(T[] arr, (T) => T func) { return arr; }
+
+generic <T>
+T[] filter(T[] arr, (T) => bool pred) { return arr; }
+
+generic Container<T> {
+    public T value;
+
+    constructor(T val) {
+        this.value = val;
+    }
+
+    public T getValue() {
+        return this.value;
+    }
+}
+
+int[] arr = [1, 2, 3];
+
+// Generic inference flowing through a pipe with lambdas
+arr |> map((int x) => x + 1);
+
+// Deeply nested generic resolution
+Container<Container<int>> nested = new Container<Container<int>>(new Container<int>(10));
+nested.getValue().getValue();

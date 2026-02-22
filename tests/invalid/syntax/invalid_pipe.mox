@@ -1,0 +1,2 @@
+// Pipe RHS must be a CallExpr or IdentifierExpr. This should fail parsing.
+10 |> 20;

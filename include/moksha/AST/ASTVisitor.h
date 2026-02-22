@@ -23,6 +23,9 @@ public:
   virtual void visitViewType(const ViewType *type) = 0;
   virtual void visitMutType(const MutType *type) = 0;
   virtual void visitEnumType(const EnumType *type) = 0;
+  virtual void visitNullType(const NullType *type) = 0;
+  virtual void visitVolatileType(const VolatileType *type) = 0;
+  virtual void visitConstType(const ConstType *type) = 0;
 
   // --- Expressions ---
   virtual void visitIntegerLiteral(const IntegerLiteral *expr) = 0;
@@ -32,6 +35,7 @@ public:
   virtual void visitNullLiteral(const NullLiteral *expr) = 0;
   virtual void visitCharLiteral(const CharLiteral *expr) = 0;
   virtual void visitArrayLiteral(const ArrayLiteral *expr) = 0;
+  virtual void visitMapLiteral(const MapLiteral *expr) = 0;
   virtual void visitBinaryExpr(const BinaryExpr *expr) = 0;
   virtual void visitUnaryExpr(const UnaryExpr *expr) = 0;
   virtual void visitTernaryExpr(const TernaryExpr *expr) = 0;
@@ -44,10 +48,10 @@ public:
   virtual void visitNewExpr(const NewExpr *expr) = 0;
   virtual void visitTemplateStringExpr(const TemplateStringExpr *expr) = 0;
   virtual void visitThreadExpr(const ThreadExpr *expr) = 0;
-
-  // [FIX] Added missing visitor methods
   virtual void visitThisExpr(const ThisExpr *expr) = 0;
   virtual void visitSuperExpr(const SuperExpr *expr) = 0;
+  virtual void visitAwaitExpr(const AwaitExpr *expr) = 0;
+  virtual void visitSizeOfExpr(const SizeOfExpr *expr) = 0;
 
   // --- Declarations ---
   virtual void visitModuleDecl(const ModuleDecl *decl) = 0;
@@ -57,6 +61,8 @@ public:
   virtual void visitGenericDecl(const GenericDecl *decl) = 0;
   virtual void visitImportDecl(const ImportDecl *decl) = 0;
   virtual void visitEnumDecl(const EnumDecl *decl) = 0;
+  virtual void visitMacroDecl(const MacroDecl *decl) = 0;
+  virtual void visitUsingDecl(const UsingDecl *decl) = 0;
 
   // --- Statements ---
   virtual void visitBlockStmt(const BlockStmt *stmt) = 0;
@@ -74,6 +80,8 @@ public:
   virtual void visitDeferStmt(const DeferStmt *stmt) = 0;
   virtual void visitUnsafeBlockStmt(const UnsafeBlockStmt *stmt) = 0;
   virtual void visitTryCatchStmt(const TryCatchStmt *stmt) = 0;
+  virtual void visitThrowStmt(const ThrowStmt *stmt) = 0;
+  virtual void visitAsmStmt(const AsmStmt *stmt) = 0;
 };
 
 } // namespace moksha

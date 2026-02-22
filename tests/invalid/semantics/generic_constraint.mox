@@ -1,0 +1,4 @@
+generic Box<T> { T val; }
+
+// Error: 'any' as generic argument is compile-time error
+Box<any> b = new Box<any>();

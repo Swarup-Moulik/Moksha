@@ -12,13 +12,14 @@
 
 namespace moksha {
 
+class DiagnosticEngine;
 class ModuleDecl;
 class ASTContext;
 
 class Parser {
 public:
-  // [FIX] Updated constructor
-  explicit Parser(Lexer &lexer, ASTContext &context, llvm::SourceMgr &srcMgr);
+  explicit Parser(Lexer &lexer, ASTContext &context, llvm::SourceMgr &srcMgr,
+                  DiagnosticEngine &diags);
 
   std::unique_ptr<ModuleDecl> parseModule();
 
@@ -26,6 +27,7 @@ private:
   Lexer &lexer;
   ASTContext &context;
   llvm::SourceMgr &srcMgr;
+  DiagnosticEngine &Diags;
 
   Token curTok;
   Token nextTok;
@@ -35,11 +37,11 @@ private:
   void consume();
   bool consumeIf(TokenKind kind);
   bool expect(TokenKind kind);
+  bool expectGreater();
   void advance();
   bool peekIs(TokenKind kind) const { return nextTok.is(kind); }
   bool isStartOfDeclaration();
-
-  // [FIX] Use string reference
+  void parseImportSymbolList(std::vector<std::string> &symbols);
   void error(const std::string &message);
   void synchronize();
 
@@ -47,14 +49,19 @@ private:
   DeclPtr parseImportDecl();
   DeclPtr parseClassDecl();
   DeclPtr parseGenericDecl();
-  DeclPtr parseEnumDecl(); // [FIX] Added missing declaration
-
-  DeclPtr parseFunctionRest(TypePtr type, std::string name);
-  DeclPtr parseVariableRest(TypePtr type, std::string name);
-
+  DeclPtr parseEnumDecl();
+  DeclPtr parseMacroDecl();
+  DeclPtr parseFunctionRest(TypePtr type, std::string name,
+                            bool isAsync = false, bool isStatic = false,
+                            bool isWeak = false,
+                            Visibility vis = Visibility::Default);
+  DeclPtr parseVariableRest(TypePtr type, std::string name,
+                            bool isConst = false, bool isStatic = false,
+                            bool isShared = false,
+                            Visibility vis = Visibility::Default);
   DeclPtr parseVariableDecl();
-  StmtPtr parseVariableStmt();
 
+  StmtPtr parseVariableStmt();
   StmtPtr parseStatement();
   StmtPtr parseBlock();
   StmtPtr parseIfStmt();
@@ -67,11 +74,13 @@ private:
   StmtPtr parseContinueStmt();
   StmtPtr parseDeferStmt();
   StmtPtr parseTryCatchStmt();
+  StmtPtr parseThrowStmt();
   StmtPtr parseUnsafeBlock();
   StmtPtr parseLockStmt();
 
   ExprPtr parseExpression();
   ExprPtr parseAssignment();
+  ExprPtr parsePipe();
   ExprPtr parseTernary();
   ExprPtr parseNullCoalescing();
   ExprPtr parseLogicalOr();
@@ -84,6 +93,7 @@ private:
   ExprPtr parseShift();
   ExprPtr parseAdditive();
   ExprPtr parseMultiplicative();
+  ExprPtr parsePower();
   ExprPtr parsePrefix();
   ExprPtr parsePostfix();
   ExprPtr parsePrimary();
@@ -92,6 +102,7 @@ private:
   ExprPtr parseStringLiteral();
   ExprPtr parseLambdaBody(std::vector<LambdaParam> params);
   ExprPtr parseArrayLiteral();
+  ExprPtr parseMapLiteral();
   ExprPtr parseTemplateString();
 
   TypePtr parseType();

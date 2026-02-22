@@ -1,0 +1,17 @@
+// Integer Literals & Suffixes
+char a = 123i8;
+unsigned short b = 0xFFu16;
+unsigned int c = 0b1010_1010u32;
+long d = 1_000_000i64;
+
+// Floats
+float f = 123.45;
+double g = 1.0;
+
+// Strings
+string s1 = "Hello World";
+
+// Template Strings
+int val = 20;
+string s2 = `Value: ${val}`;
+string s3 = `Calculation: ${10 + 20}`;

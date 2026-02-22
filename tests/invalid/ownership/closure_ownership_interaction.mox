@@ -1,0 +1,19 @@
+ref class Resource {
+    public int id;
+    constructor(int id) { this.id = id; }
+    destructor() { print("Freed"); }
+}
+
+Resource res = new Resource(100);
+
+// Capture by reference/value in closure
+any myClosure = () => {
+    print(res.id);
+};
+
+// Move ownership of the resource
+Resource stolen = res;
+
+// FATAL: The closure is now holding a dangling reference to a moved object.
+// The ownership pass MUST catch this.
+myClosure();

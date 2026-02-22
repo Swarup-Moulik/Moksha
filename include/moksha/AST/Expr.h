@@ -20,6 +20,7 @@ enum class ExprKind {
   NullLiteral,
   CharLiteral,
   ArrayLiteral,
+  MapLiteral,
   BinaryExpr,
   UnaryExpr,
   TernaryExpr,
@@ -33,7 +34,9 @@ enum class ExprKind {
   TemplateStringExpr,
   ThreadExpr,
   ThisExpr,
-  SuperExpr
+  SuperExpr,
+  AwaitExpr,
+  SizeOfExpr
 };
 
 /// Base Expression Node
@@ -60,6 +63,7 @@ public:
       : Expr(ExprKind::IntegerLiteral, loc), value(val), suffix(suffix) {}
   uint64_t getValue() const { return value; }
   void accept(ASTVisitor &v) const override;
+  NumericSuffix getSuffix() const { return suffix; }
 
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::IntegerLiteral;
@@ -76,6 +80,7 @@ public:
       : Expr(ExprKind::FloatLiteral, loc), value(val), suffix(suffix) {}
   double getValue() const { return value; }
   void accept(ASTVisitor &v) const override;
+  NumericSuffix getSuffix() const { return suffix; }
 
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::FloatLiteral;
@@ -156,6 +161,25 @@ public:
 
 private:
   std::vector<ExprPtr> elements;
+};
+
+class MapLiteral : public Expr {
+public:
+  // Store pairs of Key:Value
+  using Entry = std::pair<std::unique_ptr<Expr>, std::unique_ptr<Expr>>;
+
+  MapLiteral(std::vector<Entry> entries, SourceLocation loc)
+      : Expr(ExprKind::MapLiteral, loc), entries(std::move(entries)) {}
+
+  void accept(ASTVisitor &v) const override;
+  const std::vector<Entry> &getEntries() const { return entries; }
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == ExprKind::MapLiteral;
+  }
+
+private:
+  std::vector<Entry> entries;
 };
 
 // --- Operations ---
@@ -263,6 +287,10 @@ public:
   const Expr *getCallee() const { return callee.get(); }
   const std::vector<ExprPtr> &getArgs() const { return args; }
 
+  void insertFirstArg(ExprPtr arg) {
+    args.insert(args.begin(), std::move(arg));
+  }
+
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::CallExpr;
   }
@@ -280,7 +308,7 @@ public:
         memberName(std::move(member)), isOptional(isOptional) {}
   void accept(ASTVisitor &v) const override;
   const Expr *getObject() const { return object.get(); }
-  const std::string &getMemberName() const { return memberName; }
+  const std::string &getName() const { return memberName; }
   bool isOptionalAccess() const { return isOptional; }
 
   static bool classof(const Expr *E) {
@@ -329,6 +357,9 @@ private:
 
 class LambdaExpr : public Expr {
 public:
+  // [FIX] Add destructor declaration
+  ~LambdaExpr() override;
+
   LambdaExpr(std::vector<LambdaParam> params, std::unique_ptr<Stmt> body,
              bool isExprBody, SourceLocation loc)
       : Expr(ExprKind::LambdaExpr, loc), params(std::move(params)),
@@ -415,6 +446,37 @@ public:
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::SuperExpr;
   }
+};
+
+class AwaitExpr : public Expr {
+public:
+  AwaitExpr(ExprPtr expr, SourceLocation loc)
+      : Expr(ExprKind::AwaitExpr, loc), expr(std::move(expr)) {}
+
+  void accept(ASTVisitor &v) const override;
+  const Expr *getExpr() const { return expr.get(); }
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == ExprKind::AwaitExpr;
+  }
+
+private:
+  ExprPtr expr;
+};
+
+class SizeOfExpr : public Expr {
+public:
+  SizeOfExpr(ExprPtr expr, SourceLocation loc)
+      : Expr(ExprKind::SizeOfExpr, loc), expression(std::move(expr)) {}
+  void accept(ASTVisitor &v) const override;
+  const Expr *getExpr() const { return expression.get(); }
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == ExprKind::SizeOfExpr;
+  }
+
+private:
+  ExprPtr expression;
 };
 
 } // namespace moksha

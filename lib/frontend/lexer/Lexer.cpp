@@ -1,4 +1,5 @@
 #include "moksha/Lexer/Lexer.h"
+#include "moksha/Support/Diagnostics.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -31,8 +32,8 @@ static bool isUTF8Start(char c) {
   return static_cast<unsigned char>(c) >= 0x80;
 }
 
-Lexer::Lexer(llvm::StringRef buffer)
-    : bufferStart(buffer.begin()), bufferEnd(buffer.end()),
+Lexer::Lexer(llvm::StringRef buffer, DiagnosticEngine &Diags)
+    : Diags(Diags), bufferStart(buffer.begin()), bufferEnd(buffer.end()),
       curPtr(buffer.begin()) {
   state = LexerState::Normal;
 }
@@ -72,7 +73,7 @@ Token Lexer::next() {
     break;
   }
 
-  const char *start = curPtr;
+  // const char *start = curPtr;
   char c = *curPtr;
 
   if (isAsciiIdentStart(c) || isUTF8Start(c))
@@ -97,108 +98,139 @@ Token Lexer::scanNumber() {
   bool isFloat = false;
   bool isHex = false;
   bool isBin = false;
+  bool hadLexicalError = false;
 
+  // 1. Initial Prefix and Type Detection
   if (*curPtr == '.') {
     isFloat = true;
     curPtr++;
-    while (curPtr < bufferEnd &&
-           (isdigit(static_cast<unsigned char>(*curPtr)) || *curPtr == '_'))
+    while (curPtr < bufferEnd && (isdigit(*curPtr) || *curPtr == '_'))
       curPtr++;
-  } else {
-    if (*curPtr == '0') {
-      char next = peek(1);
-      if (next == 'x' || next == 'X') {
-        isHex = true;
-        curPtr += 2;
-        if (curPtr >= bufferEnd || (!isHexDigit(*curPtr) && *curPtr != '_'))
-          return errorAt(start);
-        while (curPtr < bufferEnd && (isHexDigit(*curPtr) || *curPtr == '_'))
+  } else if (*curPtr == '0') {
+    char next = peek(1);
+    if (next == 'x' || next == 'X') {
+      isHex = true;
+      curPtr += 2;
+      // [FIX] Consume all alphanumeric characters to prevent token splitting
+      while (curPtr < bufferEnd) {
+        if (isHexDigit(*curPtr) || *curPtr == '_') {
           curPtr++;
-      } else if (next == 'b' || next == 'B') {
-        isBin = true;
-        curPtr += 2;
-        if (curPtr >= bufferEnd || (!isBinDigit(*curPtr) && *curPtr != '_'))
-          return errorAt(start);
-        while (curPtr < bufferEnd && (isBinDigit(*curPtr) || *curPtr == '_'))
+        } else if (isalpha(*curPtr)) {
+          // We hit a letter that isn't A-F (like 'u' or 'i' for suffixes)
+          // Break so Step 3 (Suffix Processing) can handle it
+          break;
+        } else {
+          break; // Stop on punctuation or spaces
+        }
+      }
+    } else if (next == 'b' || next == 'B') {
+      isBin = true;
+      curPtr += 2;
+      while (curPtr < bufferEnd) {
+        if (isBinDigit(*curPtr) || *curPtr == '_') {
           curPtr++;
+        } else if (isalpha(*curPtr)) {
+          // We hit a letter for a suffix (like 'u' or 'i')
+          break;
+        } else {
+          break;
+        }
       }
     }
+  }
 
-    if (!isHex && !isBin) {
-      while (curPtr < bufferEnd &&
-             (isdigit(static_cast<unsigned char>(*curPtr)) || *curPtr == '_'))
-        curPtr++;
-    }
+  // 2. Decimal / Float Body Scanning
+  if (!isHex && !isBin) {
+    while (curPtr < bufferEnd && (isdigit(*curPtr) || *curPtr == '_'))
+      curPtr++;
 
-    if (!isHex && !isBin && peek() == '.') {
+    if (peek() == '.') {
       if (isdigit(peek(1))) {
         isFloat = true;
         curPtr++;
-        while (curPtr < bufferEnd &&
-               (isdigit(static_cast<unsigned char>(*curPtr)) || *curPtr == '_'))
+        while (curPtr < bufferEnd && (isdigit(*curPtr) || *curPtr == '_'))
           curPtr++;
+
+        // [FIX] Catch multiple decimal points: 1.2.3
+        if (peek() == '.') {
+          Diags.report(getLoc(), DiagID::err_unexpected_char)
+              << "multiple decimal points in float literal";
+          hadLexicalError = true;
+          while (curPtr < bufferEnd &&
+                 (isdigit(*curPtr) || *curPtr == '.' || *curPtr == '_'))
+            curPtr++;
+        }
       }
+    }
+
+    // Exponent Handling: 1.0e+10
+    if (peek() == 'e' || peek() == 'E') {
+      isFloat = true;
+      curPtr++;
+      if (peek() == '+' || peek() == '-')
+        curPtr++;
+      if (!isdigit(peek())) {
+        // [FIX] Explicitly report missing exponent digits
+        Diags.report(getLoc(), DiagID::err_unexpected_char)
+            << "missing digits after exponent";
+        hadLexicalError = true;
+      }
+      while (curPtr < bufferEnd && (isdigit(*curPtr) || *curPtr == '_'))
+        curPtr++;
     }
   }
 
-  if (!isHex && !isBin && (peek() == 'e' || peek() == 'E')) {
-    isFloat = true;
-    curPtr++;
-    if (peek() == '+' || peek() == '-')
+  // 3. Suffix Processing
+  NumericSuffix suffix = NumericSuffix::None;
+  if (curPtr < bufferEnd &&
+      (isAsciiIdentStart(*curPtr) || isUTF8Start(*curPtr))) {
+    const char *suffixStart = curPtr;
+    while (curPtr < bufferEnd && (isalnum(*curPtr) || *curPtr == '_'))
       curPtr++;
 
-    if (!isdigit(peek()))
-      return errorAt(start);
+    llvm::StringRef suffixStr(suffixStart, curPtr - suffixStart);
+    suffix = llvm::StringSwitch<NumericSuffix>(suffixStr)
+                 .Case("i8", NumericSuffix::i8)
+                 .Case("u8", NumericSuffix::u8)
+                 .Case("i16", NumericSuffix::i16)
+                 .Case("u16", NumericSuffix::u16)
+                 .Case("i32", NumericSuffix::i32)
+                 .Case("u32", NumericSuffix::u32)
+                 .Case("i64", NumericSuffix::i64)
+                 .Case("u64", NumericSuffix::u64)
+                 .Case("isize", NumericSuffix::isize)
+                 .Case("usize", NumericSuffix::usize)
+                 .Case("f8", NumericSuffix::f8)
+                 .Case("f16", NumericSuffix::f16)
+                 .Case("f32", NumericSuffix::f32)
+                 .Case("f64", NumericSuffix::f64)
+                 .Default(NumericSuffix::None);
 
-    while (curPtr < bufferEnd &&
-           (isdigit(static_cast<unsigned char>(*curPtr)) || *curPtr == '_'))
-      curPtr++;
+    if (suffix == NumericSuffix::None && !suffixStr.empty()) {
+      Diags.report(SourceLocation::getFromPointer(suffixStart),
+                   DiagID::err_unexpected_char)
+          << "invalid numeric suffix '" << suffixStr << "'";
+      hadLexicalError = true;
+    }
   }
 
-  if (curPtr > start && *(curPtr - 1) == '_') {
+  // Handle trailing underscores (e.g., 123_)
+  if (curPtr > start && *(curPtr - 1) == '_' && suffix == NumericSuffix::None) {
+    Diags.report(getLoc(), DiagID::err_unexpected_char)
+        << "number cannot end with underscore";
+    hadLexicalError = true;
+  }
+
+  if (hadLexicalError)
     return errorAt(start);
-  }
 
   Token tok(isFloat ? TokenKind::FloatLiteral : TokenKind::IntegerLiteral,
             SourceLocation::getFromPointer(start), curPtr - start);
-
+  tok.suffix = suffix;
   if (isHex)
     tok.flags |= TF_IsHex;
   if (isBin)
     tok.flags |= TF_IsBin;
-
-  if (curPtr < bufferEnd &&
-      (isAsciiIdentStart(*curPtr) || isUTF8Start(*curPtr))) {
-    const char *suffixStart = curPtr;
-    while (curPtr < bufferEnd &&
-           (isalnum(static_cast<unsigned char>(*curPtr)) || *curPtr == '_'))
-      curPtr++;
-    llvm::StringRef suffixStr(suffixStart, curPtr - suffixStart);
-
-    tok.suffix = llvm::StringSwitch<NumericSuffix>(suffixStr)
-                     .Case("i8", NumericSuffix::i8)
-                     .Case("u8", NumericSuffix::u8)
-                     .Case("i16", NumericSuffix::i16)
-                     .Case("u16", NumericSuffix::u16)
-                     .Case("i32", NumericSuffix::i32)
-                     .Case("u32", NumericSuffix::u32)
-                     .Case("i64", NumericSuffix::i64)
-                     .Case("u64", NumericSuffix::u64)
-                     .Case("isize", NumericSuffix::isize)
-                     .Case("usize", NumericSuffix::usize)
-                     .Case("f8", NumericSuffix::f8)
-                     .Case("f16", NumericSuffix::f16)
-                     .Case("f32", NumericSuffix::f32)
-                     .Case("f64", NumericSuffix::f64)
-                     .Default(NumericSuffix::None);
-
-    if (tok.suffix == NumericSuffix::None && !suffixStr.empty()) {
-      return errorAt(start);
-    }
-
-    tok.length = curPtr - start;
-  }
-
   return tok;
 }
 
@@ -332,7 +364,10 @@ Token Lexer::scanOperator() {
       kind = TokenKind::Amp;
     break;
   case '|':
-    if (peek() == '|') {
+    if (peek() == '>') {
+      curPtr++;
+      kind = TokenKind::PipeGreater;
+    } else if (peek() == '|') {
       curPtr++;
       kind = TokenKind::PipePipe;
     } else if (peek() == '=') {
@@ -407,30 +442,27 @@ bool Lexer::skipComment() {
   }
 
   if (peek(1) == '*') {
+    const char *commentStart = curPtr;
     curPtr += 2;
     int depth = 1;
 
     while (curPtr < bufferEnd) {
-      if (curPtr + 1 >= bufferEnd) {
-        curPtr++;
-        return false;
-      }
-
-      char c = *curPtr;
-      char next = *(curPtr + 1);
-
-      if (c == '/' && next == '*') {
+      // Support nested comments: /* /* ... */ */
+      if (*curPtr == '/' && peek(1) == '*') {
         depth++;
         curPtr += 2;
-      } else if (c == '*' && next == '/') {
+      } else if (*curPtr == '*' && peek(1) == '/') {
         depth--;
         curPtr += 2;
         if (depth == 0)
-          return true;
+          return true; // Successfully skipped
       } else {
         curPtr++;
       }
     }
+    Diags.report(SourceLocation::getFromPointer(commentStart),
+                 DiagID::err_unexpected_char)
+        << "unterminated block comment";
     return false;
   }
 
@@ -441,6 +473,7 @@ Token Lexer::scanString() {
   const char *start = nullptr;
   bool isTemplate = inTemplateString();
   bool hasEscape = false;
+  bool hadError = false;
 
   if (isTemplate && fragmentStart == nullptr) {
     fragmentStart = curPtr;
@@ -462,10 +495,17 @@ Token Lexer::scanString() {
   while (curPtr < bufferEnd) {
     char c = *curPtr;
 
+    if (!isTemplate && (c == '\n' || c == '\r')) {
+      Diags.report(getLoc(), DiagID::err_unexpected_char)
+          << "unterminated string literal";
+      return errorAt(start);
+    }
+
     if (c == '\\') {
       hasEscape = true;
-      if (!consumeEscape())
-        return errorAt(isTemplate ? fragmentStart : start);
+      if (!consumeEscape()) {
+        hadError = true;
+      }
       continue;
     }
 
@@ -476,6 +516,10 @@ Token Lexer::scanString() {
       if (isTemplate) {
         state = LexerState::Normal;
         fragmentStart = nullptr;
+      }
+
+      if (hadError) {
+        return errorAt(tokenStart);
       }
 
       Token t(isTemplate ? TokenKind::TemplateString : TokenKind::StringLiteral,
@@ -506,8 +550,16 @@ Token Lexer::scanString() {
 
     curPtr++;
   }
-
-  return errorAt(isTemplate ? fragmentStart : start);
+  const char *errStart = isTemplate ? fragmentStart : start;
+  if (isTemplate) {
+    state = LexerState::Normal;
+    fragmentStart = nullptr;
+  }
+  Diags.report(SourceLocation::getFromPointer(errStart),
+               DiagID::err_unexpected_char)
+      << (isTemplate ? "unterminated template string"
+                     : "unterminated string literal");
+  return errorAt(errStart);
 }
 
 Token Lexer::scanChar() {
@@ -532,10 +584,14 @@ Token Lexer::scanChar() {
 
 void Lexer::skipWhitespace() {
   while (curPtr < bufferEnd) {
-    if (isspace(static_cast<unsigned char>(*curPtr)))
+    char c = *curPtr;
+    if (c == ' ' || c == '\t' || c == '\v' || c == '\f' || c == '\r') {
       curPtr++;
-    else
+    } else if (c == '\n') {
+      curPtr++; // Handle newlines
+    } else {
       break;
+    }
   }
 }
 
@@ -552,6 +608,7 @@ bool Lexer::advanceUTF8() {
 }
 
 bool Lexer::consumeEscape() {
+  const char *escapeStart = curPtr;
   curPtr++;
   if (curPtr >= bufferEnd)
     return false;
@@ -574,8 +631,11 @@ bool Lexer::consumeEscape() {
     if (curPtr + 2 > bufferEnd)
       return false;
     for (int i = 0; i < 2; ++i) {
-      if (!isHexDigit(curPtr[i]))
+      if (!isHexDigit(curPtr[i])) {
+        Diags.report(getLoc(), DiagID::err_unexpected_char)
+            << "invalid hex digit in escape";
         return false;
+      }
     }
     curPtr += 2;
     return true;
@@ -585,8 +645,11 @@ bool Lexer::consumeEscape() {
     if (curPtr + 4 > bufferEnd)
       return false;
     for (int i = 0; i < 4; ++i) {
-      if (!isHexDigit(curPtr[i]))
+      if (!isHexDigit(curPtr[i])) {
+        Diags.report(getLoc(), DiagID::err_unexpected_char)
+            << "invalid hex digit in escape";
         return false;
+      }
     }
     curPtr += 4;
     return true;
@@ -596,13 +659,19 @@ bool Lexer::consumeEscape() {
     if (curPtr + 8 > bufferEnd)
       return false;
     for (int i = 0; i < 8; ++i) {
-      if (!isHexDigit(curPtr[i]))
+      if (!isHexDigit(curPtr[i])) {
+        Diags.report(getLoc(), DiagID::err_unexpected_char)
+            << "invalid hex digit in escape";
         return false;
+      }
     }
     curPtr += 8;
     return true;
   }
   default:
+    Diags.report(SourceLocation::getFromPointer(escapeStart),
+                 DiagID::err_unexpected_char)
+        << "invalid escape sequence";
     return false;
   }
 }
@@ -638,6 +707,7 @@ Token Lexer::scanIdentifier() {
 
   TokenKind kind = llvm::StringSwitch<TokenKind>(spelling)
                        .Case("class", TokenKind::KwClass)
+                       .Case("operator", TokenKind::KwOperator)
                        .Case("thread", TokenKind::KwThread)
                        .Case("ref", TokenKind::KwRef)
                        .Case("weak", TokenKind::KwWeak)
@@ -645,9 +715,11 @@ Token Lexer::scanIdentifier() {
                        .Case("new", TokenKind::KwNew)
                        .Case("delete", TokenKind::KwDelete)
                        .Case("unsafe", TokenKind::KwUnsafe)
+                       .Case("unsigned", TokenKind::KwUnsigned)
                        .Case("constructor", TokenKind::KwConstructor)
                        .Case("destructor", TokenKind::KwDestructor)
                        .Case("this", TokenKind::KwThis)
+                       .Case("super", TokenKind::KwSuper)
                        .Case("null", TokenKind::KwNull)
                        .Case("if", TokenKind::KwIf)
                        .Case("else", TokenKind::KwElse)
@@ -669,24 +741,26 @@ Token Lexer::scanIdentifier() {
                        .Case("finally", TokenKind::KwFinally)
                        .Case("void", TokenKind::KwVoid)
                        .Case("int", TokenKind::KwInt)
-                        .Case("short", TokenKind::KwShort)
-                        .Case("long", TokenKind::KwLong)
-                        .Case("isize", TokenKind::KwISize)
-                        .Case("usize", TokenKind::KwUSize)
-                        .Case("float", TokenKind::KwFloat)
-                        .Case("double", TokenKind::KwDouble)
+                       .Case("short", TokenKind::KwShort)
+                       .Case("long", TokenKind::KwLong)
+                       .Case("isize", TokenKind::KwISize)
+                       .Case("usize", TokenKind::KwUSize)
+                       .Case("float", TokenKind::KwFloat)
+                       .Case("double", TokenKind::KwDouble)
                        .Case("bool", TokenKind::KwBool)
                        .Case("string", TokenKind::KwString)
                        .Case("char", TokenKind::KwChar)
                        .Case("half", TokenKind::KwHalf)
                        .Case("quarter", TokenKind::KwQuarter)
                        .Case("any", TokenKind::KwAny)
+                       .Case("as", TokenKind::KwAs)
                        .Case("true", TokenKind::KwTrue)
                        .Case("false", TokenKind::KwFalse)
                        .Case("public", TokenKind::KwPublic)
                        .Case("private", TokenKind::KwPrivate)
                        .Case("protected", TokenKind::KwProtected)
                        .Case("const", TokenKind::KwConst)
+                       .Case("cast", TokenKind::KwCast)
                        .Case("static", TokenKind::KwStatic)
                        .Case("async", TokenKind::KwAsync)
                        .Case("await", TokenKind::KwAwait)
@@ -704,9 +778,17 @@ Token Lexer::scanIdentifier() {
                        .Case("sizeof", TokenKind::KwSizeof)
                        .Case("interrupt", TokenKind::KwInterrupt)
                        .Case("naked", TokenKind::KwNaked)
+                       .Case("noreturn", TokenKind::KwNoreturn)
+                       .Case("noinline", TokenKind::KwNoinline)
                        .Case("lock", TokenKind::KwLock)
                        .Case("view", TokenKind::KwView)
                        .Case("mut", TokenKind::KwMut)
+                       .Case("extern", TokenKind::KwExtern)
+                       .Case("using", TokenKind::KwUsing)
+                       .Case("asm", TokenKind::KwAsm)
+                       .Case("section", TokenKind::KwSection)
+                       .Case("used", TokenKind::KwUsed)
+                       .Case("thread_local", TokenKind::KwThreadLocal)
                        .Default(TokenKind::Identifier);
 
   return Token(kind, SourceLocation::getFromPointer(start), curPtr - start);

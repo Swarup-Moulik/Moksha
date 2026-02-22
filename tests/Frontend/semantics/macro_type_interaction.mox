@@ -1,0 +1,6 @@
+macro pipeLog(val) {
+    val |> print();
+}
+
+// Expand macro into a pipe chain
+"Testing macro pipe" |> pipeLog();

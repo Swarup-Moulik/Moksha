@@ -1,0 +1,3 @@
+int x = 10;
+// Error: Cannot assign string to int
+x = "string";

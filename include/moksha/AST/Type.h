@@ -25,7 +25,9 @@ enum class TypeKind {
   Lock,
   View,
   Mut,
-  Null
+  Null,
+  Volatile,
+  Const
 };
 
 enum class Variance { Invariant, Covariant, Contravariant };
@@ -46,6 +48,7 @@ public:
 
   virtual bool isInteger() const { return false; }
   virtual bool isFloat() const { return false; }
+  virtual bool isNumeric() const { return isInteger() || isFloat(); }
   virtual bool isString() const { return false; }
   virtual bool isArray() const { return false; }
   virtual bool isBool() const { return false; }
@@ -112,7 +115,6 @@ public:
     return is<PrimitiveType>() &&
            static_cast<const PrimitiveType &>(other).scalar == scalar;
   }
-  std::string toString() const override { return "Primitive"; }
   [[nodiscard]] Scalar getScalar() const { return scalar; }
   static bool classof(const Type *T) {
     return T->getKind() == TypeKind::Primitive;
@@ -120,6 +122,7 @@ public:
 
   bool isInteger() const override;
   bool isFloat() const override;
+  std::string toString() const override;
   bool isString() const override { return scalar == Scalar::String; }
   bool isBool() const override { return scalar == Scalar::Bool; }
   bool isVoid() const override { return scalar == Scalar::Void; }
@@ -137,8 +140,8 @@ public:
   std::unique_ptr<Type> clone() const override {
     return std::make_unique<AnyType>(loc);
   }
-  bool isEquivalent(const Type &other) const override { return is<AnyType>(); }
-  std::string toString() const override { return "any"; }
+  bool isEquivalent(const Type &other) const override;
+  std::string toString() const override;
   static bool classof(const Type *T) { return T->getKind() == TypeKind::Any; }
 };
 
@@ -152,7 +155,11 @@ public:
   std::unique_ptr<Type> clone() const override {
     return std::make_unique<PointerType>(pointee->clone(), loc);
   }
-  bool isEquivalent(const Type &other) const override { return false; }
+  bool isEquivalent(const Type &other) const override {
+    if (auto p = dynamic_cast<const PointerType *>(&other))
+      return pointee->isEquivalent(*p->getPointee());
+    return false;
+  }
   std::string toString() const override { return "ptr"; }
   [[nodiscard]] const Type *getPointee() const { return pointee.get(); }
   static bool classof(const Type *T) {
@@ -173,7 +180,11 @@ public:
   std::unique_ptr<Type> clone() const override {
     return std::make_unique<ReferenceType>(inner->clone(), loc);
   }
-  bool isEquivalent(const Type &other) const override { return false; }
+  bool isEquivalent(const Type &other) const override {
+    if (auto r = dynamic_cast<const ReferenceType *>(&other))
+      return inner->isEquivalent(*r->getInner());
+    return false;
+  }
   std::string toString() const override { return "ref"; }
   [[nodiscard]] const Type *getInner() const { return inner.get(); }
   static bool classof(const Type *T) {
@@ -221,8 +232,8 @@ public:
   std::unique_ptr<Type> clone() const override {
     return std::make_unique<MapType>(keyType->clone(), valueType->clone(), loc);
   }
-  bool isEquivalent(const Type &other) const override { return false; }
-  std::string toString() const override { return "map"; }
+  bool isEquivalent(const Type &other) const override;
+  std::string toString() const override;
   [[nodiscard]] const Type *getKeyType() const { return keyType.get(); }
   [[nodiscard]] const Type *getValueType() const { return valueType.get(); }
   static bool classof(const Type *T) { return T->getKind() == TypeKind::Map; }
@@ -235,17 +246,20 @@ private:
 class FunctionType : public Type {
 public:
   static constexpr TypeKind classKind = TypeKind::Function;
-  FunctionType(TypePtr ret, std::vector<TypePtr> params, SourceLocation loc)
-      : Type(TypeKind::Function, loc), returnType(std::move(ret)),
-        paramTypes(std::move(params)) {}
+  FunctionType(TypePtr returnType, std::vector<TypePtr> paramTypes,
+               bool isVariadic, bool isInterrupt, SourceLocation loc)
+      : Type(TypeKind::Function, loc), returnType(std::move(returnType)),
+        paramTypes(std::move(paramTypes)), isVariadic(isVariadic),
+        isInterrupt(isInterrupt) {}
 
   void accept(ASTVisitor &v) const override;
   std::unique_ptr<Type> clone() const override {
-    std::vector<TypePtr> newParams;
-    for (auto &p : paramTypes)
-      newParams.push_back(p->clone());
+    std::vector<TypePtr> clonedParams;
+    for (const auto &p : paramTypes)
+      clonedParams.push_back(p->clone());
     return std::make_unique<FunctionType>(returnType->clone(),
-                                          std::move(newParams), loc);
+                                          std::move(clonedParams), isVariadic,
+                                          isInterrupt, loc);
   }
   bool isEquivalent(const Type &other) const override { return false; }
   std::string toString() const override { return "func"; }
@@ -256,10 +270,14 @@ public:
   static bool classof(const Type *T) {
     return T->getKind() == TypeKind::Function;
   }
+  bool isVariadicFunc() const { return isVariadic; }
+  bool isInterruptFunc() const { return isInterrupt; }
 
 private:
   TypePtr returnType;
   std::vector<TypePtr> paramTypes;
+  bool isVariadic;
+  bool isInterrupt;
 };
 
 class NamedType : public Type {
@@ -289,8 +307,8 @@ public:
     }
     return std::make_unique<NamedType>(name, std::move(newArgs), loc);
   }
-  bool isEquivalent(const Type &other) const override { return false; }
-  std::string toString() const override { return name; }
+  bool isEquivalent(const Type &other) const override;
+  std::string toString() const override;
   [[nodiscard]] const std::string &getName() const { return name; }
   [[nodiscard]] const std::vector<GenericArg> &getGenericArgs() const {
     return genericArgs;
@@ -312,7 +330,11 @@ public:
   std::unique_ptr<Type> clone() const override {
     return std::make_unique<NullableType>(innerType->clone(), loc);
   }
-  bool isEquivalent(const Type &other) const override { return false; }
+  bool isEquivalent(const Type &other) const override {
+    if (auto n = dynamic_cast<const NullableType *>(&other))
+      return innerType->isEquivalent(*n->getInner());
+    return false;
+  }
   std::string toString() const override { return "nullable"; }
   [[nodiscard]] const Type *getInner() const { return innerType.get(); }
   static bool classof(const Type *T) {
@@ -409,6 +431,64 @@ public:
 
 private:
   TypePtr inner;
+};
+
+class VolatileType : public Type {
+  TypePtr inner;
+
+public:
+  static constexpr TypeKind classKind = TypeKind::Volatile;
+  VolatileType(TypePtr inner, SourceLocation loc)
+      : Type(TypeKind::Volatile, loc), inner(std::move(inner)) {}
+  const Type *getInner() const { return inner.get(); }
+
+  // [FIX] Removed inline body
+  void accept(ASTVisitor &v) const override;
+
+  bool isEquivalent(const Type &other) const override {
+    if (auto v = dynamic_cast<const VolatileType *>(&other))
+      return inner->isEquivalent(*v->getInner());
+    return false;
+  }
+  std::string toString() const override {
+    return "volatile " + inner->toString();
+  }
+
+  // [FIX] Added missing clone
+  std::unique_ptr<Type> clone() const override {
+    return std::make_unique<VolatileType>(inner->clone(), loc);
+  }
+
+  // [FIX] Added missing LLVM classof
+  static bool classof(const Type *T) {
+    return T->getKind() == TypeKind::Volatile;
+  }
+};
+
+class ConstType : public Type {
+  TypePtr inner;
+
+public:
+  static constexpr TypeKind classKind = TypeKind::Const;
+  ConstType(TypePtr inner, SourceLocation loc)
+      : Type(TypeKind::Const, loc), inner(std::move(inner)) {}
+  const Type *getInner() const { return inner.get(); }
+
+  // [FIX] Removed inline body
+  void accept(ASTVisitor &v) const override;
+
+  bool isEquivalent(const Type &other) const override {
+    if (auto c = dynamic_cast<const ConstType *>(&other))
+      return inner->isEquivalent(*c->getInner());
+    return false;
+  }
+  std::string toString() const override { return "const " + inner->toString(); }
+  std::unique_ptr<Type> clone() const override {
+    return std::make_unique<ConstType>(inner->clone(), loc);
+  }
+
+  // [FIX] Added missing LLVM classof
+  static bool classof(const Type *T) { return T->getKind() == TypeKind::Const; }
 };
 
 } // namespace moksha

@@ -1,0 +1,11 @@
+// Verifies SysV vs Windows x64 shadowing logic (in backend) via string flags
+extern "stdcall" void win32_api(int a, int b);
+extern "fastcall" void x64_sysv_abi(int a, int b, int c, int d);
+
+// Large Struct Return (Testing ABI lowering hints)
+struct BigData { long[16] data; }
+extern BigData get_kernel_table();
+
+// Homogeneous Float Aggregates (Vector register passing)
+struct Vector4 { float x; float y; float z; float w; }
+extern void process_vector(Vector4 v);

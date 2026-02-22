@@ -1,0 +1,63 @@
+// ==========================================
+// 1. STANDARD INHERITANCE
+// ==========================================
+
+// Base class must match the child's type (ref vs value)
+ref class Entity {
+    public string id;
+
+    constructor(string id) {
+        this.id = id;
+    }
+}
+
+// 'ref' class inheriting from 'ref' class Entity
+ref class Player(Entity) {
+    public int health;
+
+    constructor(string name, int hp) {
+        super(name); // Call base constructor
+        this.health = hp;
+    }
+
+    void takeDamage(int amount) {
+        this.health -= amount;
+    }
+}
+
+// ==========================================
+// 2. GENERIC INHERITANCE
+// ==========================================
+
+// Base container class
+ref class BaseBox {
+    public int capacity;
+
+    constructor(int cap) {
+        this.capacity = cap;
+    }
+}
+
+// Generic class inheriting from a standard base class
+generic <T>
+ref class Box(BaseBox) {
+    public T item;
+
+    constructor(int cap, T item) {
+        super(cap); // Call BaseBox constructor
+        this.item = item;
+    }
+
+    T getItem() {
+        return this.item;
+    }
+}
+
+// ==========================================
+// ENTRY POINT
+// ==========================================
+Player p = new Player("Hero", 100);
+p.takeDamage(10);
+
+Box<string> magicBox = new Box<string>(5, "Excalibur");
+string weapon = magicBox.getItem();

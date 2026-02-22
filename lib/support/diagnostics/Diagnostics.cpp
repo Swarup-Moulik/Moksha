@@ -51,6 +51,7 @@ llvm::SourceMgr::DiagKind DiagnosticEngine::getDiagnosticKind(DiagID ID) {
   case DiagID::warn_unused_variable:
   case DiagID::warn_switch_not_exhaustive:
   case DiagID::warn_not_implemented:
+  case DiagID::warn_implicit_bool_conv:
     return llvm::SourceMgr::DK_Warning;
   default:
     return llvm::SourceMgr::DK_Error;
@@ -78,10 +79,14 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
     return "Variable already declared in this scope";
   case DiagID::err_function_redeclaration:
     return "Function already declared";
+  case DiagID::err_internal:
+    return "Internal compiler error";
 
   // Type Checking
   case DiagID::err_type_mismatch:
     return "Type mismatch";
+  case DiagID::err_const_violation:
+    return "Cannot assign to const variable";
   case DiagID::err_type_incompatible_assignment:
     return "Incompatible types in assignment";
   case DiagID::err_type_incompatible_return:
@@ -96,6 +101,28 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
     return "Invalid type cast";
   case DiagID::err_missing_return:
     return "Non-void function may end without returning a value";
+  case DiagID::err_invalid_access:
+    return "Invalid access to member";
+  case DiagID::warn_implicit_bool_conv:
+    return "Implicit conversion to boolean";
+  case DiagID::err_array_length:
+    return "Length mismatch";
+  case DiagID::err_ambiguous_inheritance:
+    return "Ambiguous inheritance";
+  case DiagID::err_ambiguous_reference:
+    return "Ambiguous reference";
+  case DiagID::err_null_assignment:
+    return "Cannot assign 'null' to non-nullable type";
+  case DiagID::err_infinite_size:
+    return "Recursive type has infinite size";
+  case DiagID::err_generic_constraint:
+    return "Generic constraint violation";
+  case DiagID::err_generic_arity:
+    return "Generic arity mismatch";
+  case DiagID::err_uninitialized_var:
+    return "Uninitialized variable";
+  case DiagID::err_unreachable_code:
+    return "Unreachable code";
 
   // MIR / Lowering Errors (Added)
   case DiagID::err_unexpanded_macro:

@@ -1,0 +1,16 @@
+// Mock functions for the pipeline test
+int processInt(int x) { return x; }
+any processAny(any x) { return x; }
+
+// 1. Scope depth stress (20 levels)
+{ { { { { { { { { { { { { { { { { { { {
+    int deepVar = 42;
+    print(deepVar);
+} } } } } } } } } } } } } } } } } } } }
+
+// 2. Expression depth stress
+// Tests if recursive descent parser blows the stack
+int x = 1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + 0)))))))));
+
+// 3. Chained Pipe depth stress
+x |> processInt() |> processAny() |> processAny() |> processAny() |> processAny() |> processAny();

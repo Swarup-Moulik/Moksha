@@ -1,0 +1,19 @@
+// Standard Function
+int add(int a, int b) {
+    return a + b
+}
+
+// Void function
+void log(string msg) {
+    print(msg)
+}
+
+// Variadic Function
+void printf(string fmt, ...) {
+    // intrinsic
+}
+
+// Lambda
+int addFunc = (int b, int c) => {
+    return b + c;
+}

@@ -1,0 +1,41 @@
+// --- 1. Register Preservation & Stack Discipline ---
+// 'interrupt' attribute triggers backend register-save logic
+interrupt void handle_keyboard_isr() {
+    // Verifies clobber list in inline assembly
+    // Ensures backend knows which registers are manually dirtied
+    asm("push %rax; push %rbx", "clobber: rax, rbx");
+
+    // Red-zone avoidance and stack alignment check (Manual validation)
+    asm("and $-16, %rsp"); // Align stack to 16-bytes for ABI compliance
+
+    asm("pop %rbx; pop %rax");
+    asm("iretq");
+}
+
+// --- 2. Nested Interrupt Handling ---
+interrupt void high_priority_isr() {
+    // Logic for top-half...
+}
+
+interrupt void low_priority_isr() {
+    asm("sti"); // Enable nested interrupts
+    high_priority_isr(); // Verifies recursive ISR calling
+    asm("cli");
+}
+
+// --- 3. ISR + Fence Interaction ---
+mut int device_buffer_ready = 0;
+
+interrupt void dma_handler() {
+    // Ensures memory barriers survive ISR context
+    atomic_thread_fence("acquire");
+    if (device_buffer_ready == 1) {
+        // Process buffer...
+    }
+}
+
+// --- 4. Inlining Prevention ---
+// Verifies that 'interrupt' functions are marked 'noinline'
+noinline interrupt void serial_isr() {
+    asm("in $0x3F8, %al");
+}
