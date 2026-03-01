@@ -3,7 +3,8 @@
 #include "moksha/HIR/HIRStmt.h"
 #include "moksha/HIR/HIRType.h"
 #include "moksha/HIR/HIRVisitor.h"
-#include <cassert> // [FIX] Required for invariants
+#include "llvm/Support/raw_ostream.h"
+#include <cassert>
 #include <iostream>
 
 namespace moksha {
@@ -13,12 +14,15 @@ HIRFunction::HIRFunction(std::string name, std::vector<std::string> typeParams,
                          std::vector<HIRParam> params,
                          const HIRType *returnType,
                          std::unique_ptr<HIRStmt> body, bool isAsync,
-                         bool isVariadic, SourceLocation loc)
+                         bool isVariadic, bool isInterrupt, bool isNaked,
+                         bool isNoReturn, std::string sectionName,
+                         SourceLocation loc)
     : name(std::move(name)), typeParams(std::move(typeParams)),
       params(std::move(params)), returnType(returnType), body(std::move(body)),
-      isAsync(isAsync), isVariadic(isVariadic), loc(loc) {
+      isAsync(isAsync), isVariadic(isVariadic), isInterrupt(isInterrupt),
+      isNaked(isNaked), isNoReturn(isNoReturn),
+      sectionName(std::move(sectionName)), loc(loc) {
 
-  // [FIX] Enforce canonical type invariants
   assert(returnType && "HIRFunction returnType must not be null");
 
 #ifndef NDEBUG
@@ -48,13 +52,13 @@ void HIRFunction::accept(ConstHIRVisitor &visitor) const {
 }
 
 // [FIX] Updated to take ostream reference
-static void printIndent(std::ostream &os, int indent) {
+static void printIndent(llvm::raw_ostream &os, int indent) {
   for (int i = 0; i < indent; ++i)
     os << "  ";
 }
 
 // [FIX] Updated signature to use ostream
-void HIRFunction::dump(std::ostream &os, int indent) const {
+void HIRFunction::dump(llvm::raw_ostream &os, int indent) const {
   printIndent(os, indent);
   os << "Func: " << name;
 
@@ -74,6 +78,14 @@ void HIRFunction::dump(std::ostream &os, int indent) const {
     os << " [variadic]";
   if (isExtern())
     os << " [extern]";
+  if (isInterrupt)
+    os << " [interrupt]";
+  if (isNaked)
+    os << " [naked]";
+  if (isNoReturn)
+    os << " [noreturn]";
+  if (!sectionName.empty())
+    os << " [section(\"" << sectionName << "\")]";
 
   os << "\n";
 
@@ -104,6 +116,20 @@ void HIRFunction::dump(std::ostream &os, int indent) const {
     printIndent(os, indent + 1);
     os << "Body:\n";
     body->dump(os, indent + 2);
+  }
+}
+
+// ============================================================================
+// [HIRClass Implementation]
+// ============================================================================
+
+void HIRClass::dump(llvm::raw_ostream &os, int indent) const {
+  printIndent(os, indent);
+  os << "Class: " << name << "\n";
+
+  for (const auto &method : methods) {
+    if (method)
+      method->dump(os, indent + 1);
   }
 }
 

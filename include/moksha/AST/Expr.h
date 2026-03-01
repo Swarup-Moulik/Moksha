@@ -45,12 +45,17 @@ public:
   virtual ~Expr() = default;
   SourceLocation getLoc() const { return loc; }
   ExprKind getKind() const { return kind; }
+
+  virtual const Type *getType() const { return type; }
+  void setType(const Type *newType) { type = newType; }
   virtual void accept(ASTVisitor &visitor) const = 0;
+  virtual std::unique_ptr<Expr> clone() const = 0;
 
 protected:
   Expr(ExprKind kind, SourceLocation loc) : kind(kind), loc(loc) {}
   ExprKind kind;
   SourceLocation loc;
+  const Type *type = nullptr;
 };
 
 using ExprPtr = std::unique_ptr<Expr>;
@@ -64,7 +69,7 @@ public:
   uint64_t getValue() const { return value; }
   void accept(ASTVisitor &v) const override;
   NumericSuffix getSuffix() const { return suffix; }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::IntegerLiteral;
   }
@@ -81,7 +86,7 @@ public:
   double getValue() const { return value; }
   void accept(ASTVisitor &v) const override;
   NumericSuffix getSuffix() const { return suffix; }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::FloatLiteral;
   }
@@ -98,7 +103,7 @@ public:
         isTemplate(isTemplate) {}
   const std::string &getValue() const { return value; }
   void accept(ASTVisitor &v) const override;
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::StringLiteral;
   }
@@ -114,7 +119,7 @@ public:
       : Expr(ExprKind::BoolLiteral, loc), value(val) {}
   bool getValue() const { return value; }
   void accept(ASTVisitor &v) const override;
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::BoolLiteral;
   }
@@ -127,7 +132,7 @@ class NullLiteral : public Expr {
 public:
   explicit NullLiteral(SourceLocation loc) : Expr(ExprKind::NullLiteral, loc) {}
   void accept(ASTVisitor &v) const override;
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::NullLiteral;
   }
@@ -139,7 +144,7 @@ public:
       : Expr(ExprKind::CharLiteral, loc), value(val) {}
   char getValue() const { return value; }
   void accept(ASTVisitor &v) const override;
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::CharLiteral;
   }
@@ -154,7 +159,7 @@ public:
       : Expr(ExprKind::ArrayLiteral, loc), elements(std::move(elements)) {}
   void accept(ASTVisitor &v) const override;
   const std::vector<ExprPtr> &getElements() const { return elements; }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::ArrayLiteral;
   }
@@ -173,7 +178,7 @@ public:
 
   void accept(ASTVisitor &v) const override;
   const std::vector<Entry> &getEntries() const { return entries; }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::MapLiteral;
   }
@@ -193,7 +198,7 @@ public:
   const Expr *getLHS() const { return lhs.get(); }
   const Expr *getRHS() const { return rhs.get(); }
   TokenKind getOp() const { return op; }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::BinaryExpr;
   }
@@ -213,7 +218,7 @@ public:
   const Expr *getOperand() const { return operand.get(); }
   TokenKind getOp() const { return op; }
   bool isPostfixOp() const { return isPostfix; }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::UnaryExpr;
   }
@@ -234,7 +239,7 @@ public:
   const Expr *getCondition() const { return condition.get(); }
   const Expr *getTrueBranch() const { return trueBranch.get(); }
   const Expr *getFalseBranch() const { return falseBranch.get(); }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::TernaryExpr;
   }
@@ -251,7 +256,7 @@ public:
   void accept(ASTVisitor &v) const override;
   const Type *getTargetType() const { return targetType.get(); }
   const Expr *getExpr() const { return expr.get(); }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::CastExpr;
   }
@@ -269,7 +274,7 @@ public:
       : Expr(ExprKind::IdentifierExpr, loc), name(std::move(name)) {}
   void accept(ASTVisitor &v) const override;
   const std::string &getName() const { return name; }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::IdentifierExpr;
   }
@@ -286,11 +291,10 @@ public:
   void accept(ASTVisitor &v) const override;
   const Expr *getCallee() const { return callee.get(); }
   const std::vector<ExprPtr> &getArgs() const { return args; }
-
-  void insertFirstArg(ExprPtr arg) {
+  std::unique_ptr<Expr> clone() const override;
+  void insertFirstArg(std::unique_ptr<Expr> arg) {
     args.insert(args.begin(), std::move(arg));
   }
-
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::CallExpr;
   }
@@ -310,7 +314,7 @@ public:
   const Expr *getObject() const { return object.get(); }
   const std::string &getName() const { return memberName; }
   bool isOptionalAccess() const { return isOptional; }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::MemberExpr;
   }
@@ -329,7 +333,7 @@ public:
   void accept(ASTVisitor &v) const override;
   const Expr *getArray() const { return array.get(); }
   const Expr *getIndex() const { return index.get(); }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::IndexExpr;
   }
@@ -349,6 +353,7 @@ public:
   LambdaParam &operator=(LambdaParam &&) = default;
   const Type *getType() const { return type.get(); }
   const std::string &getName() const { return name; }
+  LambdaParam clone() const { return LambdaParam(type->clone(), name); }
 
 private:
   TypePtr type;
@@ -361,14 +366,12 @@ public:
   ~LambdaExpr() override;
 
   LambdaExpr(std::vector<LambdaParam> params, std::unique_ptr<Stmt> body,
-             bool isExprBody, SourceLocation loc)
-      : Expr(ExprKind::LambdaExpr, loc), params(std::move(params)),
-        body(std::move(body)), isExprBody(isExprBody) {}
+             bool isExprBody, SourceLocation loc);
   void accept(ASTVisitor &v) const override;
   const std::vector<LambdaParam> &getParams() const { return params; }
   const Stmt *getBody() const { return body.get(); }
   bool isExpressionBody() const { return isExprBody; }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::LambdaExpr;
   }
@@ -385,9 +388,9 @@ public:
       : Expr(ExprKind::NewExpr, loc), type(std::move(type)),
         args(std::move(args)) {}
   void accept(ASTVisitor &v) const override;
-  const Type *getType() const { return type.get(); }
+  const Type *getType() const override { return type.get(); }
   const std::vector<ExprPtr> &getArgs() const { return args; }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::NewExpr;
   }
@@ -403,7 +406,7 @@ public:
       : Expr(ExprKind::TemplateStringExpr, loc), parts(std::move(parts)) {}
   void accept(ASTVisitor &v) const override;
   const std::vector<ExprPtr> &getParts() const { return parts; }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::TemplateStringExpr;
   }
@@ -420,7 +423,7 @@ public:
   void accept(ASTVisitor &v) const override;
   bool isWeakThread() const { return isWeak; }
   const LambdaExpr *getBody() const { return body.get(); }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::ThreadExpr;
   }
@@ -434,6 +437,7 @@ class ThisExpr : public Expr {
 public:
   explicit ThisExpr(SourceLocation loc) : Expr(ExprKind::ThisExpr, loc) {}
   void accept(ASTVisitor &v) const override;
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::ThisExpr;
   }
@@ -443,6 +447,7 @@ class SuperExpr : public Expr {
 public:
   explicit SuperExpr(SourceLocation loc) : Expr(ExprKind::SuperExpr, loc) {}
   void accept(ASTVisitor &v) const override;
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::SuperExpr;
   }
@@ -455,7 +460,7 @@ public:
 
   void accept(ASTVisitor &v) const override;
   const Expr *getExpr() const { return expr.get(); }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::AwaitExpr;
   }
@@ -470,7 +475,7 @@ public:
       : Expr(ExprKind::SizeOfExpr, loc), expression(std::move(expr)) {}
   void accept(ASTVisitor &v) const override;
   const Expr *getExpr() const { return expression.get(); }
-
+  std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::SizeOfExpr;
   }

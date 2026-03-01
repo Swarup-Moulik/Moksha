@@ -1,0 +1,5 @@
+void test_memory() {
+    // Assuming your frontend supports these types
+    shared int ref_count = 0   // Translates to Arc<int>
+    &int? borrowed = null       // Translates to &int
+}

@@ -50,10 +50,12 @@ const Type *ASTContext::createNullableType(const Type *inner) {
       std::make_unique<NullableType>(inner->clone(), inner->getLoc()));
 }
 
-const Type *ASTContext::createArrayType(const Type *element, uint64_t size) {
-  auto sizeExpr = std::make_unique<IntegerLiteral>(size, NumericSuffix::None,
-                                                   element->getLoc());
+const Type *ASTContext::createMutType(const Type *inner) {
+  return saveType(std::make_unique<MutType>(inner->clone(), inner->getLoc()));
+}
 
+const Type *ASTContext::createArrayType(const Type *element,
+                                        std::unique_ptr<Expr> sizeExpr) {
   return saveType(std::make_unique<ArrayType>(
       element->clone(), std::move(sizeExpr), element->getLoc()));
 }

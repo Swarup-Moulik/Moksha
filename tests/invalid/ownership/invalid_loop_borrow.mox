@@ -1,0 +1,10 @@
+void test_invalid_loop_lifetimes() {
+    mut int p = 10
+    *view int v = &p // Borrowed BEFORE the loop
+
+    while (p < 20) {
+        // ERROR EXPECTED: The outer view is still active across all loop iterations!
+        *mut int m = &p
+        *m = *m + 1
+    }
+}

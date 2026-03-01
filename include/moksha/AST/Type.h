@@ -112,8 +112,9 @@ public:
   }
 
   bool isEquivalent(const Type &other) const override {
-    return is<PrimitiveType>() &&
-           static_cast<const PrimitiveType &>(other).scalar == scalar;
+    if (!other.is<PrimitiveType>())
+      return false;
+    return static_cast<const PrimitiveType &>(other).scalar == scalar;
   }
   [[nodiscard]] Scalar getScalar() const { return scalar; }
   static bool classof(const Type *T) {
@@ -156,11 +157,12 @@ public:
     return std::make_unique<PointerType>(pointee->clone(), loc);
   }
   bool isEquivalent(const Type &other) const override {
-    if (auto p = dynamic_cast<const PointerType *>(&other))
-      return pointee->isEquivalent(*p->getPointee());
-    return false;
+    if (!other.is<PointerType>())
+      return false;
+    return pointee->isEquivalent(
+        *static_cast<const PointerType &>(other).getPointee());
   }
-  std::string toString() const override { return "ptr"; }
+  std::string toString() const override;
   [[nodiscard]] const Type *getPointee() const { return pointee.get(); }
   static bool classof(const Type *T) {
     return T->getKind() == TypeKind::Pointer;
@@ -181,11 +183,12 @@ public:
     return std::make_unique<ReferenceType>(inner->clone(), loc);
   }
   bool isEquivalent(const Type &other) const override {
-    if (auto r = dynamic_cast<const ReferenceType *>(&other))
-      return inner->isEquivalent(*r->getInner());
-    return false;
+    if (!other.is<ReferenceType>())
+      return false;
+    return inner->isEquivalent(
+        *static_cast<const ReferenceType &>(other).getInner());
   }
-  std::string toString() const override { return "ref"; }
+  std::string toString() const override;
   [[nodiscard]] const Type *getInner() const { return inner.get(); }
   static bool classof(const Type *T) {
     return T->getKind() == TypeKind::Reference;
@@ -261,7 +264,28 @@ public:
                                           std::move(clonedParams), isVariadic,
                                           isInterrupt, loc);
   }
-  bool isEquivalent(const Type &other) const override { return false; }
+  bool isEquivalent(const Type &other) const override {
+    if (!other.is<FunctionType>())
+      return false;
+    auto &f = static_cast<const FunctionType &>(other);
+
+    // Check flags
+    if (isVariadic != f.isVariadicFunc() || isInterrupt != f.isInterruptFunc())
+      return false;
+
+    // Check return type
+    if (!returnType->isEquivalent(*f.getReturnType()))
+      return false;
+
+    // Check parameters
+    if (paramTypes.size() != f.getParamTypes().size())
+      return false;
+    for (size_t i = 0; i < paramTypes.size(); ++i) {
+      if (!paramTypes[i]->isEquivalent(*f.getParamTypes()[i]))
+        return false;
+    }
+    return true;
+  }
   std::string toString() const override { return "func"; }
   [[nodiscard]] const Type *getReturnType() const { return returnType.get(); }
   [[nodiscard]] const std::vector<TypePtr> &getParamTypes() const {
@@ -331,11 +355,12 @@ public:
     return std::make_unique<NullableType>(innerType->clone(), loc);
   }
   bool isEquivalent(const Type &other) const override {
-    if (auto n = dynamic_cast<const NullableType *>(&other))
-      return innerType->isEquivalent(*n->getInner());
-    return false;
+    if (!other.is<NullableType>())
+      return false;
+    return innerType->isEquivalent(
+        *static_cast<const NullableType &>(other).getInner());
   }
-  std::string toString() const override { return "nullable"; }
+  std::string toString() const override;
   [[nodiscard]] const Type *getInner() const { return innerType.get(); }
   static bool classof(const Type *T) {
     return T->getKind() == TypeKind::Nullable;
@@ -446,9 +471,10 @@ public:
   void accept(ASTVisitor &v) const override;
 
   bool isEquivalent(const Type &other) const override {
-    if (auto v = dynamic_cast<const VolatileType *>(&other))
-      return inner->isEquivalent(*v->getInner());
-    return false;
+    if (!other.is<VolatileType>())
+      return false;
+    return inner->isEquivalent(
+        *static_cast<const VolatileType &>(other).getInner());
   }
   std::string toString() const override {
     return "volatile " + inner->toString();
@@ -478,9 +504,10 @@ public:
   void accept(ASTVisitor &v) const override;
 
   bool isEquivalent(const Type &other) const override {
-    if (auto c = dynamic_cast<const ConstType *>(&other))
-      return inner->isEquivalent(*c->getInner());
-    return false;
+    if (!other.is<ConstType>())
+      return false;
+    return inner->isEquivalent(
+        *static_cast<const ConstType &>(other).getInner());
   }
   std::string toString() const override { return "const " + inner->toString(); }
   std::unique_ptr<Type> clone() const override {

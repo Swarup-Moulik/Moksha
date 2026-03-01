@@ -1,0 +1,5 @@
+void test_mut_conflict() {
+    mut int x = 0
+    *mut int m1 = &x
+    *mut int m2 = &x // ERROR EXPECTED
+}

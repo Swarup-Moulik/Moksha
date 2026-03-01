@@ -1,6 +1,7 @@
 #pragma once
 
 #include "moksha/AST/Expr.h"
+#include "moksha/HIR/HIRStmt.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -37,7 +38,8 @@ enum class StmtKind {
   UnsafeBlockStmt,
   TryCatchStmt,
   ThrowStmt,
-  AsmStmt
+  AsmStmt,
+  LockStmt
 };
 
 enum class Visibility { Default, Public, Private, Protected };
@@ -66,6 +68,7 @@ public:
   [[nodiscard]] Visibility getVisibility() const { return visibility; }
 
   virtual void accept(ASTVisitor &v) const = 0;
+  virtual std::unique_ptr<Decl> clone() const = 0;
 
 protected:
   Decl(StmtKind kind, std::string name, Visibility visibility,
@@ -85,6 +88,7 @@ public:
   [[nodiscard]] SourceLocation getLoc() const { return loc; }
   [[nodiscard]] StmtKind getKind() const { return kind; }
   virtual void accept(ASTVisitor &v) const = 0;
+  virtual std::unique_ptr<Stmt> clone() const = 0;
 
 protected:
   Stmt(StmtKind kind, SourceLocation loc) : kind(kind), loc(loc) {}
@@ -111,6 +115,7 @@ public:
 
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const std::vector<DeclPtr> &getDecls() const { return decls; }
+  std::unique_ptr<Decl> clone() const override;
   static bool classof(const Decl *D) {
     return D->getKind() == StmtKind::ModuleDecl;
   }
@@ -141,17 +146,24 @@ public:
   [[nodiscard]] bool isConstVar() const { return isConst; }
   [[nodiscard]] bool isStaticVar() const { return isStatic; }
   [[nodiscard]] bool hasExplicitType() const { return true; }
-
+  std::unique_ptr<Decl> clone() const override;
   static bool classof(const Decl *D) {
     return D->getKind() == StmtKind::VariableDecl;
   }
-  bool isVolatile = false;
-  bool isExtern = false;
-  int alignment = 0;
-  std::string section = "";
-  bool isUsed = false;
-  int bitWidth = -1;
-  bool isThreadLocal = false;
+  bool isVolatileVar() const { return isVolatile; }
+  void setVolatile(bool v) { isVolatile = v; }
+  bool isExternVar() const { return isExtern; }
+  void setExtern(bool e) { isExtern = e; }
+  int getAlignment() const { return alignment; }
+  void setAlignment(int a) { alignment = a; }
+  const std::string &getSection() const { return section; }
+  void setSection(std::string s) { section = std::move(s); }
+  bool isUsedVar() const { return isUsed; }
+  void setUsed(bool u) { isUsed = u; }
+  int getBitWidth() const { return bitWidth; }
+  void setBitWidth(int bw) { bitWidth = bw; }
+  bool isThreadLocalVar() const { return isThreadLocal; }
+  void setThreadLocal(bool tl) { isThreadLocal = tl; }
 
 private:
   TypePtr type;
@@ -159,6 +171,13 @@ private:
   bool isConst;
   bool isStatic;
   bool isShared;
+  bool isVolatile = false;
+  bool isExtern = false;
+  int alignment = 0;
+  std::string section = "";
+  bool isUsed = false;
+  int bitWidth = -1;
+  bool isThreadLocal = false;
 };
 
 class FunctionDecl : public Decl {
@@ -167,6 +186,7 @@ public:
     std::string name;
     TypePtr type;
     SourceLocation loc;
+    Param clone() const { return Param{name, type->clone(), loc}; }
   };
 
   // Constructor matching Parser usage (ret, name, params, body, async, loc)
@@ -186,6 +206,7 @@ public:
   [[nodiscard]] bool isStaticFunc() const { return isStatic; }
   [[nodiscard]] bool isWeakFunc() const { return isWeak; }
   bool isVariadicFunc() const { return isVariadic; }
+  std::unique_ptr<Decl> clone() const override;
   static bool classof(const Decl *D) {
     return D->getKind() == StmtKind::FunctionDecl;
   }
@@ -193,14 +214,22 @@ public:
   void setBuiltin(bool builtin) { isBuiltin = builtin; }
   [[nodiscard]] IntrinsicKind getIntrinsicKind() const { return intrinsicKind; }
   void setIntrinsicKind(IntrinsicKind kind) { intrinsicKind = kind; }
-  bool isExtern = false;
-  std::string externLinkage = "";
-  bool isInterrupt = false;
-  bool isNaked = false;
-  bool isNoReturn = false;
-  bool isNoInline = false;
-  bool isUsed = false;
-  std::string section = "";
+  bool isExternFunc() const { return isExtern; }
+  void setExtern(bool e) { isExtern = e; }
+  const std::string &getExternLinkage() const { return externLinkage; }
+  void setExternLinkage(std::string l) { externLinkage = std::move(l); }
+  bool isInterruptFunc() const { return isInterrupt; }
+  void setInterrupt(bool i) { isInterrupt = i; }
+  bool isNakedFunc() const { return isNaked; }
+  void setNaked(bool n) { isNaked = n; }
+  bool isNoReturnFunc() const { return isNoReturn; }
+  void setNoReturn(bool nr) { isNoReturn = nr; }
+  bool isNoInlineFunc() const { return isNoInline; }
+  void setNoInline(bool ni) { isNoInline = ni; }
+  bool isUsedFunc() const { return isUsed; }
+  void setUsed(bool u) { isUsed = u; }
+  const std::string &getSection() const { return section; }
+  void setSection(std::string s) { section = std::move(s); }
 
 private:
   std::vector<Param> params;
@@ -212,6 +241,14 @@ private:
   bool isWeak;
   bool isBuiltin = false;
   IntrinsicKind intrinsicKind = IntrinsicKind::None;
+  bool isExtern = false;
+  std::string externLinkage = "";
+  bool isInterrupt = false;
+  bool isNaked = false;
+  bool isNoReturn = false;
+  bool isNoInline = false;
+  bool isUsed = false;
+  std::string section = "";
 };
 
 class ClassDecl : public Decl {
@@ -233,20 +270,26 @@ public:
     return parentNames;
   }
   [[nodiscard]] AggregateKind getAggregateKind() const { return aggKind; }
-
+  std::unique_ptr<Decl> clone() const override;
   static bool classof(const Decl *D) {
     return D->getKind() == StmtKind::ClassDecl;
   }
 
-  bool isPacked = false;
-  int alignment = 0;
-  std::string section = "";
+  bool isPackedClass() const { return isPacked; }
+  void setPacked(bool p) { isPacked = p; }
+  int getAlignment() const { return alignment; }
+  void setAlignment(int a) { alignment = a; }
+  const std::string &getSection() const { return section; }
+  void setSection(std::string s) { section = std::move(s); }
 
 private:
   std::vector<std::string> parentNames;
   std::vector<DeclPtr> members;
   bool isRef;
   AggregateKind aggKind;
+  bool isPacked = false;
+  int alignment = 0;
+  std::string section = "";
 };
 
 class GenericDecl : public Decl {
@@ -262,6 +305,7 @@ public:
     return typeParams;
   }
   [[nodiscard]] const Decl *getInnerDecl() const { return innerDecl.get(); }
+  std::unique_ptr<Decl> clone() const override;
   static bool classof(const Decl *D) {
     return D->getKind() == StmtKind::GenericDecl;
   }
@@ -285,6 +329,7 @@ public:
   [[nodiscard]] const std::vector<std::string> &getSymbols() const {
     return symbols;
   }
+  std::unique_ptr<Decl> clone() const override;
   static bool classof(const Decl *D) {
     return D->getKind() == StmtKind::ImportDecl;
   }
@@ -298,6 +343,7 @@ public:
   struct Case {
     std::string name;
     ExprPtr value;
+    Case clone() const { return Case{name, value ? value->clone() : nullptr}; }
   };
 
   // Constructor matching Parser usage (name, cases, loc)
@@ -312,6 +358,7 @@ public:
 
   void accept(ASTVisitor &v) const override;
   const std::vector<Case> &getCases() const { return cases; }
+  std::unique_ptr<Decl> clone() const override;
   static bool classof(const Decl *D) {
     return D->getKind() == StmtKind::EnumDecl;
   }
@@ -334,7 +381,7 @@ public:
   }
   [[nodiscard]] const std::vector<StmtPtr> &getBody() const { return body; }
   [[nodiscard]] bool isFunctionMacro() const { return isFunction; }
-
+  std::unique_ptr<Decl> clone() const override;
   static bool classof(const Decl *D) {
     return D->getKind() == StmtKind::MacroDecl;
   }
@@ -352,6 +399,7 @@ public:
         targetType(std::move(targetType)) {}
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Type *getTargetType() const { return targetType.get(); }
+  std::unique_ptr<Decl> clone() const override;
   static bool classof(const Decl *D) {
     return D->getKind() == StmtKind::UsingDecl;
   }
@@ -373,6 +421,7 @@ public:
   [[nodiscard]] const std::vector<StmtPtr> &getStatements() const {
     return statements;
   }
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::BlockStmt ||
            S->getKind() == StmtKind::UnsafeBlockStmt;
@@ -388,6 +437,7 @@ public:
       : Stmt(StmtKind::ExpressionStmt, loc), expression(std::move(expr)) {}
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Expr *getExpr() const { return expression.get(); }
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::ExpressionStmt;
   }
@@ -402,6 +452,7 @@ public:
       : Stmt(StmtKind::DeclStmt, loc), decl(std::move(decl)) {}
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Decl *getDecl() const { return decl.get(); }
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::DeclStmt;
   }
@@ -416,6 +467,7 @@ public:
       : Stmt(StmtKind::ReturnStmt, loc), returnValue(std::move(value)) {}
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Expr *getReturnValue() const { return returnValue.get(); }
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::ReturnStmt;
   }
@@ -428,6 +480,7 @@ class BreakStmt : public Stmt {
 public:
   explicit BreakStmt(SourceLocation loc) : Stmt(StmtKind::BreakStmt, loc) {}
   void accept(ASTVisitor &v) const override;
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::BreakStmt;
   }
@@ -438,6 +491,7 @@ public:
   explicit ContinueStmt(SourceLocation loc)
       : Stmt(StmtKind::ContinueStmt, loc) {}
   void accept(ASTVisitor &v) const override;
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::ContinueStmt;
   }
@@ -453,6 +507,7 @@ public:
   [[nodiscard]] const Expr *getCondition() const { return condition.get(); }
   [[nodiscard]] const Stmt *getThenStmt() const { return thenStmt.get(); }
   [[nodiscard]] const Stmt *getElseStmt() const { return elseStmt.get(); }
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::IfStmt;
   }
@@ -471,6 +526,7 @@ public:
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Expr *getCondition() const { return condition.get(); }
   [[nodiscard]] const Stmt *getBody() const { return body.get(); }
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::WhileStmt;
   }
@@ -488,6 +544,7 @@ public:
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Stmt *getBody() const { return body.get(); }
   [[nodiscard]] const Expr *getCondition() const { return condition.get(); }
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::DoWhileStmt;
   }
@@ -509,6 +566,7 @@ public:
   [[nodiscard]] const Expr *getCondition() const { return condition.get(); }
   [[nodiscard]] const Expr *getIncrement() const { return increment.get(); }
   [[nodiscard]] const Stmt *getBody() const { return body.get(); }
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::ForStmt;
   }
@@ -534,6 +592,7 @@ public:
   }
   [[nodiscard]] const Expr *getCollection() const { return collection.get(); }
   [[nodiscard]] const Stmt *getBody() const { return body.get(); }
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::ForInStmt;
   }
@@ -554,6 +613,7 @@ public:
   [[nodiscard]] const std::vector<ExprPtr> &getValues() const { return values; }
   [[nodiscard]] const BlockStmt *getBody() const { return body.get(); }
   [[nodiscard]] bool isDefaultCase() const { return isDefault; }
+  SwitchCase clone() const;
 
 private:
   std::vector<ExprPtr> values;
@@ -571,6 +631,7 @@ public:
   [[nodiscard]] const std::vector<SwitchCase> &getCases() const {
     return cases;
   }
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::SwitchStmt;
   }
@@ -588,6 +649,7 @@ public:
   [[nodiscard]] const Stmt *getDeferredStmt() const {
     return deferredStmt.get();
   }
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::DeferStmt;
   }
@@ -601,6 +663,7 @@ public:
   UnsafeBlockStmt(std::vector<StmtPtr> stmts, SourceLocation loc)
       : BlockStmt(StmtKind::UnsafeBlockStmt, std::move(stmts), loc) {}
   void accept(ASTVisitor &v) const override;
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::UnsafeBlockStmt;
   }
@@ -618,6 +681,7 @@ public:
   [[nodiscard]] const Decl *getCatchVar() const { return catchVar.get(); }
   [[nodiscard]] const Stmt *getCatchBody() const { return catchBody.get(); }
   [[nodiscard]] const Stmt *getFinallyBody() const { return finallyBody.get(); }
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::TryCatchStmt;
   }
@@ -635,6 +699,7 @@ public:
       : Stmt(StmtKind::ThrowStmt, loc), expression(std::move(expr)) {}
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Expr *getExpr() const { return expression.get(); }
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::ThrowStmt;
   }
@@ -660,7 +725,7 @@ public:
   [[nodiscard]] const std::string &getConstraints() const {
     return constraints;
   }
-
+  std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::AsmStmt;
   }
@@ -669,6 +734,28 @@ private:
   std::string assemblyStr;
   // 3. Add private member field
   std::string constraints;
+};
+
+class LockStmt : public Stmt {
+public:
+  LockStmt(ExprPtr target, StmtPtr body, SourceLocation loc)
+      : Stmt(StmtKind::LockStmt, loc), target(std::move(target)),
+        body(std::move(body)) {}
+
+  void accept(ASTVisitor &v) const override;
+
+  [[nodiscard]] const Expr *getTarget() const { return target.get(); }
+  [[nodiscard]] const Stmt *getBody() const { return body.get(); }
+
+  std::unique_ptr<Stmt> clone() const override;
+
+  static bool classof(const Stmt *S) {
+    return S->getKind() == StmtKind::LockStmt;
+  }
+
+private:
+  ExprPtr target;
+  StmtPtr body;
 };
 
 } // namespace moksha

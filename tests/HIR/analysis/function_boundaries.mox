@@ -1,0 +1,16 @@
+void read_data(*view int v) {
+    int x = *v
+}
+
+void test_function_calls() {
+    mut int p = 50
+
+    {
+        *mut int m = &p
+        read_data(m)
+    } // <-- 'm' goes out of scope here. The mutable borrow on 'p' is released!
+
+    // Passing a *view directly is now safe.
+    *view int v = &p
+    read_data(v)
+}

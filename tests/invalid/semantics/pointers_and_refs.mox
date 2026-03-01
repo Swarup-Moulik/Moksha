@@ -1,0 +1,25 @@
+void takes_normal_ptr(*int view_ptr) {
+    int read_val = *view_ptr;
+}
+
+void takes_mut_ptr(*mut int mut_ptr) {
+    *mut_ptr = 100;
+}
+
+void test_valid_pointers() {
+    int data = 42;
+
+    // 1. Mutable Pointer Usage (Scoped!)
+    {
+        *int p_mut = &data;
+        *p_mut = 50;
+
+        // Safe Capability Degradation works!
+        takes_normal_ptr(p_mut);
+        *int p_downgraded = p_mut;
+    } // <-- p_mut goes out of scope, releasing the mutable borrow on `data`!
+
+    // 2. Normal (View) Pointer Usage
+    *int p_normal = &data; // Now this is perfectly legal!
+    int x = *p_normal;
+}

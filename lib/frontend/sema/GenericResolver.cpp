@@ -7,69 +7,6 @@
 
 namespace moksha {
 
-static std::unique_ptr<Expr> cloneExpr(const Expr *expr) {
-  if (!expr)
-    return nullptr;
-
-  SourceLocation loc = expr->getLoc();
-
-  // --- Literals ---
-
-  if (const auto *i = llvm::dyn_cast<IntegerLiteral>(expr)) {
-    return std::make_unique<IntegerLiteral>(i->getValue(), NumericSuffix::None,
-                                            loc);
-  }
-
-  if (const auto *f = llvm::dyn_cast<FloatLiteral>(expr)) {
-    return std::make_unique<FloatLiteral>(f->getValue(), NumericSuffix::None,
-                                          loc);
-  }
-
-  if (const auto *b = llvm::dyn_cast<BoolLiteral>(expr)) {
-    return std::make_unique<BoolLiteral>(b->getValue(), loc);
-  }
-
-  if (const auto *c = llvm::dyn_cast<CharLiteral>(expr)) {
-    return std::make_unique<CharLiteral>(c->getValue(), loc);
-  }
-
-  if (const auto *s = llvm::dyn_cast<StringLiteral>(expr)) {
-    // Note: Assuming isTemplate=false as getter is unavailable; strictly safe
-    // for cloning simple strings
-    return std::make_unique<StringLiteral>(s->getValue(), false, loc);
-  }
-
-  if (llvm::isa<NullLiteral>(expr)) {
-    return std::make_unique<NullLiteral>(loc);
-  }
-
-  // --- Structural Expressions (Common in Array Sizes) ---
-
-  if (const auto *id = llvm::dyn_cast<IdentifierExpr>(expr)) {
-    return std::make_unique<IdentifierExpr>(id->getName(), loc);
-  }
-
-  if (const auto *bin = llvm::dyn_cast<BinaryExpr>(expr)) {
-    return std::make_unique<BinaryExpr>(cloneExpr(bin->getLHS()), bin->getOp(),
-                                        cloneExpr(bin->getRHS()), loc);
-  }
-
-  if (const auto *un = llvm::dyn_cast<UnaryExpr>(expr)) {
-    return std::make_unique<UnaryExpr>(un->getOp(), cloneExpr(un->getOperand()),
-                                       un->isPostfixOp(), loc);
-  }
-
-  if (const auto *sz = llvm::dyn_cast<SizeOfExpr>(expr)) {
-    return std::make_unique<SizeOfExpr>(cloneExpr(sz->getExpr()), loc);
-  }
-
-#ifndef NDEBUG
-  llvm::errs() << "Unsupported expression kind in cloneExpr\n";
-  llvm_unreachable("Unsupported expression in cloneExpr");
-#endif
-  return nullptr;
-}
-
 GenericResolver::GenericResolver(ASTContext &ctx) : context(ctx) {}
 
 std::optional<GenericError> GenericResolver::validateGenericArgs(
@@ -171,10 +108,10 @@ TypePtr GenericResolver::substituteType(
 
   case TypeKind::Array: {
     auto *arr = llvm::cast<ArrayType>(type);
-    TypePtr newElem = substituteType(arr->getElementType(), substitutions);
-    std::unique_ptr<Expr> newSize = cloneExpr(arr->getSizeExpr());
-    return std::make_unique<ArrayType>(std::move(newElem), std::move(newSize),
-                                       loc);
+    return std::make_unique<ArrayType>(
+        substituteType(arr->getElementType(), substitutions),
+        arr->getSizeExpr() ? arr->getSizeExpr()->clone() : nullptr,
+        arr->getLoc());
   }
 
   case TypeKind::Map: {

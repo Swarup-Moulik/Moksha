@@ -87,8 +87,6 @@ public:
   void dump() const;
 
 private:
-  void addPrimitiveTypes();
-
   std::vector<std::unique_ptr<Scope>> scopeStack;
   DiagnosticEngine &Diags;
 };

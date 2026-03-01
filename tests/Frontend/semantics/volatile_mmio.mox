@@ -1,12 +1,11 @@
-// Verifies 'volatile' on global declarations
-extern volatile unsigned int SERIAL_STATUS_REG;
+// Verifies 'volatile' and 'mut' on global declarations
+extern mut volatile unsigned int SERIAL_STATUS_REG;
 
 void write_serial(char c) {
-    // MMIO: Casting integer address to volatile pointer
-    // Verifies that 'volatile' can be part of the type system
-    volatile unsigned int* uart0 = cast<volatile unsigned int*>(0x101f1000_usize);
+    // MMIO: Casting integer address to a mutable volatile pointer
+    *mut volatile unsigned int uart0 = cast<*mut volatile unsigned int>(0x101f1000_usize);
 
-    // Verifies that TypeChecker allows writes to volatile pointers
+    // Verifies that TypeChecker allows writes to *mut volatile pointers
     unsafe {
         *uart0 = cast<unsigned int>(c);
     }

@@ -5,7 +5,7 @@ extern "C" naked void _start() {
 }
 
 // Verifies no-std style manual panic implementation
-extern "C" noreturn void panic(char* msg) {
+extern "C" noreturn void panic(*char msg) {
     // Manual serial output logic
     while(true) { asm("hlt"); }
 }

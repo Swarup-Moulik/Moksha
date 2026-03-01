@@ -12,15 +12,23 @@
 
 namespace moksha {
 
+namespace hir {
+class HIRModule;
+}
+
 class HIRGen : public ASTVisitor {
 public:
-  explicit HIRGen(ASTContext &ctx);
+  explicit HIRGen(ASTContext &ctx, hir::HIRModule &hirModule);
 
   std::vector<std::unique_ptr<hir::HIRFunction>> takeFunctions() {
     return std::move(functions);
   }
   std::vector<std::unique_ptr<hir::HIRStmt>> takeGlobals() {
     return std::move(globals);
+  }
+
+  std::vector<std::unique_ptr<hir::HIRClass>> takeClasses() {
+    return std::move(classes);
   }
 
   void lowerModule(const ModuleDecl *mod);
@@ -39,8 +47,9 @@ public:
   void visitFunctionDecl(const FunctionDecl *decl) override;
   void visitModuleDecl(const ModuleDecl *decl) override;
   void visitVariableDecl(const VariableDecl *decl) override;
-
-  void visitClassDecl(const ClassDecl *) override {}
+  void visitMacroDecl(const MacroDecl *) override {}
+  void visitUsingDecl(const UsingDecl *) override {}
+  void visitClassDecl(const ClassDecl *decl) override;
   void visitEnumDecl(const EnumDecl *) override {}
   void visitImportDecl(const ImportDecl *) override {}
   void visitGenericDecl(const GenericDecl *) override {}
@@ -62,6 +71,10 @@ public:
   void visitSwitchStmt(const SwitchStmt *stmt) override;
   void visitDeferStmt(const DeferStmt *stmt) override;
   void visitTryCatchStmt(const TryCatchStmt *stmt) override;
+  void visitAsmStmt(const AsmStmt *stmt) override;
+  void visitThrowStmt(const ThrowStmt *stmt) override;
+  void visitDeclStmt(const DeclStmt *stmt) override;
+  void visitLockStmt(const LockStmt *stmt) override;
 
   // ========================================================================
   // [Expressions]
@@ -70,6 +83,8 @@ public:
   void visitFloatLiteral(const FloatLiteral *expr) override;
   void visitBoolLiteral(const BoolLiteral *expr) override;
   void visitStringLiteral(const StringLiteral *expr) override;
+  void visitMapLiteral(const MapLiteral *) override;
+  void visitSizeOfExpr(const SizeOfExpr *) override {}
   void visitBinaryExpr(const BinaryExpr *expr) override;
   void visitCallExpr(const CallExpr *expr) override;
   void visitIdentifierExpr(const IdentifierExpr *expr) override;
@@ -87,16 +102,17 @@ public:
   void visitTernaryExpr(const TernaryExpr *expr) override;
   void visitThisExpr(const ThisExpr *expr) override;
   void visitSuperExpr(const SuperExpr *expr) override;
+  void visitAwaitExpr(const AwaitExpr *expr) override;
 
   // ========================================================================
   // [Types] (Stubbed)
   // ========================================================================
   void visitPrimitiveType(const PrimitiveType *) override {}
   void visitPointerType(const PointerType *) override {}
-  void visitArrayType(const ArrayType *) override {}
+  void visitArrayType(const ArrayType *type) override {}
   void visitFunctionType(const FunctionType *) override {}
   void visitNamedType(const NamedType *) override {}
-  void visitNullableType(const NullableType *) override {}
+  void visitNullableType(const NullableType *type) override {}
   void visitAnyType(const AnyType *) override {}
   void visitMapType(const MapType *) override {}
   void visitReferenceType(const ReferenceType *) override {}
@@ -104,13 +120,20 @@ public:
   void visitViewType(const ViewType *) override {}
   void visitMutType(const MutType *) override {}
   void visitEnumType(const EnumType *) override {}
+  void visitNullType(const NullType *) override {}
+  void visitVolatileType(const VolatileType *) override {}
+  void visitConstType(const ConstType *) override {}
 
 private:
   ASTContext &ctx;
+  hir::HIRModule &hirModule;
+
+  const hir::HIRType *lowerType(const Type *astType);
 
   std::vector<std::unique_ptr<hir::HIRStmt>> globals;
   std::unique_ptr<hir::HIRStmt> lastStmt;
   std::unique_ptr<hir::HIRExpr> lastExpr;
   std::vector<std::unique_ptr<hir::HIRFunction>> functions;
+  std::vector<std::unique_ptr<hir::HIRClass>> classes;
 };
 } // namespace moksha

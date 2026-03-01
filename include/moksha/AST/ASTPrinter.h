@@ -87,6 +87,7 @@ public:
   void visitTryCatchStmt(const TryCatchStmt *stmt) override;
   void visitThrowStmt(const ThrowStmt *stmt) override;
   void visitAsmStmt(const AsmStmt *stmt) override;
+  void visitLockStmt(const LockStmt *stmt) override;
 
   // Declarations
   void visitModuleDecl(const ModuleDecl *decl) override;

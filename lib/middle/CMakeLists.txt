@@ -5,6 +5,7 @@ add_library(MokshaMiddle
     hir/HIRModule.cpp
     hir/HIRStmt.cpp
     hir/HIRType.cpp
+    hir/LowerASTToHIR.cpp
     mir/MIRBlock.cpp
     mir/MIRBuilder.cpp
     mir/MIRFunction.cpp
@@ -13,6 +14,9 @@ add_library(MokshaMiddle
     analysis/MIRDominance.cpp
     passes/LowerHIRToMIR.cpp
     passes/VerifyNoMacros.cpp
+    ownership/ARCAnalyzer.cpp
+    ownership/ARCInserter.cpp
+    ownership/BorrowChecker.cpp
 )
 
 target_link_libraries(MokshaMiddle
@@ -20,4 +24,5 @@ target_link_libraries(MokshaMiddle
     mokshaSettings
     MokshaSupport
     LLVMCore
+    mokshaFrontend
 )

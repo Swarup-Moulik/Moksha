@@ -1,8 +1,0 @@
-// Assuming this is imported from another file
-module Secret {
-    private int hiddenVal = 42;
-    public int getVal() { return hiddenVal; }
-}
-
-// Type checker must throw a visibility/access error here
-print(Secret.hiddenVal);

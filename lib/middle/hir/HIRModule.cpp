@@ -2,6 +2,7 @@
 #include "moksha/HIR/HIRFunction.h"
 #include "moksha/HIR/HIRStmt.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/raw_ostream.h"
 #include <cassert>
 #include <iostream>
 
@@ -22,11 +23,108 @@ HIRFunction *HIRModule::getFunction(llvm::StringRef name) const {
 // [Type Interning Logic]
 // ============================================================================
 
+HIRType *HIRModule::getVoidType() {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Void));
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return existing;
+  auto *newType = new (typeAllocator) PrimitiveType(TypeKind::Void);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRType *HIRModule::getBoolType() {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Bool));
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return existing;
+  auto *newType = new (typeAllocator) PrimitiveType(TypeKind::Bool);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRStringType *HIRModule::getStringType() {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::String));
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return llvm::cast<HIRStringType>(existing);
+  auto *newType = new (typeAllocator) HIRStringType();
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+// Full Type Interning Implementations:
+HIRIntType *HIRModule::getIntType(uint16_t width, bool isSigned,
+                                  bool isPtrWidth) {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Int));
+  ID.AddInteger(width);
+  ID.AddBoolean(isSigned);
+  ID.AddBoolean(isPtrWidth);
+
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return llvm::cast<HIRIntType>(existing);
+
+  auto *newType = new (typeAllocator) HIRIntType(width, isSigned, isPtrWidth);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRFloatType *HIRModule::getFloatType(uint16_t width) {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Float));
+  ID.AddInteger(width);
+
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return llvm::cast<HIRFloatType>(existing);
+
+  auto *newType = new (typeAllocator) HIRFloatType(width);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+ArrayType *HIRModule::getArrayType(const HIRType *element, uint64_t size) {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Array));
+  ID.AddPointer(element);
+  ID.AddInteger(size);
+
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return llvm::cast<ArrayType>(existing);
+
+  auto *newType = new (typeAllocator) ArrayType(element, size);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+UnionType *HIRModule::getUnionType(std::string name,
+                                   std::vector<const HIRType *> fields) {
+  // Similar to StructType implementation
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Union));
+  ID.AddString(name);
+  for (const auto *f : fields)
+    ID.AddPointer(f);
+
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return llvm::cast<UnionType>(existing);
+
+  auto *newType =
+      new (typeAllocator) UnionType(std::move(name), std::move(fields));
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
 PrimitiveType *HIRModule::getPrimitiveType(TypeKind kind) {
   llvm::FoldingSetNodeID ID;
   ID.AddInteger(static_cast<int>(kind));
-  // Primitives are leaf nodes; Ownership is implicit/None, so not added to ID.
-
   void *insertPos = nullptr;
   if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
     return llvm::cast<PrimitiveType>(existing);
@@ -41,11 +139,6 @@ StructType *HIRModule::getStructType(std::string name,
   llvm::FoldingSetNodeID ID;
   ID.AddInteger(static_cast<int>(TypeKind::Struct));
   ID.AddString(name);
-
-  // [CRITICAL] Do NOT add Ownership::None here.
-  // This must match StructType::Profile in HIRType.cpp exactly.
-  // Since StructType is just a layout definition, ownership is not part of its
-  // identity.
 
   for (const auto *field : fields) {
     // Enforce non-null fields to prevent hard-to-debug crashes later
@@ -103,12 +196,36 @@ FunctionType *HIRModule::getFunctionType(const HIRType *ret,
   return newType;
 }
 
+HIRNullableType *HIRModule::getNullableType(const HIRType *inner) {
+  assert(inner && "Cannot create a NullableType of null");
+
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Nullable));
+  ID.AddPointer(inner);
+
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return static_cast<HIRNullableType *>(existing);
+
+  auto *newType = new (typeAllocator) HIRNullableType(inner);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
 // ============================================================================
 // [Debugging]
 // ============================================================================
 
-void HIRModule::dump(std::ostream &os) const {
+void HIRModule::dump(llvm::raw_ostream &os) const {
   os << "Module: " << name << "\n";
+
+  if (!classes.empty()) {
+    os << "  Classes:\n";
+    for (const auto &c : classes) {
+      if (c)
+        c->dump(os, 2);
+    }
+  }
 
   if (!globals.empty()) {
     os << "  Globals:\n"; // Indented for hierarchy
@@ -154,4 +271,28 @@ llvm::ArrayRef<HIRFunction *> HIRModule::getFunctions() const {
 
 void HIRModule::addFunction(std::unique_ptr<HIRFunction> func) {
   functions.push_back(std::move(func));
+}
+
+// ============================================================================
+// [Class Management]
+// ============================================================================
+
+void HIRModule::addClass(std::unique_ptr<HIRClass> cls) {
+  classes.push_back(std::move(cls));
+}
+
+llvm::ArrayRef<HIRClass *> HIRModule::getClasses() const {
+  classCache.clear();
+  for (const auto &c : classes) {
+    classCache.push_back(c.get());
+  }
+  return classCache;
+}
+
+HIRClass *HIRModule::getClass(llvm::StringRef name) const {
+  for (const auto &c : classes) {
+    if (c->getName() == name)
+      return c.get();
+  }
+  return nullptr;
 }

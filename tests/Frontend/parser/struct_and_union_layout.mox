@@ -1,0 +1,48 @@
+// --- 1. Standard Structs (C-Style Naming) ---
+struct StandardHeader {
+    int version;       // 4 bytes
+    unsigned int id;   // 4 bytes
+}
+
+// --- 2. Requested Packed Metadata ---
+// Ensures no padding between fields for hardware compatibility
+packed struct metadata {
+    unsigned int sensor_id; // 4 bytes
+    int timestamp;          // 4 bytes
+    unsigned char active;   // 1 byte
+}
+
+// --- 3. Unions (Memory Overlay) ---
+// All fields share the same memory location
+union ValueOverlay {
+    int int_val;
+    float float_val;
+}
+
+void test_physical_layout() {
+    // 1. Initializing Standard Structs
+    mut StandardHeader header;
+    header.version = 1;
+    header.id = 100;
+
+    // 2. Accessing Packed Metadata members
+    mut metadata meta;
+    meta.sensor_id = 42;
+    meta.active = 1_u8;
+
+    // 3. Union Field Overlay Logic
+    mut ValueOverlay data;
+    data.int_val = 0x3F800000; // Bit pattern for 1.0f
+    float check = data.float_val;
+
+    // 4. Nested Structural Access
+    struct DevicePacket {
+        StandardHeader h;
+        metadata m;
+        ValueOverlay v;
+    }
+
+    mut DevicePacket pkt;
+    pkt.h.version = 2;
+    pkt.m.sensor_id = 99;
+}

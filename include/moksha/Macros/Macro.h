@@ -185,6 +185,7 @@ public:
   void visitUnsafeBlockStmt(const UnsafeBlockStmt *) override {}
   void visitThrowStmt(const ThrowStmt *) override {}
   void visitAsmStmt(const AsmStmt *) override {}
+  void visitLockStmt(const LockStmt *stmt) override;
 };
 
 } // namespace moksha

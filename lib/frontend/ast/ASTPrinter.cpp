@@ -193,12 +193,17 @@ void ASTPrinter::visitPointerType(const PointerType *type) {
 }
 
 void ASTPrinter::visitArrayType(const ArrayType *type) {
-  print(type->getElementType());
-  OS << "[";
-  if (auto size = type->getSizeExpr()) {
-    size->accept(*this);
+  // If the element is nullable, it's an "Array of Nullables" (T[]?)
+  if (auto nullElem = llvm::dyn_cast<NullableType>(type->getElementType())) {
+    nullElem->getInner()->accept(*this);
+    OS << "[]?";
+  } else {
+    type->getElementType()->accept(*this);
+    OS << "[";
+    if (type->getSizeExpr())
+      type->getSizeExpr()->accept(*this);
+    OS << "]";
   }
-  OS << "]";
 }
 
 void ASTPrinter::visitNamedType(const NamedType *type) {
@@ -242,8 +247,14 @@ void ASTPrinter::visitReferenceType(const ReferenceType *type) {
 }
 
 void ASTPrinter::visitNullableType(const NullableType *type) {
-  print(type->getInner());
-  OS << "?";
+  // If the inner type is an array, it's a "Nullable Array" (T?[])
+  if (auto arrInner = llvm::dyn_cast<ArrayType>(type->getInner())) {
+    arrInner->getElementType()->accept(*this);
+    OS << "?[]";
+  } else {
+    type->getInner()->accept(*this);
+    OS << "?";
+  }
 }
 
 void ASTPrinter::visitAnyType(const AnyType *) { OS << "any"; }
@@ -585,7 +596,6 @@ void ASTPrinter::visitModuleDecl(const ModuleDecl *decl) {
   OS << "module " << decl->getName() << " {\n";
   indentLevel++;
   for (const auto &d : decl->getDecls()) {
-    printIndent();
     d->accept(*this);
     OS << "\n";
   }
@@ -595,21 +605,25 @@ void ASTPrinter::visitModuleDecl(const ModuleDecl *decl) {
 
 void ASTPrinter::visitFunctionDecl(const FunctionDecl *decl) {
   printIndent();
-  if (decl->isExtern) {
+  if (decl->isExternFunc()) {
     OS << "extern ";
     // Assuming you store the linkage string like "C" or "stdcall"
-    if (!decl->externLinkage.empty()) {
-      OS << "\"" << decl->externLinkage << "\" ";
+    if (!decl->getExternLinkage().empty()) {
+      OS << "\"" << decl->getExternLinkage() << "\" ";
     }
   }
-  if (decl->isInterrupt)
+  if (decl->isInterruptFunc())
     OS << "interrupt ";
-  if (decl->isNaked)
+  if (decl->isNakedFunc())
     OS << "naked ";
-  if (decl->isUsed)
+  if (decl->isNoReturnFunc())
+    OS << "noreturn ";
+  if (decl->isNoInlineFunc())
+    OS << "noinline ";
+  if (decl->isUsedFunc())
     OS << "used ";
-  if (!decl->section.empty()) {
-    OS << "section(\"" << decl->section << "\") ";
+  if (!decl->getSection().empty()) {
+    OS << "section(\"" << decl->getSection() << "\") ";
   }
   printVisibility(decl->getVisibility());
   if (decl->isStaticFunc())
@@ -660,17 +674,17 @@ void ASTPrinter::visitFunctionDecl(const FunctionDecl *decl) {
 
 void ASTPrinter::visitVariableDecl(const VariableDecl *decl) {
   printIndent();
-  if (decl->isExtern)
+  if (decl->isExternVar())
     OS << "extern ";
-  if (decl->isThreadLocal)
+  if (decl->isThreadLocalVar())
     OS << "thread_local ";
-  if (decl->isUsed)
+  if (decl->isUsedVar())
     OS << "used ";
-  if (!decl->section.empty()) {
-    OS << "section(\"" << decl->section << "\") ";
+  if (!decl->getSection().empty()) {
+    OS << "section(\"" << decl->getSection() << "\") ";
   }
-  if (decl->alignment > 0) {
-    OS << "align(" << decl->alignment << ") ";
+  if (decl->getAlignment() > 0) {
+    OS << "align(" << decl->getAlignment() << ") ";
   }
   printVisibility(decl->getVisibility());
   if (decl->isStaticVar())
@@ -679,8 +693,8 @@ void ASTPrinter::visitVariableDecl(const VariableDecl *decl) {
     OS << "shared ";
   print(decl->getType());
   OS << " " << decl->getName();
-  if (decl->bitWidth != -1) {
-    OS << " : " << decl->bitWidth;
+  if (decl->getBitWidth() != -1) {
+    OS << " : " << decl->getBitWidth();
   }
   if (decl->getInitializer()) {
     OS << " = ";
@@ -690,16 +704,13 @@ void ASTPrinter::visitVariableDecl(const VariableDecl *decl) {
 
 void ASTPrinter::visitClassDecl(const ClassDecl *decl) {
   printIndent();
-  if (decl->isPacked)
+  if (decl->isPackedClass())
     OS << "packed ";
-  if (!decl->section.empty()) {
-    OS << "section(\"" << decl->section << "\") ";
+  if (!decl->getSection().empty()) {
+    OS << "section(\"" << decl->getSection() << "\") ";
   }
-  if (decl->alignment > 0) {
-    OS << "align(" << decl->alignment << ") ";
-  }
-  if (decl->isPacked) {
-    OS << "packed ";
+  if (decl->getAlignment() > 0) {
+    OS << "align(" << decl->getAlignment() << ") ";
   }
   if (decl->isReferenceType())
     OS << "ref ";
@@ -738,7 +749,7 @@ void ASTPrinter::visitClassDecl(const ClassDecl *decl) {
   indentLevel--;
 
   printIndent();
-  OS << "}\n";
+  OS << "}";
 }
 
 void ASTPrinter::visitGenericDecl(const GenericDecl *decl) {
@@ -826,13 +837,30 @@ void ASTPrinter::visitUsingDecl(const UsingDecl *decl) {
 }
 
 void ASTPrinter::visitAsmStmt(const AsmStmt *stmt) {
-  OS << "asm(\"" << stmt->getAssemblyStr() << "\");";
+  OS << "asm(\"" << stmt->getAssemblyStr() << "\"";
+  if (!stmt->getConstraints().empty()) {
+    OS << ", \"" << stmt->getConstraints() << "\"";
+  }
+  OS << ");";
 }
 
 void ASTPrinter::visitSizeOfExpr(const SizeOfExpr *expr) {
   OS << "sizeof(";
   expr->getExpr()->accept(*this);
   OS << ")";
+}
+
+void ASTPrinter::visitLockStmt(const LockStmt *stmt) {
+  printIndent();
+  OS << "lock ";
+  if (stmt->getTarget()) {
+    OS << "(";
+    stmt->getTarget()->accept(*this);
+    OS << ") ";
+  }
+  if (stmt->getBody()) {
+    stmt->getBody()->accept(*this);
+  }
 }
 
 } // namespace moksha

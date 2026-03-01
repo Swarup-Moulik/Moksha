@@ -1,4 +1,4 @@
-void test_atomics(unsigned int* ptr) {
+void test_atomics(*mut unsigned int ptr) {
     // Verifies built-in function resolution and type compatibility
     atomic_store(ptr, 100_u32);
     unsigned int val = atomic_load(ptr);
@@ -7,7 +7,6 @@ void test_atomics(unsigned int* ptr) {
     unsigned int old = atomic_add(ptr, 10_u32);
 
     // Testing Compare-and-Swap (CAS)
-    // Verifies 3-argument call parsing
     unsigned int current = atomic_cas(ptr, 100_u32, 200_u32);
 
     // Memory Fences (Lowered to LLVM fences in backend)

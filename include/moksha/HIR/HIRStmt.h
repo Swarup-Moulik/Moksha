@@ -2,9 +2,8 @@
 
 #include "moksha/HIR/HIRType.h"
 #include "moksha/Support/SourceLocation.h"
-
+#include "llvm/Support/raw_ostream.h"
 #include <cassert>
-#include <iosfwd>
 #include <memory>
 #include <string>
 #include <vector>
@@ -45,7 +44,9 @@ public:
     Continue,
     Defer,
     TryCatch,
+    Throw,
     VarDecl,
+    AsmStmt,
     Unknown
   };
 
@@ -62,14 +63,14 @@ public:
   [[nodiscard]] SourceLocation getLoc() const { return loc; }
 
   void dump(int indent = 0) const;
-  virtual void dump(std::ostream &os, int indent = 0) const = 0;
+  virtual void dump(llvm::raw_ostream &os, int indent = 0) const = 0;
 
   virtual void accept(HIRVisitor &v) = 0;
   virtual void accept(ConstHIRVisitor &v) const = 0;
 
 protected:
-  void printIndent(std::ostream &os, int indent) const;
-  void printLabel(std::ostream &os, int indent, const char *label) const;
+  void printIndent(llvm::raw_ostream &os, int indent) const;
+  void printLabel(llvm::raw_ostream &os, int indent, const char *label) const;
 
   Kind kind;
   SourceLocation loc;
@@ -87,15 +88,13 @@ public:
 
   [[nodiscard]] const std::vector<HIRStmtPtr> &getStatements() const;
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) { return S->getKind() == Kind::Block; }
 
 protected:
-  // [FIX] Protected constructor for subclasses (like UnsafeBlockStmt) to set
-  // the Kind
   BlockStmt(Kind k, std::vector<HIRStmtPtr> stmts, SourceLocation loc);
-
   std::vector<HIRStmtPtr> statements;
 };
 
@@ -104,9 +103,12 @@ public:
   UnsafeBlockStmt(std::vector<HIRStmtPtr> stmts, SourceLocation loc);
   ~UnsafeBlockStmt() override; // Defined in .cpp
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) {
+    return S->getKind() == Kind::UnsafeBlock;
+  }
 };
 
 class LockStmt : public HIRStmt {
@@ -118,9 +120,10 @@ public:
   [[nodiscard]] const HIRExpr *getMutex() const { return mutex.get(); }
   [[nodiscard]] const HIRStmt *getBody() const { return body.get(); }
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) { return S->getKind() == Kind::Lock; }
 
 private:
   std::unique_ptr<HIRExpr> mutex;
@@ -138,9 +141,12 @@ public:
 
   [[nodiscard]] const HIRExpr *getExpr() const;
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) {
+    return S->getKind() == Kind::ExprStmt;
+  }
 
 private:
   std::unique_ptr<HIRExpr> expr;
@@ -153,9 +159,10 @@ public:
 
   [[nodiscard]] const HIRExpr *getReturnValue() const;
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) { return S->getKind() == Kind::Return; }
 
 private:
   std::unique_ptr<HIRExpr> returnValue;
@@ -175,9 +182,10 @@ public:
   [[nodiscard]] const HIRStmt *getThenBranch() const;
   [[nodiscard]] const HIRStmt *getElseBranch() const;
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) { return S->getKind() == Kind::If; }
 
 private:
   std::unique_ptr<HIRExpr> condition;
@@ -193,9 +201,10 @@ public:
   [[nodiscard]] const HIRExpr *getCondition() const;
   [[nodiscard]] const HIRStmt *getBody() const;
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) { return S->getKind() == Kind::While; }
 
 private:
   std::unique_ptr<HIRExpr> condition;
@@ -211,9 +220,12 @@ public:
   [[nodiscard]] const HIRStmt *getBody() const;
   [[nodiscard]] const HIRExpr *getCondition() const;
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) {
+    return S->getKind() == Kind::DoWhile;
+  }
 
 private:
   HIRStmtPtr body;
@@ -231,9 +243,10 @@ public:
   [[nodiscard]] const HIRExpr *getIncrement() const { return inc.get(); }
   [[nodiscard]] const HIRStmt *getBody() const { return body.get(); }
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) { return S->getKind() == Kind::For; }
 
 private:
   HIRStmtPtr init;
@@ -246,8 +259,6 @@ class SwitchCase {
 public:
   SwitchCase(std::vector<std::unique_ptr<HIRExpr>> v,
              std::unique_ptr<BlockStmt> b, bool d);
-  // Destructor must be in .cpp because BlockStmt is incomplete here if forward
-  // declared, though BlockStmt IS defined above, HIRExpr is NOT.
   ~SwitchCase();
 
   SwitchCase(SwitchCase &&) = default;
@@ -276,9 +287,10 @@ public:
   [[nodiscard]] const HIRExpr *getCondition() const;
   [[nodiscard]] const std::vector<SwitchCase> &getCases() const;
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) { return S->getKind() == Kind::Switch; }
 
 private:
   std::unique_ptr<HIRExpr> condition;
@@ -294,9 +306,10 @@ public:
   BreakStmt(SourceLocation loc);
   ~BreakStmt() override; // Defined in .cpp
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) { return S->getKind() == Kind::Break; }
 };
 
 class ContinueStmt : public HIRStmt {
@@ -304,9 +317,12 @@ public:
   ContinueStmt(SourceLocation loc);
   ~ContinueStmt() override; // Defined in .cpp
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) {
+    return S->getKind() == Kind::Continue;
+  }
 };
 
 class DeferStmt : public HIRStmt {
@@ -315,9 +331,10 @@ public:
   ~DeferStmt() override; // Defined in .cpp
 
   [[nodiscard]] const HIRStmt *getDeferredStmt() const;
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) { return S->getKind() == Kind::Defer; }
 
 private:
   HIRStmtPtr deferredStmt;
@@ -338,9 +355,12 @@ public:
   [[nodiscard]] bool hasCatch() const;
   [[nodiscard]] bool hasFinally() const;
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) {
+    return S->getKind() == Kind::TryCatch;
+  }
 
 private:
   HIRStmtPtr tryBody;
@@ -349,27 +369,52 @@ private:
   HIRStmtPtr finallyBody;
 };
 
+class HIRThrowStmt : public HIRStmt {
+public:
+  HIRThrowStmt(std::unique_ptr<HIRExpr> expr, SourceLocation loc);
+
+  [[nodiscard]] const HIRExpr *getExpr() const { return expression.get(); }
+
+  void accept(HIRVisitor &v) override;
+  void accept(ConstHIRVisitor &v) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
+  static bool classof(const HIRStmt *S) { return S->getKind() == Kind::Throw; }
+
+private:
+  std::unique_ptr<HIRExpr> expression;
+};
+
 class HIRVarDeclStmt : public HIRStmt {
 public:
-  HIRVarDeclStmt(std::string name, std::shared_ptr<const HIRType> type,
+  HIRVarDeclStmt(std::string name, const HIRType *type,
                  std::unique_ptr<HIRExpr> init, bool isMutable,
+                 bool isThreadLocal, bool isVolatile, int alignment,
                  SourceLocation loc);
-  ~HIRVarDeclStmt() override; // Defined in .cpp
+  ~HIRVarDeclStmt() override;
 
   [[nodiscard]] const std::string &getName() const { return name; }
   [[nodiscard]] const HIRType *getType() const { return type.get(); }
   [[nodiscard]] const HIRExpr *getInit() const { return init.get(); }
   [[nodiscard]] bool isMutableVar() const { return isMutable; }
+  bool isThreadLocalVar() const { return isThreadLocal; }
+  bool isVolatileVar() const { return isVolatile; }
+  int getAlignment() const { return alignment; }
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) {
+    return S->getKind() == Kind::VarDecl;
+  }
 
 private:
   std::string name;
   std::shared_ptr<const HIRType> type;
   std::unique_ptr<HIRExpr> init;
   bool isMutable;
+  bool isThreadLocal;
+  bool isVolatile;
+  int alignment;
 };
 
 class ForInStmt : public HIRStmt {
@@ -390,15 +435,38 @@ public:
   }
   [[nodiscard]] const HIRStmt *getBody() const { return body.get(); }
 
-  void dump(std::ostream &os, int indent = 0) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+  static bool classof(const HIRStmt *S) { return S->getKind() == Kind::ForIn; }
 
 private:
   std::unique_ptr<HIRVarDeclStmt> var;
   std::unique_ptr<HIRVarDeclStmt> indexVar;
   std::unique_ptr<HIRExpr> collection;
   HIRStmtPtr body;
+};
+
+class HIRAsmStmt : public HIRStmt {
+public:
+  HIRAsmStmt(std::string assemblyStr, std::string constraints,
+             SourceLocation loc)
+      : HIRStmt(Kind::AsmStmt, loc), assemblyStr(std::move(assemblyStr)),
+        constraints(std::move(constraints)) {}
+
+  const std::string &getAssemblyStr() const { return assemblyStr; }
+  const std::string &getConstraints() const { return constraints; }
+
+  void accept(HIRVisitor &v) override;
+  void accept(ConstHIRVisitor &v) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
+  static bool classof(const HIRStmt *S) {
+    return S->getKind() == Kind::AsmStmt;
+  }
+
+private:
+  std::string assemblyStr;
+  std::string constraints;
 };
 
 } // namespace hir

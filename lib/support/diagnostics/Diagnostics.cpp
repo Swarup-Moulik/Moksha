@@ -107,6 +107,8 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
     return "Implicit conversion to boolean";
   case DiagID::err_array_length:
     return "Length mismatch";
+  case DiagID::err_spread_fixed_array:
+    return "Cannot use spread operator (...) on fixed-size arrays";
   case DiagID::err_ambiguous_inheritance:
     return "Ambiguous inheritance";
   case DiagID::err_ambiguous_reference:
@@ -131,6 +133,12 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
     return "Invalid or unsupported type found";
   case DiagID::err_not_implemented:
     return "Feature not yet implemented";
+
+  // Borrow Checker Errors
+  case DiagID::err_borrow_violation:
+    return "Borrow checker violation";
+  case DiagID::err_mutation_while_borrowed:
+    return "Cannot mutate variable while it is actively borrowed";
 
   // Warnings
   case DiagID::warn_switch_not_exhaustive:

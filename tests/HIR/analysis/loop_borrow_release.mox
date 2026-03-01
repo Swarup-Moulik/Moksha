@@ -1,0 +1,14 @@
+void test_loop_lifetimes() {
+    mut int p = 10
+
+    while (p < 20) {
+        // Safe: 'm' dies at the end of the block, so the next iteration
+        // can safely take a new *mut borrow.
+        *mut int m = &p
+        *m = *m + 1
+    }
+
+    // Safe: The loop is completely over, the block is popped.
+    *mut int m2 = &p
+    *m2 = 30
+}

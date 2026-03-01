@@ -1,25 +1,24 @@
 void test_pointers() {
-    int val = 42;
+    mut int val = 42;
 
     // 1. Address-Of Operator (&)
-    // Verifies that taking the address of an 'int' yields an 'int*'
-    int* ptr = &val;
+    // Yields a mutable pointer because the storage is mutable
+    *mut int ptr = &val;
 
     // 2. Dereference Operator (*)
-    // Verifies that we can write to and read from the pointer
+    // Safe to write because we hold the *mut capability
     unsafe {
         *ptr = 100;
         int read_val = *ptr;
     }
 
-    // 3. Pointer Arithmetic (Pointer + Integer)
-    // Verifies that adding/subtracting an offset yields the same pointer type
+    // 3. Pointer Arithmetic
+    // Math on a *mut pointer yields another *mut pointer
     unsafe {
-        int* next_ptr = ptr + 1;
-        int* prev_ptr = next_ptr - 1;
+        *mut int next_ptr = ptr + 1;
+        *mut int prev_ptr = next_ptr - 1;
 
-        // 4. Pointer Difference (Pointer - Pointer)
-        // Verifies that subtracting two pointers yields an 'isize'
+        // 4. Pointer Difference
         isize diff = next_ptr - ptr;
     }
 }

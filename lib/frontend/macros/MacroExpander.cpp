@@ -71,6 +71,10 @@ public:
       return std::make_unique<NamedType>(nt->getName(), std::move(newArgs),
                                          loc);
     }
+    if (auto *c = dyn_cast<ConstType>(t))
+      return std::make_unique<ConstType>(cloneType(c->getInner()), loc);
+    if (auto *v = dyn_cast<VolatileType>(t))
+      return std::make_unique<VolatileType>(cloneType(v->getInner()), loc);
     return std::make_unique<AnyType>(loc);
   }
 
@@ -327,6 +331,18 @@ void MacroExpander::visitTryCatchStmt(const TryCatchStmt *stmt) {
     stmt->getCatchBody()->accept(*this);
   if (stmt->getFinallyBody())
     stmt->getFinallyBody()->accept(*this);
+}
+
+void MacroExpander::visitLockStmt(const LockStmt *stmt) {
+  // 1. Expand any macros inside the lock target (e.g. lock (my_macro()))
+  if (stmt->getTarget()) {
+    stmt->getTarget()->accept(*this);
+  }
+
+  // 2. Expand any macros inside the lock block
+  if (stmt->getBody()) {
+    stmt->getBody()->accept(*this);
+  }
 }
 
 void MacroExpander::visitClassDecl(const ClassDecl *decl) {

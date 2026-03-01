@@ -1,0 +1,10 @@
+void test_invalid_cfg(bool cond) {
+    mut int p = 10
+    *view int v = &p  // 'v' is alive for the entire function
+
+    if (cond) {
+        *mut int m1 = &p // ERROR EXPECTED
+    } else {
+        *mut int m2 = &p // ERROR EXPECTED
+    }
+}

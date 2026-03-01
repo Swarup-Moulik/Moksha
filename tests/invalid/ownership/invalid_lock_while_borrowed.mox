@@ -1,0 +1,9 @@
+void test_explicit_mut_in_lock() {
+    lock int data = 0
+    *lock int p = &data
+
+    lock (p) {
+        // The block holds the exclusive capability. Taking *mut is illegal.
+        *mut int explicit_mut = p // ERROR EXPECTED
+    }
+}

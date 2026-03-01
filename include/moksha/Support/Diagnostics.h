@@ -35,6 +35,7 @@ enum class DiagID {
   err_invalid_access,
   err_unreachable_code,
   err_array_length,
+  err_spread_fixed_array,
   err_ambiguous_inheritance,
   err_ambiguous_reference,
   err_null_assignment,
@@ -47,6 +48,10 @@ enum class DiagID {
   err_unexpanded_macro,
   err_invalid_type,
   err_not_implemented,
+
+  // Borrow Checker Errors
+  err_borrow_violation,
+  err_mutation_while_borrowed,
 
   // Warnings
   warn_switch_not_exhaustive,

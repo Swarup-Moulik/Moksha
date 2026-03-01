@@ -43,12 +43,14 @@ private:
   const ClassDecl
       *currentClassDecl; // Added: Tracks current class for 'this'/'super'
   bool hasError;
-  int loopDepth;        // Track if we are inside a loop
-  bool inStaticContext; // Added: Tracks static context for 'this' checks
+  int loopDepth; // Track if we are inside a loop
+  bool inStaticContext = false;
   bool inInterruptContext = false;
+  bool inConstructorContext = false;
   std::vector<TypePtr> parkedTypes; // Safely stores inferred generic types
   std::map<std::string, std::vector<std::string>> ambiguousImports;
   bool detectInfiniteSize(const Type *t, std::set<std::string> &visited);
+  std::set<std::string> activeLocks;
 
   // --- Helpers ---
   bool isCompatible(const Type *expected, const Type *actual);
@@ -104,6 +106,7 @@ private:
   void visitBreakStmt(const BreakStmt *stmt) override;
   void visitContinueStmt(const ContinueStmt *stmt) override;
   void visitAsmStmt(const AsmStmt *stmt) override;
+  void visitLockStmt(const LockStmt *stmt) override;
 
   // Top-Level Declarations
   void visitModuleDecl(const ModuleDecl *decl) override;

@@ -1,0 +1,27 @@
+// --- Helper Functions ---
+// Requires the caller to hold the lock
+void requires_lock(*mut int locked_data) {
+    *locked_data = 999
+}
+
+*mut int escape_borrow() {
+    mut int local_var = 10
+    // ERROR EXPECTED: Cannot return a borrow to a local variable (Dangling Pointer)
+    return &local_var
+}
+
+void test_interprocedural() {
+    lock int thread_safe = 50
+    *lock int p = &thread_safe
+
+    // ERROR EXPECTED: Cannot pass a *lock pointer to a function expecting *mut
+    // without being inside a lock block (Lock Bypass Rule 4 via Argument).
+    requires_lock(p)
+
+    lock (p) {
+        // OK: Lock is held, elevation to *mut is allowed for the function call
+        requires_lock(p)
+    }
+
+    escape_borrow()
+}

@@ -1,0 +1,10 @@
+void test_invalid_shadowing() {
+    mut int p = 42
+    *view int v = &p
+
+    {
+        // Shadowing the identifier 'v', but attempting an illegal *mut borrow on 'p'.
+        // The outer 'v' is still holding an active *view borrow on 'p'!
+        *mut int v = &p // ERROR EXPECTED
+    }
+}

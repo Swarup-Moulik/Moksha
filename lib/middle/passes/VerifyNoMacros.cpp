@@ -67,7 +67,7 @@ private:
     }
   }
 
-  void visitFunction(hir::HIRFunction &func) {
+  void visitFunction(hir::HIRFunction &func) override {
     if (auto *body = func.getBody()) {
       dispatch(body);
     }
@@ -183,6 +183,8 @@ private:
   // Leaves
   void visitBreakStmt(hir::BreakStmt &) override {}
   void visitContinueStmt(hir::ContinueStmt &) override {}
+  void visitAsmStmt(hir::HIRAsmStmt &) override {}
+  void visitThrowStmt(hir::HIRThrowStmt &) override {}
 
   // --- Expression Traversal ---
 
@@ -262,6 +264,29 @@ private:
     }
   }
 
+  void visitMapLiteral(hir::HIRMapLiteral &expr) override {
+    for (auto &pair : expr.getEntries()) {
+      if (hasMacro)
+        return;
+      dispatch(pair.first.get());
+      dispatch(pair.second.get());
+    }
+  }
+
+  void visitTemplateStringExpr(hir::HIRTemplateStringExpr &expr) override {
+    for (auto &part : expr.getParts()) {
+      if (hasMacro)
+        return;
+      dispatch(part.get());
+    }
+  }
+
+  void visitSpreadExpr(hir::HIRSpreadExpr &expr) override {
+    if (hasMacro)
+      return;
+    dispatch(expr.getIterable());
+  }
+
   // Literals are safe
   void visitIntegerLiteral(hir::HIRIntegerLiteral &) override {}
   void visitFloatLiteral(hir::HIRFloatLiteral &) override {}
@@ -270,6 +295,11 @@ private:
   void visitNullLiteral(hir::HIRNullLiteral &) override {}
   void visitIdentifierExpr(hir::HIRIdentifierExpr &) override {}
   void visitThisExpr(hir::HIRThisExpr &) override {}
+  void visitSizeOfExpr(hir::HIRSizeOfExpr &) override {}
+  void visitAwaitExpr(hir::HIRAwaitExpr &) override {}
+  void visitSuperExpr(hir::HIRSuperExpr &) override {}
+  void visitDerefExpr(hir::HIRDerefExpr &) override {}
+  void visitAddressOfExpr(hir::HIRAddressOfExpr &) override {}
 };
 
 } // namespace

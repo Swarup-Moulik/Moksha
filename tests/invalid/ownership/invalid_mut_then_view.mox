@@ -1,0 +1,8 @@
+void test_mut_view_conflict() {
+    mut int x = 0
+    *mut int m = &x
+
+    {
+        *view int v = &x // ERROR EXPECTED
+    }
+}

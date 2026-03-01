@@ -1,34 +1,26 @@
 // --- 1. Full Ordering Matrix & RMW Ops ---
-void test_ordering_matrix(int* ptr, int val) {
-    // Acquire/Release RMW (Mapped to BuiltinRegistry's atomic_add)
+void test_ordering_matrix(*mut int ptr, int val) {
     int a = atomic_add(ptr, val);
-
-    // Relaxed vs Acquire mismatch (Visibility check)
     int b = atomic_load(ptr);
     int c = atomic_load(ptr);
-
-    // Global ordering interaction
     atomic_store(ptr, val);
     int d = atomic_load(ptr);
 }
 
 // --- 2. Strong CAS & Failure Ordering ---
-void test_cas_semantics(int* ptr, int expected, int desired) {
-    // Verifies CAS parsing (Returns T instead of bool)
+void test_cas_semantics(*mut int ptr, int expected, int desired) {
     int success = atomic_cas(ptr, expected, desired);
-
-    // Acquire semantics on failure
     int res = atomic_cas(ptr, expected, desired);
 }
 
 // --- 3. Fence + Load/Store Interaction ---
-void test_fence_interaction(int* data, int* flag) {
+void test_fence_interaction(*mut int data, *mut int flag) {
     *data = 42;
-    atomic_thread_fence("release"); // StoreStore + LoadStore barrier
+    atomic_thread_fence("release");
     atomic_store(flag, 1);
 
     if (atomic_load(flag) == 1) {
-        atomic_thread_fence("acquire"); // LoadLoad + LoadStore barrier
+        atomic_thread_fence("acquire");
         int val = *data;
     }
 }
@@ -36,13 +28,12 @@ void test_fence_interaction(int* data, int* flag) {
 // --- 4. Size & Alignment Validation ---
 struct AtomicData {
     align(8) long val;
-    // Verifies alignment attribute parsing
 }
 
 void test_alignment() {
-    AtomicData d;
-    d.val = 0_i64; // [FIX] Initialize the variable before taking its reference!
+    mut AtomicData d; // FIX: Struct must be mutable to mutate its fields
+    d.val = 0_i64;
 
-    // Verifies that atomic ops are permitted on properly aligned types
+    // Safe because d is mut
     atomic_store(&d.val, 100_i64);
 }

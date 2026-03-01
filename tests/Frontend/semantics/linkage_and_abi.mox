@@ -1,9 +1,7 @@
 // External C-linkage (Standard for OS syscalls)
-// Verifies 'extern "C"' style parsing
-extern "C" void kernel_panic(char* msg);
+extern "C" void kernel_panic(*char msg);
 
 // Weak symbols (Allowing user-overrides for drivers)
-// Verifies 'weak' keyword parsing
 weak void default_irq_handler() {
     print("Unhandled IRQ");
 }

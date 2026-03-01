@@ -118,10 +118,14 @@ ArrayType::~ArrayType() = default;
 void ArrayType::accept(ASTVisitor &v) const { v.visitArrayType(this); }
 
 std::unique_ptr<Type> ArrayType::clone() const {
-  return std::make_unique<ArrayType>(elementType->clone(), nullptr, loc);
+  std::unique_ptr<Expr> clonedSize = nullptr;
+  if (sizeExpr) {
+    // Now safely clones ANY expression (BinaryExpr, SizeOfExpr, etc.)
+    clonedSize = sizeExpr->clone();
+  }
+  return std::make_unique<ArrayType>(elementType->clone(),
+                                     std::move(clonedSize), loc);
 }
-
-// In lib/frontend/ast/Type.cpp
 
 bool ArrayType::isEquivalent(const Type &other) const {
   if (const auto *otherArr = llvm::dyn_cast<ArrayType>(&other)) {
@@ -278,5 +282,13 @@ std::string MutType::toString() const { return "mut " + inner->toString(); }
 void VolatileType::accept(ASTVisitor &v) const { v.visitVolatileType(this); }
 
 void ConstType::accept(ASTVisitor &v) const { v.visitConstType(this); }
+
+std::string PointerType::toString() const { return "*" + pointee->toString(); }
+
+std::string ReferenceType::toString() const { return "&" + inner->toString(); }
+
+std::string NullableType::toString() const {
+  return innerType->toString() + "?";
+}
 
 } // namespace moksha

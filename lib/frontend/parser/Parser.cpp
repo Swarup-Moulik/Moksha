@@ -27,7 +27,7 @@ void Parser::advance() {
   }
 }
 
-// [NEW] Helper for better error messages
+// Helper for better error messages
 static std::string tokenKindToString(TokenKind kind) {
   switch (kind) {
   case TokenKind::Eof:
@@ -306,7 +306,21 @@ static std::string tokenKindToString(TokenKind kind) {
   }
 }
 
-// [NEW HELPER] Safely parse { a, b } without hanging
+static bool hasNewlineBeforeToken(const Token &tok) {
+  if (tok.getSpelling().empty())
+    return false;
+
+  // Safely scan backwards through whitespace in the source buffer
+  const char *ptr = tok.getSpelling().data() - 1;
+  while (*ptr == ' ' || *ptr == '\t' || *ptr == '\r' || *ptr == '\n') {
+    if (*ptr == '\n' || *ptr == '\r')
+      return true;
+    ptr--;
+  }
+  return false;
+}
+
+// Safely parse { a, b } without hanging
 void Parser::parseImportSymbolList(std::vector<std::string> &symbols) {
   while (curTok.isNot(TokenKind::RBrace) && curTok.isNot(TokenKind::Eof)) {
 
@@ -391,6 +405,7 @@ void Parser::synchronize() {
     case TokenKind::KwFor:
     case TokenKind::KwReturn:
     case TokenKind::KwImport:
+    case TokenKind::RBrace:
       return;
     default:
       advance();
@@ -413,7 +428,11 @@ bool Parser::isStartOfDeclaration() {
           TokenKind::KwNoreturn, TokenKind::KwNoinline, TokenKind::KwVolatile,
           TokenKind::KwLock, TokenKind::KwView, TokenKind::KwMut,
           TokenKind::KwUsed, TokenKind::KwThreadLocal)) {
-    if (curTok.isAny(TokenKind::KwLock, TokenKind::KwView, TokenKind::KwMut) &&
+    if (curTok.is(TokenKind::KwLock) &&
+        (nextTok.is(TokenKind::LBrace) || nextTok.is(TokenKind::LParen))) {
+      return false;
+    }
+    if (curTok.isAny(TokenKind::KwView, TokenKind::KwMut) &&
         nextTok.is(TokenKind::LBrace)) {
       return false;
     }
@@ -425,7 +444,8 @@ bool Parser::isStartOfDeclaration() {
                    TokenKind::KwString, TokenKind::KwVoid, TokenKind::KwAny,
                    TokenKind::KwChar, TokenKind::KwISize, TokenKind::KwUSize,
                    TokenKind::KwShort, TokenKind::KwLong, TokenKind::KwDouble,
-                   TokenKind::KwHalf, TokenKind::KwQuarter)) {
+                   TokenKind::KwHalf, TokenKind::KwQuarter,
+                   TokenKind::KwUnsigned)) {
     if (nextTok.is(TokenKind::LParen)) {
       return false;
     }
@@ -449,6 +469,22 @@ bool Parser::isStartOfDeclaration() {
     // "Type? Name" -> Declaration
     if (nextTok.is(TokenKind::Question))
       return true;
+  }
+
+  // 4. Prefix Pointers & References for Declarations (e.g., *mut int p = &x,
+  // &mut int r = x)
+  if (curTok.isAny(TokenKind::Star, TokenKind::Power, TokenKind::Amp)) {
+    if (nextTok.isAny(TokenKind::KwMut, TokenKind::KwConst, TokenKind::KwLock,
+                      TokenKind::KwView, TokenKind::KwInt, TokenKind::KwFloat,
+                      TokenKind::KwDouble, TokenKind::KwBool,
+                      TokenKind::KwString, TokenKind::KwChar,
+                      TokenKind::KwShort, TokenKind::KwLong, TokenKind::KwISize,
+                      TokenKind::KwUSize, TokenKind::KwHalf) ||
+        nextTok.isAny(TokenKind::KwQuarter, TokenKind::KwVoid, TokenKind::KwAny,
+                      TokenKind::KwUnsigned, TokenKind::KwVolatile,
+                      TokenKind::Star, TokenKind::Power, TokenKind::Amp)) {
+      return true;
+    }
   }
 
   return false;
@@ -541,8 +577,6 @@ DeclPtr Parser::parseTopLevelDecl() {
       vis = Visibility::Protected;
     else if (consumeIf(TokenKind::KwStatic))
       isStatic = true;
-    else if (consumeIf(TokenKind::KwConst))
-      isConst = true;
     else if (consumeIf(TokenKind::KwAsync))
       isAsync = true;
     else if (consumeIf(TokenKind::KwShared))
@@ -567,8 +601,6 @@ DeclPtr Parser::parseTopLevelDecl() {
       isNoInline = true;
     else if (consumeIf(TokenKind::KwPacked))
       isPacked = true;
-    else if (consumeIf(TokenKind::KwVolatile))
-      isVolatile = true;
     else if (consumeIf(TokenKind::KwAlign)) {
       expect(TokenKind::LParen);
       if (curTok.is(TokenKind::IntegerLiteral)) {
@@ -619,9 +651,9 @@ DeclPtr Parser::parseTopLevelDecl() {
                    TokenKind::KwUnion)) {
     auto decl = parseClassDecl();
     if (auto cls = dynamic_cast<ClassDecl *>(decl.get())) {
-      cls->isPacked = isPacked;
-      cls->alignment = alignment;
-      cls->section = sectionName;
+      cls->setPacked(isPacked);
+      cls->setAlignment(alignment);
+      cls->setSection(sectionName);
     }
     return decl;
   }
@@ -635,10 +667,9 @@ DeclPtr Parser::parseTopLevelDecl() {
     }
     return nullptr;
   }
-  if (isConst)
-    type = std::make_unique<ConstType>(std::move(type), type->getLoc());
-  if (isVolatile)
-    type = std::make_unique<VolatileType>(std::move(type), type->getLoc());
+
+  bool isConstVar = type->is<ConstType>();
+  bool isVolatileVar = type->is<VolatileType>();
 
   std::string name = curTok.getSpelling().str();
   expect(TokenKind::Identifier);
@@ -648,24 +679,24 @@ DeclPtr Parser::parseTopLevelDecl() {
     decl = parseFunctionRest(std::move(type), name, isAsync, isStatic, isWeak,
                              vis);
     if (auto fn = dynamic_cast<FunctionDecl *>(decl.get())) {
-      fn->isExtern = isExtern;
-      fn->externLinkage = externLinkage;
-      fn->isInterrupt = isInterrupt;
-      fn->isNaked = isNaked;
-      fn->isNoReturn = isNoReturn;
-      fn->isNoInline = isNoInline;
-      fn->isUsed = isUsed;
+      fn->setExtern(isExtern);
+      fn->setExternLinkage(externLinkage);
+      fn->setInterrupt(isInterrupt);
+      fn->setNaked(isNaked);
+      fn->setNoReturn(isNoReturn);
+      fn->setNoInline(isNoInline);
+      fn->setUsed(isUsed);
     }
   } else {
-    decl = parseVariableRest(std::move(type), name, isConst, isStatic, isShared,
-                             vis);
+    decl = parseVariableRest(std::move(type), name, isConstVar, isStatic,
+                             isShared, vis);
     if (auto var = dynamic_cast<VariableDecl *>(decl.get())) {
-      var->isVolatile = isVolatile;
-      var->isExtern = isExtern;
-      var->alignment = alignment;
-      var->section = sectionName;
-      var->isUsed = isUsed;
-      var->isThreadLocal = isThreadLocal;
+      var->setVolatile(isVolatileVar);
+      var->setExtern(isExtern);
+      var->setAlignment(alignment);
+      var->setSection(sectionName);
+      var->setUsed(isUsed);
+      var->setThreadLocal(isThreadLocal);
     }
   }
   return decl;
@@ -740,7 +771,7 @@ DeclPtr Parser::parseVariableRest(TypePtr type, std::string name, bool isConst,
   auto varDecl = std::make_unique<VariableDecl>(
       std::move(type), name, std::move(init), isConst, isStatic, isShared, vis,
       type->getLoc());
-  varDecl->bitWidth = bitFieldWidth;
+  varDecl->setBitWidth(bitFieldWidth);
   return varDecl;
 }
 
@@ -767,19 +798,13 @@ DeclPtr Parser::parseVariableDecl() {
       vis = Visibility::Protected;
     else if (consumeIf(TokenKind::KwStatic))
       isStatic = true;
-    else if (consumeIf(TokenKind::KwConst))
-      isConst = true;
     else if (consumeIf(TokenKind::KwShared))
       isShared = true;
     else if (consumeIf(TokenKind::KwExtern)) {
       isExtern = true;
-      // Extern linkage strings (e.g., extern "C") are usually global,
-      // but we consume it here safely if it appears on a local declaration
       if (curTok.is(TokenKind::StringLiteral))
         consume();
-    } else if (consumeIf(TokenKind::KwVolatile))
-      isVolatile = true;
-    else if (consumeIf(TokenKind::KwUsed))
+    } else if (consumeIf(TokenKind::KwUsed))
       isUsed = true;
     else if (consumeIf(TokenKind::KwThreadLocal))
       isThreadLocal = true;
@@ -819,27 +844,25 @@ DeclPtr Parser::parseVariableDecl() {
     return nullptr;
   }
 
-  if (isConst)
-    type = std::make_unique<ConstType>(std::move(type), type->getLoc());
-  if (isVolatile)
-    type = std::make_unique<VolatileType>(std::move(type), type->getLoc());
+  bool isConstVar = type->is<ConstType>();
+  bool isVolatileVar = type->is<VolatileType>();
 
   // 4. Parse Name
   std::string name = curTok.getSpelling().str();
   expect(TokenKind::Identifier);
 
   // 5. Construct the base AST Node
-  auto decl = parseVariableRest(std::move(type), name, isConst, isStatic,
+  auto decl = parseVariableRest(std::move(type), name, isConstVar, isStatic,
                                 isShared, vis);
 
   // 6. Apply all the additional parsed properties to the VariableDecl
   if (auto var = dynamic_cast<VariableDecl *>(decl.get())) {
-    var->isVolatile = isVolatile;
-    var->isExtern = isExtern;
-    var->alignment = alignment;
-    var->section = sectionName;
-    var->isUsed = isUsed;
-    var->isThreadLocal = isThreadLocal;
+    var->setVolatile(isVolatileVar);
+    var->setExtern(isExtern);
+    var->setAlignment(alignment);
+    var->setSection(sectionName);
+    var->setUsed(isUsed);
+    var->setThreadLocal(isThreadLocal);
   }
 
   return decl;
@@ -949,8 +972,7 @@ DeclPtr Parser::parseGenericDecl() {
     while (curTok.isNot(TokenKind::RBrace) && curTok.isNot(TokenKind::Eof)) {
       // 1. Parse Member Modifiers (vis, static, etc.)
       Visibility memVis = Visibility::Default;
-      bool isStatic = false, isConst = false, isAsync = false, isShared = false,
-           isWeak = false;
+      bool isStatic = false, isAsync = false, isShared = false, isWeak = false;
       while (true) {
         if (consumeIf(TokenKind::KwPublic))
           memVis = Visibility::Public;
@@ -960,8 +982,6 @@ DeclPtr Parser::parseGenericDecl() {
           memVis = Visibility::Protected;
         else if (consumeIf(TokenKind::KwStatic))
           isStatic = true;
-        else if (consumeIf(TokenKind::KwConst))
-          isConst = true;
         else if (consumeIf(TokenKind::KwAsync))
           isAsync = true;
         else if (consumeIf(TokenKind::KwShared))
@@ -994,6 +1014,9 @@ DeclPtr Parser::parseGenericDecl() {
         continue;
       }
 
+      bool isConstVar = memberType->is<ConstType>();
+      bool isVolatileVar = memberType->is<VolatileType>();
+
       std::string memName = curTok.getSpelling().str();
       expect(TokenKind::Identifier);
 
@@ -1001,9 +1024,13 @@ DeclPtr Parser::parseGenericDecl() {
         members.push_back(parseFunctionRest(std::move(memberType), memName,
                                             isAsync, isStatic, isWeak, memVis));
       } else {
-        members.push_back(parseVariableRest(std::move(memberType), memName,
-                                            isConst, isStatic, isShared,
-                                            memVis));
+        auto varDecl =
+            parseVariableRest(std::move(memberType), memName, isConstVar,
+                              isStatic, isShared, memVis);
+        if (auto var = dynamic_cast<VariableDecl *>(varDecl.get())) {
+          var->setVolatile(isVolatileVar);
+        }
+        members.push_back(std::move(varDecl));
       }
     }
     expect(TokenKind::RBrace);
@@ -1090,16 +1117,12 @@ DeclPtr Parser::parseClassDecl() {
         memVis = Visibility::Protected;
       else if (consumeIf(TokenKind::KwStatic))
         isStatic = true;
-      else if (consumeIf(TokenKind::KwConst))
-        isConst = true;
       else if (consumeIf(TokenKind::KwAsync))
         isAsync = true;
       else if (consumeIf(TokenKind::KwShared))
         isShared = true;
       else if (consumeIf(TokenKind::KwWeak))
         isWeak = true;
-      else if (consumeIf(TokenKind::KwVolatile))
-        isVolatile = true;
       else if (consumeIf(TokenKind::KwThreadLocal))
         isThreadLocal = true;
       else if (consumeIf(TokenKind::KwAlign)) {
@@ -1147,12 +1170,8 @@ DeclPtr Parser::parseClassDecl() {
       continue;
     }
 
-    if (isConst)
-      memberType = std::make_unique<ConstType>(std::move(memberType),
-                                               memberType->getLoc());
-    if (isVolatile)
-      memberType = std::make_unique<VolatileType>(std::move(memberType),
-                                                  memberType->getLoc());
+    bool isConstVar = memberType->is<ConstType>();
+    bool isVolatileVar = memberType->is<VolatileType>();
 
     std::string memName;
     if (consumeIf(TokenKind::KwOperator)) {
@@ -1214,24 +1233,24 @@ DeclPtr Parser::parseClassDecl() {
     }
 
     if (curTok.is(TokenKind::LParen)) {
-      if (isConst)
+      if (isConstVar)
         error("'const' on methods not supported yet");
       auto fnDecl = parseFunctionRest(std::move(memberType), memName, isAsync,
                                       isStatic, isWeak, memVis);
       if (auto fn = dynamic_cast<FunctionDecl *>(fnDecl.get())) {
-        fn->section = sectionName;
+        fn->setSection(sectionName);
       }
       members.push_back(std::move(fnDecl));
     } else {
       if (isAsync)
         error("'async' on fields not supported");
-      auto varDecl = parseVariableRest(std::move(memberType), memName, isConst,
-                                       isStatic, isShared, memVis);
+      auto varDecl = parseVariableRest(std::move(memberType), memName,
+                                       isConstVar, isStatic, isShared, memVis);
       if (auto var = dynamic_cast<VariableDecl *>(varDecl.get())) {
-        var->isVolatile = isVolatile;
-        var->alignment = alignment;
-        var->section = sectionName;
-        var->isThreadLocal = isThreadLocal;
+        var->setVolatile(isVolatileVar);
+        var->setAlignment(alignment);
+        var->setSection(sectionName);
+        var->setThreadLocal(isThreadLocal);
       }
       members.push_back(std::move(varDecl));
     }
@@ -1342,11 +1361,25 @@ StmtPtr Parser::parseStatement() {
   case TokenKind::KwUnsafe:
     return parseUnsafeBlock();
   case TokenKind::KwLock:
+    if (nextTok.is(TokenKind::LBrace) || nextTok.is(TokenKind::LParen)) {
+      return parseLockStmt();
+    }
+    // Fallthrough to declaration logic
+    if (isStartOfDeclaration()) {
+      SourceLocation loc = curTok.location;
+      DeclPtr decl = parseTopLevelDecl();
+      if (decl)
+        return std::make_unique<DeclStmt>(std::move(decl), loc);
+      return nullptr;
+    }
+    return nullptr;
+
   case TokenKind::KwView:
   case TokenKind::KwMut:
     if (nextTok.is(TokenKind::LBrace)) {
       return parseLockStmt();
     }
+    // Fallthrough to declaration logic
     if (isStartOfDeclaration()) {
       SourceLocation loc = curTok.location;
       DeclPtr decl = parseTopLevelDecl();
@@ -1517,12 +1550,7 @@ StmtPtr Parser::parseForStmt() {
 
   // --- Standard For-Loop (Typed Decl or Expression) ---
 
-  bool isTypedDeclaration =
-      curTok.isAny(TokenKind::KwInt, TokenKind::KwFloat, TokenKind::KwDouble,
-                   TokenKind::KwBool, TokenKind::KwString, TokenKind::KwChar,
-                   TokenKind::KwShort, TokenKind::KwLong, TokenKind::KwISize,
-                   TokenKind::KwUSize, TokenKind::KwHalf, TokenKind::KwQuarter,
-                   TokenKind::KwVoid, TokenKind::KwAny);
+  bool isTypedDeclaration = isStartOfDeclaration();
 
   if (isTypedDeclaration) {
     varDecl1 = parseVariableDecl();
@@ -1714,8 +1742,19 @@ StmtPtr Parser::parseUnsafeBlock() {
 }
 
 StmtPtr Parser::parseLockStmt() {
-  consume();
-  return parseBlock();
+  SourceLocation loc = curTok.location;
+  consume(); // Eat 'lock' / 'view' / 'mut'
+
+  ExprPtr target = nullptr;
+  if (consumeIf(TokenKind::LParen)) {
+    target = parseExpression();
+    expect(TokenKind::RParen);
+  }
+
+  auto body = parseBlock();
+
+  // Return a real LockStmt instead of just throwing the target away!
+  return std::make_unique<LockStmt>(std::move(target), std::move(body), loc);
 }
 
 StmtPtr Parser::parseThrowStmt() {
@@ -1893,6 +1932,9 @@ ExprPtr Parser::parseBitwiseXor() {
 ExprPtr Parser::parseBitwiseAnd() {
   auto left = parseEquality();
   while (curTok.is(TokenKind::Amp)) {
+    if (hasNewlineBeforeToken(curTok)) {
+      break;
+    }
     if (!left)
       return nullptr;
     SourceLocation opLoc = curTok.location;
@@ -1966,6 +2008,9 @@ ExprPtr Parser::parseShift() {
 ExprPtr Parser::parseAdditive() {
   auto left = parseMultiplicative();
   while (curTok.isAny(TokenKind::Plus, TokenKind::Minus)) {
+    if (hasNewlineBeforeToken(curTok)) {
+      break;
+    }
     if (!left)
       return nullptr;
     TokenKind op = curTok.kind;
@@ -1983,6 +2028,14 @@ ExprPtr Parser::parseAdditive() {
 ExprPtr Parser::parseMultiplicative() {
   auto left = parsePower();
   while (curTok.isAny(TokenKind::Star, TokenKind::Slash, TokenKind::Percent)) {
+    if (curTok.is(TokenKind::Star)) {
+      if (isStartOfDeclaration()) {
+        break;
+      }
+      if (hasNewlineBeforeToken(curTok)) {
+        break;
+      }
+    }
     if (!left)
       return nullptr;
     TokenKind op = curTok.kind;
@@ -2002,6 +2055,9 @@ ExprPtr Parser::parsePower() {
 
   // Right-Associative: a ** b ** c -> a ** (b ** c)
   if (curTok.is(TokenKind::Power)) {
+    if (isStartOfDeclaration()) {
+      return left;
+    }
     if (!left)
       return nullptr;
     SourceLocation opLoc = curTok.location;
@@ -2041,7 +2097,13 @@ ExprPtr Parser::parsePrefix() {
 ExprPtr Parser::parsePostfix() {
   auto left = parsePrimary();
   while (true) {
-    if (consumeIf(TokenKind::LParen)) {
+    if (!left)
+      return nullptr;
+    if (curTok.is(TokenKind::LParen)) {
+      if (hasNewlineBeforeToken(curTok)) {
+        break;
+      }
+      consume();
       // CallExpr
       std::vector<ExprPtr> args;
       if (curTok.isNot(TokenKind::RParen)) {
@@ -2064,13 +2126,15 @@ ExprPtr Parser::parsePostfix() {
       left = std::make_unique<UnaryExpr>(TokenKind::PlusPlus, std::move(left),
                                          true, left->getLoc());
     }
-    // [NEW] Handle Postfix Decrement (x--)
+    // Handle Postfix Decrement (x--)
     else if (consumeIf(TokenKind::MinusMinus)) {
       left = std::make_unique<UnaryExpr>(TokenKind::MinusMinus, std::move(left),
                                          true, left->getLoc());
-    }
-    // [NEW] Array Indexing: expr[index]
-    else if (consumeIf(TokenKind::LBracket)) {
+    } else if (curTok.is(TokenKind::LBracket)) {
+      if (hasNewlineBeforeToken(curTok)) {
+        break;
+      }
+      consume();
       auto index = parseExpression();
       expect(TokenKind::RBracket);
       left = std::make_unique<IndexExpr>(std::move(left), std::move(index),
@@ -2372,13 +2436,19 @@ ExprPtr Parser::parseArrayLiteral() {
   SourceLocation loc = curTok.location;
   consume(); // Eat '['
   std::vector<ExprPtr> elements;
+  while (curTok.isNot(TokenKind::RBracket) && curTok.isNot(TokenKind::Eof)) {
+    // Add support for spread operator
+    if (curTok.is(TokenKind::DotDotDot)) {
+      consume(); // Eat '...'
+      ExprPtr subExpr = parseExpression();
+      elements.push_back(std::make_unique<UnaryExpr>(
+          TokenKind::DotDotDot, std::move(subExpr), false, loc));
+    } else {
+      elements.push_back(parseExpression());
+    }
 
-  if (curTok.isNot(TokenKind::RBracket)) {
-    do {
-      if (auto e = parseExpression()) {
-        elements.push_back(std::move(e));
-      }
-    } while (consumeIf(TokenKind::Comma));
+    if (!consumeIf(TokenKind::Comma))
+      break;
   }
   expect(TokenKind::RBracket);
   return std::make_unique<ArrayLiteral>(std::move(elements), loc);
@@ -2553,6 +2623,36 @@ TypePtr Parser::parseType() {
   bool isUnsigned = consumeIf(TokenKind::KwUnsigned);
 
   switch (curTok.kind) {
+  // Prefix Pointers & References
+  case TokenKind::Amp: {
+    SourceLocation ampLoc = curTok.location;
+    consume();
+    TypePtr inner = parseType();
+    if (!inner)
+      return nullptr;
+    type = std::make_unique<ReferenceType>(std::move(inner), ampLoc);
+    break;
+  }
+  // Prefix Pointers
+  case TokenKind::Star: {
+    SourceLocation starLoc = curTok.location;
+    consume();
+    TypePtr inner = parseType();
+    if (!inner)
+      return nullptr;
+    type = std::make_unique<PointerType>(std::move(inner), starLoc);
+    break;
+  }
+  case TokenKind::Power: { // Handles **mut int
+    SourceLocation starLoc = curTok.location;
+    consume();
+    TypePtr inner = parseType();
+    if (!inner)
+      return nullptr;
+    type = std::make_unique<PointerType>(
+        std::make_unique<PointerType>(std::move(inner), starLoc), starLoc);
+    break;
+  }
   // --- Primitives ---
   case TokenKind::KwInt:
     // If 'unsigned' was present, map to U32 instead of I32
@@ -2732,43 +2832,92 @@ TypePtr Parser::parseType() {
     return nullptr;
   }
 
-  // --- Suffixes (Ptr*, Array[], Nullable?) ---
-  while (true) {
-    if (consumeIf(TokenKind::Star)) {
-      type = std::make_unique<PointerType>(std::move(type), loc);
-    } else if (consumeIf(TokenKind::Power)) {
-      type = std::make_unique<PointerType>(std::move(type), loc);
-      type = std::make_unique<PointerType>(std::move(type), loc);
-    } else if (curTok.is(TokenKind::LBracket)) {
-      // Collect all consecutive brackets first: e.g., [3][2]
-      std::vector<ExprPtr> sizes;
-      do {
-        consume(); // Eat '['
-        ExprPtr sizeExpr = nullptr;
-        if (curTok.isNot(TokenKind::RBracket)) {
-          sizeExpr = parseExpression();
-        }
-        expect(TokenKind::RBracket);
-        sizes.push_back(std::move(sizeExpr));
-      } while (curTok.is(TokenKind::LBracket));
-
-      // Apply them from right to left so int[3][4] becomes Array(Array(int, 4),
-      // 3)
-      for (auto it = sizes.rbegin(); it != sizes.rend(); ++it) {
-        type =
-            std::make_unique<ArrayType>(std::move(type), std::move(*it), loc);
-      }
-    } else if (consumeIf(TokenKind::Question)) {
-      type = std::make_unique<NullableType>(std::move(type), loc);
-    } else {
-      break;
-    }
-  }
   if (isConst) {
     type = std::make_unique<ConstType>(std::move(type), loc);
   }
   if (isVolatile) {
     type = std::make_unique<VolatileType>(std::move(type), loc);
+  }
+
+  // --- Suffixes (Ptr*, Array[], Nullable?) ---
+  while (true) {
+    SourceLocation loc = curTok.location;
+
+    // Case 1: int?[] (Nullable Array)
+    if (curTok.is(TokenKind::Question) && peekIs(TokenKind::LBracket)) {
+      consume(); // Eat prefix '?'
+
+      std::vector<ExprPtr> sizes;
+      do {
+        consume(); // Eat '['
+        ExprPtr sizeExpr =
+            (curTok.isNot(TokenKind::RBracket)) ? parseExpression() : nullptr;
+        expect(TokenKind::RBracket);
+        sizes.push_back(std::move(sizeExpr));
+      } while (curTok.is(TokenKind::LBracket));
+
+      bool trailingQuestion = consumeIf(TokenKind::Question);
+
+      auto it = sizes.rbegin();
+      // Apply all INNER array dimensions first
+      while (it != sizes.rend() - 1) {
+        type =
+            std::make_unique<ArrayType>(std::move(type), std::move(*it), loc);
+        ++it;
+      }
+
+      // The trailing '?' makes the OUTERMOST elements nullable
+      if (trailingQuestion) {
+        type = std::make_unique<NullableType>(std::move(type), loc);
+      }
+
+      // Apply the OUTERMOST dimension
+      type = std::make_unique<ArrayType>(std::move(type), std::move(*it), loc);
+
+      // Final wrap: Apply the prefix '?' to make the entire array structure
+      // nullable
+      type = std::make_unique<NullableType>(std::move(type), loc);
+
+    }
+    // Case 2: int[]? (Non-nullable array of nullables)
+    else if (curTok.is(TokenKind::LBracket)) {
+      std::vector<ExprPtr> sizes;
+      do {
+        consume(); // Eat '['
+        ExprPtr sizeExpr =
+            (curTok.isNot(TokenKind::RBracket)) ? parseExpression() : nullptr;
+        expect(TokenKind::RBracket);
+        sizes.push_back(std::move(sizeExpr));
+      } while (curTok.is(TokenKind::LBracket));
+
+      bool trailingQuestion = consumeIf(TokenKind::Question);
+
+      auto it = sizes.rbegin();
+      // Apply all INNER array dimensions first
+      while (it != sizes.rend() - 1) {
+        type =
+            std::make_unique<ArrayType>(std::move(type), std::move(*it), loc);
+        ++it;
+      }
+
+      // The trailing '?' makes the OUTERMOST elements nullable
+      if (trailingQuestion) {
+        type = std::make_unique<NullableType>(std::move(type), loc);
+      }
+
+      // Apply the OUTERMOST dimension
+      type = std::make_unique<ArrayType>(std::move(type), std::move(*it), loc);
+    }
+    // Case 3: Standard T? (Primitive nullable)
+    else if (consumeIf(TokenKind::Question)) {
+      type = std::make_unique<NullableType>(std::move(type), loc);
+    }
+    // Case 4: Pointers (int*)
+    else if (consumeIf(TokenKind::Star)) {
+      type = std::make_unique<PointerType>(std::move(type), loc);
+    } else {
+      break;
+    }
   }
   return type;
 }

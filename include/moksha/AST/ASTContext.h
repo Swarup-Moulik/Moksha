@@ -46,7 +46,9 @@ public:
   // Factory Methods
   const Type *createPointerType(const Type *pointee);
   const Type *createNullableType(const Type *inner);
-  const Type *createArrayType(const Type *element, uint64_t size = 0);
+  const Type *createMutType(const Type *inner);
+  const Type *createArrayType(const Type *element,
+                              std::unique_ptr<Expr> sizeExpr);
   const Type *createMapType(const Type *key, const Type *value);
   const Type *createFunctionType(const std::vector<const Type *> &params,
                                  const Type *ret, bool isVariadic = false,

@@ -1,0 +1,9 @@
+void test_systems() {
+    unsafe {
+        int* ptr = null
+    }
+
+    defer {
+        int cleanup = 1
+    }
+}

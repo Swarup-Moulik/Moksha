@@ -41,4 +41,113 @@ void ThisExpr::accept(ASTVisitor &v) const { v.visitThisExpr(this); }
 void SuperExpr::accept(ASTVisitor &v) const { v.visitSuperExpr(this); }
 void SizeOfExpr::accept(ASTVisitor &v) const { v.visitSizeOfExpr(this); }
 
+// --- Expr Cloning Implementations ---
+
+std::unique_ptr<Expr> IntegerLiteral::clone() const {
+  return std::make_unique<IntegerLiteral>(value, suffix, loc);
+}
+std::unique_ptr<Expr> FloatLiteral::clone() const {
+  return std::make_unique<FloatLiteral>(value, suffix, loc);
+}
+std::unique_ptr<Expr> StringLiteral::clone() const {
+  return std::make_unique<StringLiteral>(value, isTemplate, loc);
+}
+std::unique_ptr<Expr> BoolLiteral::clone() const {
+  return std::make_unique<BoolLiteral>(value, loc);
+}
+std::unique_ptr<Expr> NullLiteral::clone() const {
+  return std::make_unique<NullLiteral>(loc);
+}
+std::unique_ptr<Expr> CharLiteral::clone() const {
+  return std::make_unique<CharLiteral>(value, loc);
+}
+std::unique_ptr<Expr> ArrayLiteral::clone() const {
+  std::vector<ExprPtr> clonedElements;
+  for (const auto &el : elements)
+    clonedElements.push_back(el->clone());
+  return std::make_unique<ArrayLiteral>(std::move(clonedElements), loc);
+}
+std::unique_ptr<Expr> MapLiteral::clone() const {
+  std::vector<Entry> clonedEntries;
+  for (const auto &entry : entries) {
+    clonedEntries.push_back({entry.first->clone(), entry.second->clone()});
+  }
+  return std::make_unique<MapLiteral>(std::move(clonedEntries), loc);
+}
+std::unique_ptr<Expr> BinaryExpr::clone() const {
+  return std::make_unique<BinaryExpr>(lhs->clone(), op, rhs->clone(), loc);
+}
+std::unique_ptr<Expr> UnaryExpr::clone() const {
+  return std::make_unique<UnaryExpr>(op, operand->clone(), isPostfix, loc);
+}
+std::unique_ptr<Expr> TernaryExpr::clone() const {
+  return std::make_unique<TernaryExpr>(condition->clone(), trueBranch->clone(),
+                                       falseBranch->clone(), loc);
+}
+std::unique_ptr<Expr> CastExpr::clone() const {
+  return std::make_unique<CastExpr>(targetType->clone(), expr->clone(), loc);
+}
+std::unique_ptr<Expr> IdentifierExpr::clone() const {
+  return std::make_unique<IdentifierExpr>(name, loc);
+}
+std::unique_ptr<Expr> CallExpr::clone() const {
+  std::vector<ExprPtr> clonedArgs;
+  for (const auto &arg : args)
+    clonedArgs.push_back(arg->clone());
+  return std::make_unique<CallExpr>(callee->clone(), std::move(clonedArgs),
+                                    loc);
+}
+std::unique_ptr<Expr> MemberExpr::clone() const {
+  return std::make_unique<MemberExpr>(object->clone(), memberName, isOptional,
+                                      loc);
+}
+std::unique_ptr<Expr> IndexExpr::clone() const {
+  return std::make_unique<IndexExpr>(array->clone(), index->clone(), loc);
+}
+std::unique_ptr<Expr> NewExpr::clone() const {
+  std::vector<ExprPtr> clonedArgs;
+  for (const auto &arg : args)
+    clonedArgs.push_back(arg->clone());
+  return std::make_unique<NewExpr>(type->clone(), std::move(clonedArgs), loc);
+}
+std::unique_ptr<Expr> TemplateStringExpr::clone() const {
+  std::vector<ExprPtr> clonedParts;
+  for (const auto &part : parts)
+    clonedParts.push_back(part->clone());
+  return std::make_unique<TemplateStringExpr>(std::move(clonedParts), loc);
+}
+std::unique_ptr<Expr> ThisExpr::clone() const {
+  return std::make_unique<ThisExpr>(loc);
+}
+std::unique_ptr<Expr> SuperExpr::clone() const {
+  return std::make_unique<SuperExpr>(loc);
+}
+std::unique_ptr<Expr> AwaitExpr::clone() const {
+  return std::make_unique<AwaitExpr>(expr->clone(), loc);
+}
+std::unique_ptr<Expr> SizeOfExpr::clone() const {
+  return std::make_unique<SizeOfExpr>(expression->clone(), loc);
+}
+
+LambdaExpr::LambdaExpr(std::vector<LambdaParam> params,
+                       std::unique_ptr<Stmt> body, bool isExprBody,
+                       SourceLocation loc)
+    : Expr(ExprKind::LambdaExpr, loc), params(std::move(params)),
+      body(std::move(body)), isExprBody(isExprBody) {}
+
+std::unique_ptr<Expr> LambdaExpr::clone() const {
+  std::vector<LambdaParam> clonedParams;
+  for (const auto &p : params) {
+    clonedParams.push_back(p.clone());
+  }
+  return std::make_unique<LambdaExpr>(
+      std::move(clonedParams), body ? body->clone() : nullptr, isExprBody, loc);
+}
+
+std::unique_ptr<Expr> ThreadExpr::clone() const {
+  auto clonedBody = std::unique_ptr<LambdaExpr>(
+      static_cast<LambdaExpr *>(body->clone().release()));
+  return std::make_unique<ThreadExpr>(isWeak, std::move(clonedBody), loc);
+}
+
 } // namespace moksha

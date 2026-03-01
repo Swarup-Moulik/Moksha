@@ -24,10 +24,78 @@ static const Type *unwrapConcurrency(const Type *t) {
       t = vol->getInner();
     else if (auto c = dynamic_cast<const ConstType *>(t))
       t = c->getInner();
+    else if (auto ref = dynamic_cast<const ReferenceType *>(t))
+      t = ref->getInner();
     else
       break;
   }
   return t;
+}
+
+static bool hasMutOrLock(const Type *t) {
+  if (!t)
+    return false;
+
+  // Check if this specific node is a mutation or lock wrapper
+  if (t->is<MutType>() || t->is<LockType>())
+    return true;
+
+  // Recursively peel other wrappers to look for mut/lock deeper in the type
+  if (auto ptr = dynamic_cast<const PointerType *>(t))
+    return hasMutOrLock(ptr->getPointee());
+  if (auto ref = dynamic_cast<const ReferenceType *>(t))
+    return hasMutOrLock(ref->getInner());
+  if (auto v = dynamic_cast<const ViewType *>(t))
+    return hasMutOrLock(v->getInner());
+  if (auto arr = dynamic_cast<const ArrayType *>(t))
+    return hasMutOrLock(arr->getElementType());
+
+  return false;
+}
+
+static bool hasLock(const Type *t) {
+  while (t) {
+    if (t->is<LockType>())
+      return true;
+    if (auto ptr = dynamic_cast<const PointerType *>(t))
+      t = ptr->getPointee();
+    else if (auto ref = dynamic_cast<const ReferenceType *>(t))
+      t = ref->getInner();
+    else if (auto v = dynamic_cast<const ViewType *>(t))
+      t = v->getInner();
+    else if (auto m = dynamic_cast<const MutType *>(t))
+      t = m->getInner();
+    else
+      break;
+  }
+  return false;
+}
+
+static bool hasView(const Type *t) {
+  if (!t)
+    return false;
+
+  // 1. Explicit View Check
+  if (t->is<ViewType>() || t->is<ConstType>())
+    return true;
+
+  // 2. Implicit View Check (Rule 1: Default pointers are immutable)
+  if (auto ptr = dynamic_cast<const PointerType *>(t)) {
+    return !hasMutOrLock(ptr->getPointee());
+  }
+  if (auto ref = dynamic_cast<const ReferenceType *>(t)) {
+    return !hasMutOrLock(ref->getInner());
+  }
+
+  // 3. Peeling Phase for other wrappers
+  if (auto l = dynamic_cast<const LockType *>(t))
+    return hasView(l->getInner());
+  if (auto m = dynamic_cast<const MutType *>(t))
+    return hasView(m->getInner());
+  if (auto arr = dynamic_cast<const ArrayType *>(t))
+    return hasView(arr->getElementType());
+
+  return false;
 }
 
 // Helpers to treat 'char' as a numeric 8-bit integer
@@ -46,6 +114,17 @@ bool isIntegerOrChar(const Type *t) {
     return true;
   if (auto p = dynamic_cast<const PrimitiveType *>(t))
     return p->getScalar() == PrimitiveType::Scalar::Char;
+  return false;
+}
+
+bool isCharType(const Type *t) {
+  t = unwrapConcurrency(t);
+  if (auto p = dynamic_cast<const PrimitiveType *>(t)) {
+    // Treat char, u8, and i8 interchangeably for C-strings
+    return p->getScalar() == PrimitiveType::Scalar::Char ||
+           p->getScalar() == PrimitiveType::Scalar::U8 ||
+           p->getScalar() == PrimitiveType::Scalar::I8;
+  }
   return false;
 }
 
@@ -125,9 +204,6 @@ bool checkDefiniteReturn(const Stmt *stmt, DiagnosticEngine &Diags) {
   }
 
   default:
-    // Loops (While, For) conservatively evaluate to false because we
-    // cannot statically guarantee the loop condition will be true even once.
-    // Normal expressions also evaluate to false.
     return false;
   }
 }
@@ -141,6 +217,7 @@ TypeChecker::TypeChecker(ASTContext &ctx, SymbolTable &sym,
   currentExpectedReturnType = nullptr;
   currentClassDecl = nullptr;
   hasError = false;
+  inConstructorContext = false;
 }
 
 void TypeChecker::check(Decl *decl) {
@@ -163,8 +240,31 @@ bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
   if (expected->isEquivalent(*actual))
     return true;
 
+  if (auto nullType = dynamic_cast<const NullableType *>(expected)) {
+    if (actual->is<NullType>())
+      return true;
+    if (isCompatible(nullType->getInner(), actual))
+      return true;
+    return false;
+  }
+
   const Type *rawExp = unwrapConcurrency(expected);
   const Type *rawAct = unwrapConcurrency(actual);
+
+  bool isPtrOrRefExp = rawExp->is<PointerType>() || rawExp->is<ReferenceType>();
+  bool isPtrOrRefAct = rawAct->is<PointerType>() || rawAct->is<ReferenceType>();
+
+  if (isPtrOrRefExp && isPtrOrRefAct) {
+    // Rule 2: Cannot take mutable capability to immutable storage
+    if (hasMutOrLock(expected) && hasView(actual)) {
+      return false;
+    }
+
+    if (hasMutOrLock(expected) && !hasLock(expected) && hasLock(actual)) {
+      return false;
+    }
+  }
+
   if (rawExp->isEquivalent(*rawAct))
     return true;
 
@@ -191,12 +291,23 @@ bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
     if (auto arrAct = dynamic_cast<const ArrayType *>(rawAct)) {
       if (!isCompatible(arrExp->getElementType(), arrAct->getElementType()))
         return false;
-      std::string expStr = arrExp->toString();
-      std::string actStr = arrAct->toString();
-      if (expStr.find("[]") == std::string::npos &&
-          actStr.find("[]") == std::string::npos) {
-        if (expStr != actStr)
-          return false;
+
+      bool expIsDynamic = arrExp->getSizeExpr() == nullptr;
+      bool actIsDynamic = arrAct->getSizeExpr() == nullptr;
+
+      if (!expIsDynamic && !actIsDynamic) {
+        // Both are fixed-size: safely compare their numeric values
+        auto expSize =
+            dynamic_cast<const IntegerLiteral *>(arrExp->getSizeExpr());
+        auto actSize =
+            dynamic_cast<const IntegerLiteral *>(arrAct->getSizeExpr());
+        if (expSize && actSize) {
+          return expSize->getValue() == actSize->getValue();
+        }
+        return arrExp->toString() == arrAct->toString();
+      } else if (!expIsDynamic && actIsDynamic) {
+        // Expected fixed, Actual dynamic: Cannot assign T[] to T[N] safely!
+        return false;
       }
       return true;
     }
@@ -288,6 +399,29 @@ bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
     }
   }
 
+  // --- [NEW] C-String Interoperability ---
+  // 1. Allow assigning a String to a Char Array (char[6] = "Hello")
+  if (auto arrExp = dynamic_cast<const ArrayType *>(rawExp)) {
+    if (isIntegerOrChar(arrExp->getElementType()) && rawAct->isString()) {
+      return true;
+    }
+  }
+
+  // 2. Allow implicitly using a Char Array as a String
+  if (rawExp->isString()) {
+    if (auto arrAct = dynamic_cast<const ArrayType *>(rawAct)) {
+      if (isIntegerOrChar(arrAct->getElementType())) {
+        return true;
+      }
+    }
+    // 3. Allow Char Pointers to decay to Strings (string str = *char)
+    if (auto ptrAct = dynamic_cast<const PointerType *>(rawAct)) {
+      if (isIntegerOrChar(ptrAct->getPointee())) {
+        return true;
+      }
+    }
+  }
+
   return false;
 }
 
@@ -295,9 +429,17 @@ bool TypeChecker::isCastAllowed(const Type *src, const Type *dst) {
   src = unwrapConcurrency(src);
   dst = unwrapConcurrency(dst);
 
+  if (src->is<AnyType>() || dst->is<AnyType>()) {
+    return true;
+  }
+
   // 1. Allow casting between the same types
   if (src->isEquivalent(*dst))
     return true;
+
+  if (dst->isString()) {
+    return true;
+  }
 
   // 2. Allow casting between any numeric types (int to float, etc.)
   if (isNumericOrChar(src) && isNumericOrChar(dst))
@@ -525,9 +667,28 @@ void TypeChecker::visitArrayLiteral(const ArrayLiteral *expr) {
   currentExpectedReturnType = expectedElemType;
 
   const Type *commonType = nullptr;
+  bool hasSpread = false;
   for (const auto &elem : expr->getElements()) {
     elem->accept(*this);
     const Type *elemType = lastComputedType;
+
+    // Check if the element is a UnaryExpr using the DotDotDot (...) operator
+    if (auto unary = dynamic_cast<const UnaryExpr *>(elem.get())) {
+      if (unary->getOp() == TokenKind::DotDotDot) {
+        hasSpread = true;
+        if (auto arrType =
+                dynamic_cast<const ArrayType *>(unwrapConcurrency(elemType))) {
+          elemType = arrType->getElementType();
+        } else {
+          Diags.report(elem->getLoc(), DiagID::err_type_mismatch)
+              << "Spread operator (...) can only be used on array types; found "
+                 "'"
+              << elemType->toString() << "'";
+          hasError = true;
+          continue;
+        }
+      }
+    }
 
     // Strictly enforce element types against the expected type
     if (expectedElemType && !isCompatible(expectedElemType, elemType)) {
@@ -536,6 +697,30 @@ void TypeChecker::visitArrayLiteral(const ArrayLiteral *expr) {
           << expectedElemType->toString() << " but found "
           << elemType->toString();
       hasError = true;
+    }
+
+    // Recursive C-String Bounds Checking for 2D+ Arrays
+    if (expectedElemType) {
+      if (auto expectedArr =
+              dynamic_cast<const ArrayType *>(expectedElemType)) {
+        if (isCharType(expectedArr->getElementType()) && elemType->isString()) {
+          if (auto strLit = dynamic_cast<const StringLiteral *>(elem.get())) {
+            if (auto sizeLit = dynamic_cast<const IntegerLiteral *>(
+                    expectedArr->getSizeExpr())) {
+              uint64_t requiredSize =
+                  strLit->getValue().length() + 1; // +1 for '\0'
+              if (sizeLit->getValue() < requiredSize) {
+                Diags.report(elem->getLoc(), DiagID::err_array_length)
+                    << "Char array is too small. '\"" << strLit->getValue()
+                    << "\"' requires " << requiredSize
+                    << " bytes (including '\\0'), but array is size "
+                    << sizeLit->getValue();
+                hasError = true;
+              }
+            }
+          }
+        }
+      }
     }
 
     if (!commonType) {
@@ -552,8 +737,13 @@ void TypeChecker::visitArrayLiteral(const ArrayLiteral *expr) {
     commonType = expectedElemType ? expectedElemType : context.getAnyType();
   }
 
-  lastComputedType =
-      context.createArrayType(commonType, expr->getElements().size());
+  std::unique_ptr<Expr> sizeExpr = nullptr;
+  if (!hasSpread) {
+    sizeExpr = std::make_unique<IntegerLiteral>(
+        expr->getElements().size(), NumericSuffix::None, expr->getLoc());
+  }
+
+  lastComputedType = context.createArrayType(commonType, std::move(sizeExpr));
 }
 
 void TypeChecker::visitMapLiteral(const MapLiteral *expr) {
@@ -627,6 +817,7 @@ void TypeChecker::visitIdentifierExpr(const IdentifierExpr *expr) {
     }
     lastComputedType = sym->type;
   }
+  const_cast<IdentifierExpr *>(expr)->setType(lastComputedType);
 }
 
 void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
@@ -647,18 +838,25 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
   }
 
   if (op == TokenKind::Equal) {
-    if (lhsType->getKind() == TypeKind::Lock ||
-        lhsType->getKind() == TypeKind::View) {
-      std::string mod =
-          (lhsType->getKind() == TypeKind::Lock) ? "lock" : "view";
-      Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
-          << "Cannot assign to read-only '" << mod << "' variable";
-      hasError = true;
-      return;
+    bool isDirectVar = false;
+
+    // 1. Direct Variable Assignment (e.g., p_view = &data)
+    if (auto id = dynamic_cast<const IdentifierExpr *>(expr->getLHS())) {
+      isDirectVar = true;
+      Symbol *sym = symbols.lookup(id->getName());
+      if (sym && sym->decl) {
+        if (auto varDecl = dynamic_cast<const VariableDecl *>(sym->decl)) {
+          if (varDecl->isConstVar()) {
+            Diags.report(expr->getLoc(), DiagID::err_const_violation)
+                << "'" << id->getName() << "'";
+            hasError = true;
+          }
+        }
+        initializedVars.insert(sym->decl); // Mark as definitely assigned
+      }
     }
 
-    // [FIX] Unwrap MemberExpr (d.val) and IndexExpr (arr[0]) to find base
-    // identifier
+    // 2. Memory Access Mutations (e.g., *p = 10, arr[0] = 5, obj.x = 2)
     const Expr *target = expr->getLHS();
     while (true) {
       if (auto mem = dynamic_cast<const MemberExpr *>(target))
@@ -669,18 +867,61 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
         break;
     }
 
-    // Now safely register the base identifier as definitely assigned!
-    if (auto id = dynamic_cast<const IdentifierExpr *>(target)) {
-      Symbol *sym = symbols.lookup(id->getName());
-      if (sym && sym->decl) {
-        if (auto varDecl = dynamic_cast<const VariableDecl *>(sym->decl)) {
-          if (varDecl->isConstVar()) {
-            Diags.report(expr->getLoc(), DiagID::err_const_violation)
-                << "'" << id->getName() << "'";
-            hasError = true;
+    if (!isDirectVar) {
+      bool allowed = hasMutOrLock(lhsType);
+
+      if (!allowed && inConstructorContext &&
+          dynamic_cast<const ThisExpr *>(target)) {
+        allowed = true;
+      }
+
+      // Deep check for pointers and base variables
+      if (!allowed) {
+        bool oldLhs = isLHSOfAssignment;
+        isLHSOfAssignment = true;
+        if (auto un = dynamic_cast<const UnaryExpr *>(target)) {
+          if (un->getOp() == TokenKind::Star) {
+            un->getOperand()->accept(*this);
+            if (hasMutOrLock(lastComputedType))
+              allowed = true;
           }
+        } else if (auto baseId = dynamic_cast<const IdentifierExpr *>(target)) {
+          baseId->accept(*this);
+          if (lastComputedType->is<PointerType>() ||
+              lastComputedType->is<ReferenceType>()) {
+            if (hasMutOrLock(lastComputedType))
+              allowed = true;
+          } else {
+            Symbol *sym = symbols.lookup(baseId->getName());
+            if (sym && sym->decl) {
+              if (auto varDecl =
+                      dynamic_cast<const VariableDecl *>(sym->decl)) {
+                if (!varDecl->isConstVar())
+                  allowed = true; // Array or Struct declared as 'mut'
+              }
+            }
+          }
+        } else if (dynamic_cast<const ThisExpr *>(target)) {
+          // 'this' is intrinsically mutable by default in member functions!
+          allowed = true;
         }
-        initializedVars.insert(sym->decl); // Struct is now initialized!
+        isLHSOfAssignment = oldLhs;
+      }
+
+      if (!allowed) {
+        std::string typeStr = lhsType->toString();
+        Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
+            << "Cannot mutate immutable type '" << typeStr
+            << "'. Did you forget 'mut' or 'lock'?";
+        hasError = true;
+      }
+
+      // Mark base identifier as initialized (preserving old struct behavior)
+      if (auto id = dynamic_cast<const IdentifierExpr *>(target)) {
+        Symbol *sym = symbols.lookup(id->getName());
+        if (sym && sym->decl) {
+          initializedVars.insert(sym->decl);
+        }
       }
     }
   }
@@ -860,6 +1101,26 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
       }
       hasError = true;
     }
+    // String Literal to Char Array Bounds Checking
+    if (auto arrLHS = dynamic_cast<const ArrayType *>(lhsType)) {
+      if (isCharType(arrLHS->getElementType()) && rhsType->isString()) {
+        if (auto strLit = dynamic_cast<const StringLiteral *>(expr->getRHS())) {
+          if (auto sizeLit =
+                  dynamic_cast<const IntegerLiteral *>(arrLHS->getSizeExpr())) {
+            uint64_t requiredSize =
+                strLit->getValue().length() + 1; // +1 for '\0'
+            if (sizeLit->getValue() < requiredSize) {
+              Diags.report(expr->getLoc(), DiagID::err_array_length)
+                  << "Char array is too small. '\"" << strLit->getValue()
+                  << "\"' requires " << requiredSize
+                  << " bytes (including '\\0'), but array is size "
+                  << sizeLit->getValue();
+              hasError = true;
+            }
+          }
+        }
+      }
+    }
     lastComputedType = lhsType;
   } else if (isBitwise) {
     if (!isIntegerOrChar(rawLHS) || !isIntegerOrChar(rawRHS)) {
@@ -921,6 +1182,20 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
   TokenKind op = expr->getOp(); // [FIX] Declare op here to resolve scope error
   expr->getOperand()->accept(*this);
   const Type *operandType = lastComputedType;
+
+  // Intercept Spread Operator
+  if (op == TokenKind::DotDotDot) {
+    // If the underlying type is a fixed-size ArrayType, ban it
+    if (auto arrType =
+            dynamic_cast<const ArrayType *>(unwrapConcurrency(operandType))) {
+      if (arrType->getSizeExpr() != nullptr) {
+        Diags.report(expr->getLoc(), DiagID::err_spread_fixed_array);
+        hasError = true;
+      }
+    }
+    lastComputedType = operandType;
+    return;
+  }
 
   // 1. Unary Operator Overloading Resolution
   if (auto namedLhs = dynamic_cast<const NamedType *>(operandType)) {
@@ -999,9 +1274,56 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
     }
     lastComputedType = operandType;
   } else if (op == TokenKind::Amp) {
-    lastComputedType = context.createPointerType(operandType);
+    bool isImmutable = false;
+
+    // 1. Check if the type itself is explicitly const or view
+    if (operandType->is<ConstType>() || operandType->is<ViewType>()) {
+      isImmutable = true;
+    }
+
+    // 2. Trace back to the base variable to see if it was declared as 'const'
+    const Expr *target = expr->getOperand();
+    while (true) {
+      if (auto mem = dynamic_cast<const MemberExpr *>(target))
+        target = mem->getObject();
+      else if (auto idx = dynamic_cast<const IndexExpr *>(target))
+        target = idx->getArray();
+      else
+        break;
+    }
+
+    if (auto id = dynamic_cast<const IdentifierExpr *>(target)) {
+      Symbol *sym = symbols.lookup(id->getName());
+      if (sym && sym->decl && sym->decl->getKind() == StmtKind::VariableDecl) {
+        if (static_cast<const VariableDecl *>(sym->decl)->isConstVar()) {
+          isImmutable = true;
+        }
+      }
+    }
+
+    const Type *inner = operandType;
+
+    // 3. Since standard variables are mutable by default, taking their address
+    // yields a mutable capability (*mut T) unless they are explicitly const.
+    if (!isImmutable && !hasMutOrLock(inner)) {
+      inner = context.createMutType(inner);
+    }
+
+    lastComputedType = context.createPointerType(inner);
   } else if (op == TokenKind::Star) {
-    // [FIX] Dereference: T* -> T
+    if (operandType->toString().find("lock") != std::string::npos) {
+      std::string name = "";
+      if (auto id = dynamic_cast<const IdentifierExpr *>(expr->getOperand()))
+        name = id->getName();
+
+      if (activeLocks.find(name) == activeLocks.end()) {
+        Diags.report(expr->getLoc(), DiagID::err_invalid_access)
+            << "Cannot dereference 'lock' pointer '" << name
+            << "' outside a 'lock' block";
+        hasError = true;
+      }
+    }
+    // Dereference: T* -> T
     const Type *raw = unwrapConcurrency(operandType);
     if (auto ptr = dynamic_cast<const PointerType *>(raw)) {
       lastComputedType = ptr->getPointee();
@@ -1104,6 +1426,22 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
 
   currentExpectedReturnType = outerExpectedRet;
 
+  // Helper for Argument Compatibility with Lock Elevation
+  auto isArgCompatible = [&](const Type *expected, const Type *actual,
+                             const Expr *argExpr) {
+    if (isCompatible(expected, actual))
+      return true;
+
+    // Support Lock Elevation during function calls
+    if (auto id = dynamic_cast<const IdentifierExpr *>(argExpr)) {
+      if (hasLock(actual) && activeLocks.count(id->getName()) &&
+          hasMutOrLock(expected)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   // 3. Member Function Overload Resolution (e.g., p.printData(42))
   if (auto memExpr = dynamic_cast<const MemberExpr *>(expr->getCallee())) {
     memExpr->getObject()->accept(*this);
@@ -1145,7 +1483,8 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
                 bool match = true;
                 size_t limit = std::min(argTypes.size(), sig.paramTypes.size());
                 for (size_t i = 0; i < limit; ++i) {
-                  if (!isCompatible(sig.paramTypes[i].get(), argTypes[i])) {
+                  if (!isArgCompatible(sig.paramTypes[i].get(), argTypes[i],
+                                       expr->getArgs()[i].get())) {
                     match = false;
                     break;
                   }
@@ -1165,6 +1504,12 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
         }
 
         if (bestMatch) {
+          std::vector<const Type *> pTypes;
+          for (auto &p : bestSig.paramTypes)
+            pTypes.push_back(p.get());
+          const_cast<MemberExpr *>(memExpr)->setType(
+              context.createFunctionType(pTypes, bestSig.returnType.get()));
+          const_cast<CallExpr *>(expr)->setType(bestSig.returnType.get());
           if (bestSig.returnType) {
             lastComputedType = bestSig.returnType.get();
             parkedTypes.push_back(std::move(bestSig.returnType));
@@ -1243,11 +1588,12 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
               if (sym && sym->decl &&
                   sym->decl->getKind() == StmtKind::VariableDecl) {
                 auto varDecl = static_cast<const VariableDecl *>(sym->decl);
-                if (varDecl->alignment > 0 && varDecl->alignment < 4) {
+                if (varDecl->getAlignment() > 0 &&
+                    varDecl->getAlignment() < 4) {
                   Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
                       << "Misaligned atomic access: Variable '"
                       << varDecl->getName() << "' has explicit alignment "
-                      << varDecl->alignment
+                      << varDecl->getAlignment()
                       << " (minimum 4 required for atomics)";
                   hasError = true;
                 }
@@ -1372,7 +1718,8 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
 
           bool match = true;
           for (size_t i = 0; i < sig.paramTypes.size(); ++i) {
-            if (!isCompatible(sig.paramTypes[i].get(), argTypes[i])) {
+            if (!isArgCompatible(sig.paramTypes[i].get(), argTypes[i],
+                                 expr->getArgs()[i].get())) {
               match = false; // Inference failed
               break;
             }
@@ -1394,15 +1741,16 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
           bool match = true;
           size_t limit = std::min(argTypes.size(), fn->getParams().size());
           for (size_t i = 0; i < limit; ++i) {
-            if (!isCompatible(fn->getParams()[i].type.get(), argTypes[i])) {
+            if (!isArgCompatible(fn->getParams()[i].type.get(), argTypes[i],
+                                 expr->getArgs()[i].get())) {
               match = false; // Argument type mismatch
               break;
             }
           }
 
           if (match) {
-            // Store the match instead of breaking!
-            validMatches.push_back({fn->getReturnType(), {}});
+            auto sig = resolver.resolveFunctionSignature(fn, {});
+            validMatches.push_back({fn->getReturnType(), std::move(sig)});
           }
         }
       }
@@ -1418,6 +1766,12 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
         return;
       } else if (validMatches.size() == 1) {
         lastComputedType = validMatches[0].returnType;
+        std::vector<const Type *> pTypes;
+        for (auto &p : validMatches[0].sig.paramTypes)
+          pTypes.push_back(p.get());
+        const_cast<IdentifierExpr *>(idExpr)->setType(
+            context.createFunctionType(pTypes, lastComputedType));
+        const_cast<CallExpr *>(expr)->setType(lastComputedType);
         if (validMatches[0].sig.returnType) {
           parkedTypes.push_back(std::move(validMatches[0].sig.returnType));
         }
@@ -1447,7 +1801,8 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
 
     size_t limit = std::min(argTypes.size(), params.size());
     for (size_t i = 0; i < limit; ++i) {
-      if (!isCompatible(params[i].get(), argTypes[i])) {
+      if (!isArgCompatible(params[i].get(), argTypes[i],
+                           expr->getArgs()[i].get())) {
         Diags.report(expr->getArgs()[i]->getLoc(), DiagID::err_type_mismatch)
             << "Argument type mismatch";
         hasError = true;
@@ -1468,7 +1823,11 @@ void TypeChecker::visitIndexExpr(const IndexExpr *expr) {
   expr->getArray()->accept(*this);
   const Type *arrType = lastComputedType;
 
+  bool oldLhs = isLHSOfAssignment;
+  isLHSOfAssignment = false;
   expr->getIndex()->accept(*this);
+  isLHSOfAssignment = oldLhs;
+
   const Type *idxType = lastComputedType;
 
   if (auto *at = dynamic_cast<const ArrayType *>(arrType)) {
@@ -1501,6 +1860,8 @@ void TypeChecker::visitIndexExpr(const IndexExpr *expr) {
 void TypeChecker::visitMemberExpr(const MemberExpr *expr) {
   expr->getObject()->accept(*this);
   const Type *objType = lastComputedType;
+
+  objType = unwrapConcurrency(objType);
 
   // Handle Namespace/Module access (e.g., io.open)
   if (auto id = dynamic_cast<const IdentifierExpr *>(expr->getObject())) {
@@ -1670,7 +2031,7 @@ void TypeChecker::visitNewExpr(const NewExpr *expr) {
     if (!cls) {
       Symbol *sym = symbols.lookup(named->getName());
 
-      // [FIX] Handle new Box<T>() where Box is a GenericDecl
+      // Handle new Box<T>() where Box is a GenericDecl
       if (sym && sym->decl && sym->decl->getKind() == StmtKind::GenericDecl) {
         auto gd = static_cast<const GenericDecl *>(sym->decl);
         cls = dynamic_cast<const ClassDecl *>(gd->getInnerDecl());
@@ -1682,7 +2043,9 @@ void TypeChecker::visitNewExpr(const NewExpr *expr) {
       }
 
       // Existing fallback for standard opaque imports
-      if (!cls && sym && sym->kind == SymbolKind::Type) {
+      if (!cls && sym &&
+          (sym->kind == SymbolKind::Type ||
+           (sym->decl && sym->decl->getKind() == StmtKind::ImportDecl))) {
         lastComputedType = expr->getType();
         return;
       }
@@ -1841,7 +2204,7 @@ void TypeChecker::visitAwaitExpr(const AwaitExpr *expr) {
 
   if (auto named = dynamic_cast<const NamedType *>(type)) {
     if (named->getName() == "Promise" && !named->getGenericArgs().empty()) {
-      // [FIX] Correctly access type pointer from GenericArg struct
+      // Correctly access type pointer from GenericArg struct
       lastComputedType = named->getGenericArgs()[0].type.get();
       return;
     }
@@ -1871,15 +2234,13 @@ void TypeChecker::visitVariableDecl(const VariableDecl *decl) {
   }
 
   // --- 1. [NEW] OS-Level Bitfield Validation ---
-  if (decl->bitWidth != -1) {
+  if (decl->getBitWidth() != -1) {
     if (!varType->isInteger()) {
       Diags.report(decl->getLoc(), DiagID::err_type_mismatch)
           << "Bitfields must have an integer type; found '"
           << varType->toString() << "'";
       hasError = true;
     } else {
-      // [FIX] Optional: Add a check if bitWidth exceeds the actual bit-size of
-      // the primitive type
       if (auto prim = dynamic_cast<const PrimitiveType *>(varType)) {
         int maxBits = 0;
         switch (prim->getScalar()) {
@@ -1907,9 +2268,9 @@ void TypeChecker::visitVariableDecl(const VariableDecl *decl) {
           break;
         }
 
-        if (maxBits > 0 && decl->bitWidth > maxBits) {
+        if (maxBits > 0 && decl->getBitWidth() > maxBits) {
           Diags.report(decl->getLoc(), DiagID::err_type_mismatch)
-              << "Bitfield width " << decl->bitWidth
+              << "Bitfield width " << decl->getBitWidth()
               << " exceeds the maximum width of type '" << varType->toString()
               << "' (" << maxBits << " bits)";
           hasError = true;
@@ -1921,7 +2282,7 @@ void TypeChecker::visitVariableDecl(const VariableDecl *decl) {
   // --- 2. Definite Assignment Tracking ---
   if (decl->getInitializer()) {
     initializedVars.insert(decl);
-  } else if (decl->isExtern) {
+  } else if (decl->isExternVar()) {
     // Extern variables are defined elsewhere, so they are considered "assigned"
     initializedVars.insert(decl);
   }
@@ -1939,13 +2300,68 @@ void TypeChecker::visitVariableDecl(const VariableDecl *decl) {
     decl->getInitializer()->accept(*this);
     currentExpectedReturnType = oldRet;
 
+    // 1. C-String Bounds Checking (Runs independently of compatibility)
+    if (auto declArr = dynamic_cast<const ArrayType *>(varType)) {
+      if (isCharType(declArr->getElementType()) &&
+          lastComputedType->isString()) {
+        if (auto strLit =
+                dynamic_cast<const StringLiteral *>(decl->getInitializer())) {
+          if (auto sizeLit = dynamic_cast<const IntegerLiteral *>(
+                  declArr->getSizeExpr())) {
+            uint64_t requiredSize = strLit->getValue().length() + 1;
+            if (sizeLit->getValue() < requiredSize) {
+              Diags.report(decl->getLoc(), DiagID::err_array_length)
+                  << "Char array is too small. '\"" << strLit->getValue()
+                  << "\"' requires " << requiredSize
+                  << " bytes (including '\\0'), but array is size "
+                  << sizeLit->getValue();
+              hasError = true;
+            }
+          }
+        }
+      }
+    }
+
     // Compatibility check
     if (!isCompatible(varType, lastComputedType)) {
       bool customReported = false;
 
+      // Support Lock Elevation: Allow *lock -> *mut if lock is held
+      if (auto id =
+              dynamic_cast<const IdentifierExpr *>(decl->getInitializer())) {
+        // If the RHS type has a lock and that variable name is in activeLocks
+        if (hasLock(lastComputedType) && activeLocks.count(id->getName())) {
+          if (hasMutOrLock(varType)) {
+            customReported = true; // Elevation allowed, skip further errors
+          }
+        }
+      }
+
       // Check for Array Length Mismatch
       if (auto declArr = dynamic_cast<const ArrayType *>(varType)) {
-        if (auto initArr = dynamic_cast<const ArrayType *>(lastComputedType)) {
+        // String Literal to Char Array Bounds Checking
+        if (isCharType(declArr->getElementType()) &&
+            lastComputedType->isString()) {
+          if (auto strLit =
+                  dynamic_cast<const StringLiteral *>(decl->getInitializer())) {
+            if (declArr->getSizeExpr()) {
+              if (auto sizeLit = dynamic_cast<const IntegerLiteral *>(
+                      declArr->getSizeExpr())) {
+                uint64_t requiredSize = strLit->getValue().length() + 1;
+                if (sizeLit->getValue() < requiredSize) {
+                  Diags.report(decl->getLoc(), DiagID::err_array_length)
+                      << "Char array is too small. '\"" << strLit->getValue()
+                      << "\"' requires " << requiredSize
+                      << " bytes (including '\\0'), but array is size "
+                      << sizeLit->getValue();
+                  customReported = true;
+                  hasError = true;
+                }
+              }
+            }
+          }
+        } else if (auto initArr =
+                       dynamic_cast<const ArrayType *>(lastComputedType)) {
           if (declArr->getSizeExpr() && initArr->getSizeExpr()) {
             auto dSize =
                 dynamic_cast<const IntegerLiteral *>(declArr->getSizeExpr());
@@ -1963,15 +2379,18 @@ void TypeChecker::visitVariableDecl(const VariableDecl *decl) {
       }
 
       if (!customReported) {
-        if (lastComputedType->is<NullType>() && !varType->is<NullableType>() &&
+        const Type *unwrappedVar = unwrapConcurrency(varType);
+        bool isActuallyNullable = unwrappedVar->is<NullableType>();
+
+        if (lastComputedType->is<NullType>() && !isActuallyNullable &&
             !varType->is<AnyType>()) {
           Diags.report(decl->getLoc(), DiagID::err_null_assignment)
               << " '" << varType->toString() << "'";
           hasError = true;
         } else {
           Diags.report(decl->getLoc(), DiagID::err_type_mismatch)
-              << "Initializer type mismatch. Expected '" << varType->toString()
-              << "' but found '" << lastComputedType->toString() << "'";
+              << "Expected '" << varType->toString() << "' but found '"
+              << lastComputedType->toString() << "'";
           hasError = true;
         }
       }
@@ -1987,8 +2406,8 @@ void TypeChecker::visitVariableDecl(const VariableDecl *decl) {
   if (!symbols.isDefinedInCurrentScope(decl->getName())) {
     Symbol sym(SymbolKind::Variable, decl->getName(), effectiveType, decl);
 
-    // [CRITICAL] Transfer the bitWidth to the Symbol Table
-    sym.bitWidth = decl->bitWidth;
+    // Transfer the bitWidth to the Symbol Table
+    sym.bitWidth = decl->getBitWidth();
 
     if (!symbols.addSymbol(decl->getName(), sym, decl->getLoc())) {
       Diags.report(decl->getLoc(), DiagID::err_symbol_redefinition)
@@ -1996,7 +2415,7 @@ void TypeChecker::visitVariableDecl(const VariableDecl *decl) {
       hasError = true;
     }
   } else {
-    // [FIX] Update the pre-registered global variable with the resolved type!
+    // Update the pre-registered global variable with the resolved type!
     if (Symbol *existing = symbols.lookup(decl->getName())) {
       if (existing->decl == decl) {
         existing->type = effectiveType;
@@ -2047,12 +2466,15 @@ void TypeChecker::visitFunctionDecl(const FunctionDecl *decl) {
 
   const Type *prevRet = currentExpectedReturnType;
   bool prevStatic = inStaticContext;
-
-  currentExpectedReturnType = retType; // Use the resolved retType
-  inStaticContext = decl->isStaticFunc();
-
   bool prevInterrupt = inInterruptContext;
-  inInterruptContext = decl->isInterrupt;
+  bool prevConstructor = inConstructorContext;
+
+  currentExpectedReturnType = retType;
+  inStaticContext = decl->isStaticFunc();
+  inInterruptContext = decl->isInterruptFunc();
+
+  // We are in a constructor if the function is literally named 'constructor'
+  inConstructorContext = (decl->getName() == "constructor");
 
   // Register all parameters as local variables inside the function scope
   for (size_t i = 0; i < decl->getParams().size(); ++i) {
@@ -2079,6 +2501,7 @@ void TypeChecker::visitFunctionDecl(const FunctionDecl *decl) {
 
   inStaticContext = prevStatic;
   inInterruptContext = prevInterrupt;
+  inConstructorContext = prevConstructor;
   currentExpectedReturnType = prevRet;
   symbols.exitScope();
 }
@@ -2331,12 +2754,9 @@ void TypeChecker::visitSwitchStmt(const SwitchStmt *stmt) {
           coveredCases.end()) {
         Diags.report(stmt->getLoc(), DiagID::warn_switch_not_exhaustive)
             << "Switch is missing case: " << enumCase.name;
-        hasError = true;
         missingCases = true;
       }
     }
-    // If no cases are missing, the enum is exhaustive even without a
-    // default!
     if (!missingCases) {
       isExhaustive = true;
     }
@@ -2461,11 +2881,33 @@ void TypeChecker::visitAsmStmt(const AsmStmt *stmt) {
   // Inline assembly is treated as an opaque block; no semantic check needed
 }
 
+void TypeChecker::visitLockStmt(const LockStmt *stmt) {
+  if (auto id = dynamic_cast<const IdentifierExpr *>(stmt->getTarget())) {
+    activeLocks.insert(id->getName()); // Grant capability
+  }
+  if (stmt->getBody())
+    stmt->getBody()->accept(*this);
+  if (auto id = dynamic_cast<const IdentifierExpr *>(stmt->getTarget())) {
+    activeLocks.erase(id->getName()); // Revoke capability
+  }
+}
+
 // --- Top-Level Declarations ---
 
 void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
+  // --- Pass 1: Global Symbol Registration ---
+  // Registers all names so they are visible regardless of definition order.
   for (const auto &d : decl->getDecls()) {
-    if (auto fd = dynamic_cast<const FunctionDecl *>(d.get())) {
+
+    // [FIX] Safely unwrap the declaration if the parser wrapped it in a
+    // DeclStmt
+    const Decl *currentDecl = d.get();
+    if (auto ds = dynamic_cast<const DeclStmt *>(currentDecl)) {
+      currentDecl = ds->getDecl();
+    }
+
+    // 1. Functions (Standard & Generic)
+    if (auto fd = dynamic_cast<const FunctionDecl *>(currentDecl)) {
       std::vector<const Type *> pTypes;
       for (auto &p : fd->getParams())
         pTypes.push_back(p.type.get());
@@ -2474,13 +2916,17 @@ void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
       symbols.addSymbol(fd->getName(),
                         Symbol(SymbolKind::Function, fd->getName(), fnType, fd),
                         fd->getLoc());
-    } else if (auto cd = dynamic_cast<const ClassDecl *>(d.get())) {
+    }
+    // 2. Classes (Standard)
+    else if (auto cd = dynamic_cast<const ClassDecl *>(currentDecl)) {
       symbols.addSymbol(cd->getName(),
                         Symbol(SymbolKind::Class, cd->getName(),
                                context.createNamedType(cd->getName()), cd),
                         cd->getLoc());
       context.registerClass(cd);
-    } else if (auto gd = dynamic_cast<const GenericDecl *>(d.get())) {
+    }
+    // 3. Generic Declarations (Classes, Functions, or Variables)
+    else if (auto gd = dynamic_cast<const GenericDecl *>(currentDecl)) {
       if (auto innerClass =
               dynamic_cast<const ClassDecl *>(gd->getInnerDecl())) {
         symbols.addSymbol(innerClass->getName(),
@@ -2495,28 +2941,62 @@ void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
                           Symbol(SymbolKind::Function, innerFunc->getName(),
                                  context.getAnyType(), gd),
                           gd->getLoc());
+      } else if (auto innerVar =
+                     dynamic_cast<const VariableDecl *>(gd->getInnerDecl())) {
+        symbols.addSymbol(innerVar->getName(),
+                          Symbol(SymbolKind::Variable, innerVar->getName(),
+                                 innerVar->getType(), gd),
+                          gd->getLoc());
       }
-    } else if (auto vd = dynamic_cast<const VariableDecl *>(d.get())) {
+    }
+    // 4. Variables (Global / TLS / Static)
+    else if (auto vd = dynamic_cast<const VariableDecl *>(currentDecl)) {
       symbols.addSymbol(
           vd->getName(),
           Symbol(SymbolKind::Variable, vd->getName(), vd->getType(), vd),
           vd->getLoc());
     }
+    // 5. Imports (Brings symbols from other modules into current scope)
+    else if (auto id = dynamic_cast<const ImportDecl *>(currentDecl)) {
+      id->accept(*this); // Register imported symbols immediately
+    }
+    // 6. Enums
+    else if (auto ed = dynamic_cast<const EnumDecl *>(currentDecl)) {
+      symbols.addSymbol(ed->getName(),
+                        Symbol(SymbolKind::Type, ed->getName(),
+                               context.createNamedType(ed->getName()), ed),
+                        ed->getLoc());
+    }
   }
 
-  // [FIX] Pass 1.5: Evaluate aliases BEFORE type-checking variables
+  // --- Pass 1.5: Alias Registration ---
   for (const auto &d : decl->getDecls()) {
-    if (auto ud = dynamic_cast<const UsingDecl *>(d.get())) {
+    const Decl *currentDecl = d.get();
+    if (auto ds = dynamic_cast<const DeclStmt *>(currentDecl)) {
+      currentDecl = ds->getDecl();
+    }
+
+    if (auto ud = dynamic_cast<const UsingDecl *>(currentDecl)) {
       ud->accept(*this);
     }
   }
 
-  // Pass 2: Type checking
+  // --- Pass 2: Full Type Checking ---
   for (const auto &d : decl->getDecls()) {
-    // [FIX] Skip UsingDecl as it's already processed
-    if (!dynamic_cast<const UsingDecl *>(d.get())) {
-      d->accept(*this);
+    const Decl *checkDecl = d.get();
+    if (auto ds = dynamic_cast<const DeclStmt *>(checkDecl)) {
+      checkDecl = ds->getDecl();
     }
+
+    // Skip Decls already fully processed in Pass 1/1.5
+    if (dynamic_cast<const UsingDecl *>(checkDecl) ||
+        dynamic_cast<const ImportDecl *>(checkDecl) ||
+        dynamic_cast<const EnumDecl *>(checkDecl)) {
+      continue;
+    }
+
+    // Call accept on the original AST node to preserve AST traversal
+    d->accept(*this);
   }
 }
 
@@ -2748,6 +3228,13 @@ void TypeChecker::visitReferenceType(const ReferenceType *t) {
 }
 void TypeChecker::visitArrayType(const ArrayType *t) {
   t->getElementType()->accept(*this);
+  if (t->getSizeExpr()) {
+    if (!dynamic_cast<const IntegerLiteral *>(t->getSizeExpr())) {
+      Diags.report(t->getSizeExpr()->getLoc(), DiagID::err_type_mismatch)
+          << "Array size must be a constant integer literal";
+      hasError = true;
+    }
+  }
   lastComputedType = t;
 }
 void TypeChecker::visitMapType(const MapType *t) {
@@ -2784,9 +3271,11 @@ void TypeChecker::visitNamedType(const NamedType *t) {
     return;
   }
 
-  // [FIX] Set the type, but DO NOT early return. Fall through to validation!
+  // Set the type, but DO NOT early return. Fall through to validation!
   if (sym && sym->decl && sym->decl->getKind() == StmtKind::GenericDecl) {
     lastComputedType = t; // Preserve the generic arguments!
+  } else if (sym && sym->decl && sym->decl->getKind() == StmtKind::ImportDecl) {
+    lastComputedType = t; // Preserve generic arguments for opaque imports too!
   } else if (sym && sym->type) {
     lastComputedType = sym->type;
   } else if (cls) {

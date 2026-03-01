@@ -99,7 +99,7 @@ private:
 
   // --- Visitor Implementations ---
 
-  // [FIX] Signature updated to match ConstHIRVisitor (reference instead of
+  // Signature updated to match ConstHIRVisitor (reference instead of
   // pointer)
   void visitFunction(const hir::HIRFunction &func) override {
     currFunc = mirModule->getFunction(func.getName());
@@ -187,6 +187,8 @@ private:
   void visitTryCatchStmt(const hir::TryCatchStmt &) override {}
   void visitLockStmt(const hir::LockStmt &) override {}
   void visitExprStmt(const hir::ExprStmt &) override {}
+  void visitAsmStmt(const hir::HIRAsmStmt &) override {}
+  void visitThrowStmt(const hir::HIRThrowStmt &) override {}
 
   void visitUnsafeBlockStmt(const hir::UnsafeBlockStmt &stmt) override {
     visitBlockStmt(stmt);
@@ -216,12 +218,18 @@ private:
     lastExprValue = new ConstantInt(expr.getValue(), nullptr);
   }
 
+  void visitSpreadExpr(const hir::HIRSpreadExpr &expr) override {
+    visit(expr.getIterable());
+  }
+
   // Expression Stubs
   void visitFloatLiteral(const hir::HIRFloatLiteral &) override {}
   void visitBoolLiteral(const hir::HIRBoolLiteral &) override {}
   void visitStringLiteral(const hir::HIRStringLiteral &) override {}
+  void visitTemplateStringExpr(const hir::HIRTemplateStringExpr &) override {}
   void visitNullLiteral(const hir::HIRNullLiteral &) override {}
   void visitArrayLiteral(const hir::HIRArrayLiteral &) override {}
+  void visitMapLiteral(const hir::HIRMapLiteral &) override {}
 
   void visitIdentifierExpr(const hir::HIRIdentifierExpr &expr) override {
     if (symbolMap.count(expr.getName())) {
@@ -241,6 +249,11 @@ private:
   void visitLambdaExpr(const hir::HIRLambdaExpr &) override {}
   void visitThreadExpr(const hir::HIRThreadExpr &) override {}
   void visitThisExpr(const hir::HIRThisExpr &) override {}
+  void visitSizeOfExpr(const hir::HIRSizeOfExpr &) override {}
+  void visitAwaitExpr(const hir::HIRAwaitExpr &) override {}
+  void visitSuperExpr(const hir::HIRSuperExpr &) override {}
+  void visitDerefExpr(const hir::HIRDerefExpr &) override {}
+  void visitAddressOfExpr(const hir::HIRAddressOfExpr &) override {}
 
   void visit(const hir::HIRStmt *stmt) {
     if (stmt)

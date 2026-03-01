@@ -1,0 +1,27 @@
+void test_cfg_merging() {
+    mut int data = 42
+    mut *mut int p_mut = null
+    mut *view int p_view = null
+
+    bool condition = true
+
+    if (condition) {
+        p_mut = &data
+    } else {
+        p_view = &data
+    }
+
+    // ERROR EXPECTED HERE: The compiler must union the branches.
+    *mut int illegal_alias = &data
+
+    mut int x = 10
+    mut int y = 20
+    mut *mut int ptr = &x
+
+    if (false) {
+        ptr = &y
+    }
+
+    // ERROR EXPECTED HERE: ptr MIGHT still point to x.
+    *mut int alias_x = &x
+}

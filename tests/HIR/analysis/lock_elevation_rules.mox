@@ -1,0 +1,13 @@
+void test_lock_elevation() {
+    lock int shared_data = 100
+    *lock int p = &shared_data
+
+    lock (p) {
+        // Test: Implicit elevation allows direct mutation
+        *p = 200
+
+        // Test: Inside the lock, you can take a shared read (view)
+        *view int v = p
+        int read = *v
+    }
+}

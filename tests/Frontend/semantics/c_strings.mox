@@ -1,0 +1,23 @@
+void test_valid_c_strings() {
+    // 1. 1D Array with String Literal (Exact fit)
+     char[6] str1 = "Hello";
+
+    // 2. 1D Array with String Literal (Loose fit - padded with nulls)
+     char[10] str2 = "Hi";
+
+    // 3. 1D Array with Char Array Literal
+    // (Standard array rules require an exact element count match here)
+     char[6] str3 = ['H', 'e', 'l', 'l', 'o', '\0'];
+
+    // 4. 2D Array with String Literals
+    // The inner dimension is 10, which comfortably holds both 7-byte and 8-byte strings
+     char[2][10] arr1 = ["Hello ", "World !"];
+
+    // 5. Implicit String Decay (Interoperability)
+    // A char array can seamlessly decay into a standard string type
+    string decayed_str = str1;
+
+    // 6. Safe Reassignment
+    // "Reassign" takes 9 bytes (8 + '\0'), which safely fits in the 10-byte capacity
+    str2 = "Reassign";
+}

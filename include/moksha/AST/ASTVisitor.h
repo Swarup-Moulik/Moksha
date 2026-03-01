@@ -82,6 +82,7 @@ public:
   virtual void visitTryCatchStmt(const TryCatchStmt *stmt) = 0;
   virtual void visitThrowStmt(const ThrowStmt *stmt) = 0;
   virtual void visitAsmStmt(const AsmStmt *stmt) = 0;
+  virtual void visitLockStmt(const LockStmt *stmt) = 0;
 };
 
 } // namespace moksha
