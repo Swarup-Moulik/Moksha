@@ -77,6 +77,8 @@ private:
   StmtPtr parseThrowStmt();
   StmtPtr parseUnsafeBlock();
   StmtPtr parseLockStmt();
+  StmtPtr parseForInStmt();
+  StmtPtr parseAsmStmt();
 
   ExprPtr parseExpression();
   ExprPtr parseAssignment();
@@ -98,14 +100,16 @@ private:
   ExprPtr parsePostfix();
   ExprPtr parsePrimary();
   ExprPtr parseNewExpr();
+  ExprPtr parseInputExpr();
 
   ExprPtr parseStringLiteral();
-  ExprPtr parseLambdaBody(std::vector<LambdaParam> params);
+  ExprPtr parseLambdaBody(std::vector<LambdaParam> params, CaptureMode mode);
   ExprPtr parseArrayLiteral();
   ExprPtr parseMapLiteral();
   ExprPtr parseTemplateString();
 
   TypePtr parseType();
+  TypePtr parseClosureType();
 };
 
 } // namespace moksha

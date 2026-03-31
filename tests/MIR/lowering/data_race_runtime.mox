@@ -1,0 +1,17 @@
+void risky_thread_work() {}
+
+void test_runtime_locks() {
+    lock int shared_state = 100;
+    *lock int p = &shared_state;
+
+    // The MIR lowering phase must wrap this critical section in runtime mutex calls.
+    lock (p) {
+        *p = 200;
+
+        // Because this function can throw, the MIR lowerer MUST use an `invoke`
+        // and put a duplicate `moksha_mutex_unlock` inside the catch/landingpad block
+        // to prevent permanent thread deadlocks!
+        risky_thread_work();
+
+    } // Standard unlock happens here
+}

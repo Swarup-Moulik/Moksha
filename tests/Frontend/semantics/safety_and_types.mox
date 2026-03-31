@@ -16,7 +16,7 @@ void kernel_init() {
 
     // --- 3. Mutability Model ---
     // Verifies aliasing rules for lock, mut, and view
-    mut int counter = 0;
+    int counter = 0;
 
     // [FIX] 'view' must be applied to a reference or pointer, not a value
     view int v = counter;

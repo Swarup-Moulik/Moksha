@@ -1,0 +1,12 @@
+void test_loop(bool flag1, bool flag2) {
+    int i = 0;
+    while (i < 10) {
+        if (flag1) {
+            continue; // Jumps to while.cond
+        }
+        if (flag2) {
+            break;    // Jumps to while.end
+        }
+        i = i + 1;
+    }
+}

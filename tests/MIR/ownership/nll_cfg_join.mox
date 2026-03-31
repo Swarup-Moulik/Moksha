@@ -1,0 +1,13 @@
+void test_join(bool cond) {
+    int data = 100;
+
+    if (cond) {
+        *mut int m = &data;
+        *m = 200;
+        // 'm' dies here
+    }
+
+    // It is perfectly safe to borrow 'data' again because 'm' did not survive the join!
+    *mut int m2 = &data;
+    *m2 = 300;
+}

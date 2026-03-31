@@ -1,0 +1,57 @@
+void error_mutate_while_view_borrowed() {
+    int a = 10;
+    closure() -> int view_closure = &() => { return a; };
+
+    // [ERROR] Borrow checker violation: Cannot mutate memory because it is currently borrowed.
+    a = 20;
+
+    view_closure(); // Keeps the borrow alive
+}
+
+void error_read_while_mut_borrowed() {
+    int b = 10;
+    closure() -> void mut_closure = &mut () => { b = 20; };
+
+    // [ERROR] Borrow checker violation: Cannot borrow memory immutably because it is currently borrowed mutably.
+    int temp = b;
+
+    mut_closure(); // Keeps the borrow alive
+}
+
+void error_capture_borrowed_mutably() {
+    int c = 10;
+    closure() -> void mut_closure1 = &mut () => { c = c + 1; };
+
+    // [ERROR] Borrow checker violation: Cannot capture memory immutably because it is currently borrowed mutably.
+    closure() -> int view_closure = &() => { return c; };
+
+    mut_closure1(); // Keeps the mut borrow alive
+}
+
+void error_multiple_mut_closures() {
+    int x = 100;
+    closure() -> void mut_closure1 = &mut () => { x = x + 1; };
+
+    // [ERROR] Borrow checker violation: Cannot capture memory mutably because it is already borrowed.
+    closure() -> void mut_closure2 = &mut () => { x = x + 2; };
+
+    mut_closure1();
+}
+
+void error_use_after_move_capture() {
+    string d = "world";
+
+    // Moves the string into the closure
+    closure() -> string move_closure = move () => { return d; };
+
+    // [ERROR] Use of moved value. The memory was previously moved or dropped.
+    string temp2 = d;
+}
+
+void error_capture_moved_value() {
+    string e = "moksha";
+    string f = e; // Ownership of the string moves to 'f'
+
+    // [ERROR] Borrow checker violation: Cannot capture a value that has already been moved.
+    closure() -> string bad_closure = &() => { return e; };
+}

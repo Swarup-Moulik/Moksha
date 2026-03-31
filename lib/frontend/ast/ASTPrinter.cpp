@@ -206,6 +206,11 @@ void ASTPrinter::visitArrayType(const ArrayType *type) {
   }
 }
 
+void ASTPrinter::visitSliceType(const SliceType *type) {
+  print(type->getElementType());
+  OS << "[]";
+}
+
 void ASTPrinter::visitNamedType(const NamedType *type) {
   OS << type->getName();
   if (!type->getGenericArgs().empty()) {
@@ -251,6 +256,8 @@ void ASTPrinter::visitNullableType(const NullableType *type) {
   if (auto arrInner = llvm::dyn_cast<ArrayType>(type->getInner())) {
     arrInner->getElementType()->accept(*this);
     OS << "?[]";
+  } else if (llvm::isa<WeakType>(type->getInner())) {
+    type->getInner()->accept(*this);
   } else {
     type->getInner()->accept(*this);
     OS << "?";
@@ -274,6 +281,11 @@ void ASTPrinter::visitMutType(const MutType *type) {
   print(type->getInner());
 }
 
+void ASTPrinter::visitWeakType(const WeakType *type) {
+  OS << "weak ";
+  type->getInner()->accept(*this);
+}
+
 void ASTPrinter::visitEnumType(const EnumType *type) {
   OS << "enum " << type->getName();
 }
@@ -290,6 +302,21 @@ void ASTPrinter::visitConstType(const ConstType *type) {
   print(type->getInner());
 }
 
+void ASTPrinter::visitDecimalType(const DecimalType *type) {
+  OS << type->toString();
+}
+
+void ASTPrinter::visitClosureType(const ClosureType *type) {
+  OS << "closure(";
+  for (size_t i = 0; i < type->getParamTypes().size(); ++i) {
+    print(type->getParamTypes()[i].get());
+    if (i < type->getParamTypes().size() - 1)
+      OS << ", ";
+  }
+  OS << ") -> ";
+  print(type->getReturnType());
+}
+
 // --- Expressions ---
 
 void ASTPrinter::visitIntegerLiteral(const IntegerLiteral *expr) {
@@ -298,8 +325,16 @@ void ASTPrinter::visitIntegerLiteral(const IntegerLiteral *expr) {
 void ASTPrinter::visitFloatLiteral(const FloatLiteral *expr) {
   OS << expr->getValue();
 }
+void ASTPrinter::visitDecimalLiteral(const DecimalLiteral *expr) {
+  // Print the raw exact string plus the 'd' suffix
+  OS << expr->getValue() << "d";
+}
 void ASTPrinter::visitStringLiteral(const StringLiteral *expr) {
-  OS << "\"" << expr->getValue() << "\"";
+  if (expr->isTemplateString()) {
+    OS << expr->getValue(); // Raw output for template parts
+  } else {
+    OS << "\"" << expr->getValue() << "\""; // Standard string
+  }
 }
 void ASTPrinter::visitBoolLiteral(const BoolLiteral *expr) {
   OS << (expr->getValue() ? "true" : "false");
@@ -354,6 +389,9 @@ void ASTPrinter::visitAwaitExpr(const AwaitExpr *expr) {
 void ASTPrinter::visitMemberExpr(const MemberExpr *expr) {
   expr->getObject()->accept(*this);
   OS << (expr->isOptionalAccess() ? "?." : ".") << expr->getName();
+  if (expr->isVirtualMethod()) {
+    OS << " /* virtual vtable[" << expr->getMemberIndex() << "] */";
+  }
 }
 
 void ASTPrinter::visitIndexExpr(const IndexExpr *expr) {
@@ -364,6 +402,19 @@ void ASTPrinter::visitIndexExpr(const IndexExpr *expr) {
 }
 
 void ASTPrinter::visitLambdaExpr(const LambdaExpr *expr) {
+  switch (expr->getCaptureMode()) {
+  case CaptureMode::View:
+    OS << "&";
+    break;
+  case CaptureMode::Mut:
+    OS << "&mut ";
+    break;
+  case CaptureMode::Move:
+    OS << "move ";
+    break;
+  case CaptureMode::Snapshot:
+    break; // Default, print nothing
+  }
   OS << "(";
   for (size_t i = 0; i < expr->getParams().size(); ++i) {
     if (i > 0)
@@ -422,6 +473,14 @@ void ASTPrinter::visitTemplateStringExpr(const TemplateStringExpr *expr) {
 void ASTPrinter::visitThreadExpr(const ThreadExpr *expr) {
   OS << "new " << (expr->isWeakThread() ? "weak " : "") << "Thread() => ";
   expr->getBody()->accept(*this);
+}
+
+void ASTPrinter::visitInputExpr(const InputExpr *expr) {
+  OS << "input(";
+  if (expr->getPrompt()) {
+    print(expr->getPrompt());
+  }
+  OS << ")";
 }
 
 void ASTPrinter::visitArrayLiteral(const ArrayLiteral *expr) {
@@ -607,11 +666,12 @@ void ASTPrinter::visitFunctionDecl(const FunctionDecl *decl) {
   printIndent();
   if (decl->isExternFunc()) {
     OS << "extern ";
-    // Assuming you store the linkage string like "C" or "stdcall"
     if (!decl->getExternLinkage().empty()) {
       OS << "\"" << decl->getExternLinkage() << "\" ";
     }
   }
+
+  // --- System & Optimization Attributes ---
   if (decl->isInterruptFunc())
     OS << "interrupt ";
   if (decl->isNakedFunc())
@@ -620,16 +680,31 @@ void ASTPrinter::visitFunctionDecl(const FunctionDecl *decl) {
     OS << "noreturn ";
   if (decl->isNoInlineFunc())
     OS << "noinline ";
+  if (decl->isInlineFunc())
+    OS << "inline ";
+  if (decl->isPureFunc())
+    OS << "pure ";
+  if (decl->isColdFunc())
+    OS << "cold ";
   if (decl->isUsedFunc())
     OS << "used ";
   if (!decl->getSection().empty()) {
     OS << "section(\"" << decl->getSection() << "\") ";
   }
+
+  // --- Standard Modifiers ---
   printVisibility(decl->getVisibility());
   if (decl->isStaticFunc())
     OS << "static ";
   if (decl->isAsyncFunc())
     OS << "async ";
+  if (decl->isVirtualFunc()) {
+    OS << "virtual ";
+    if (decl->getVTableIndex() != -1)
+      OS << "/*vtable_idx=" << decl->getVTableIndex() << "*/ ";
+  }
+  if (decl->isOverrideFunc())
+    OS << " override";
   if (decl->isWeakFunc())
     OS << "weak ";
 
@@ -706,6 +781,8 @@ void ASTPrinter::visitClassDecl(const ClassDecl *decl) {
   printIndent();
   if (decl->isPackedClass())
     OS << "packed ";
+  if (decl->hasVTable())
+    OS << "/*has_vtable*/ ";
   if (!decl->getSection().empty()) {
     OS << "section(\"" << decl->getSection() << "\") ";
   }
@@ -757,7 +834,9 @@ void ASTPrinter::visitGenericDecl(const GenericDecl *decl) {
   OS << "generic <";
   const auto &params = decl->getTypeParams();
   for (size_t i = 0; i < params.size(); ++i) {
-    OS << params[i];
+    if (params[i].isShared)
+      OS << "shared ";
+    OS << params[i].name;
     if (i < params.size() - 1)
       OS << ", ";
   }

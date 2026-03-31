@@ -31,7 +31,7 @@ struct AtomicData {
 }
 
 void test_alignment() {
-    mut AtomicData d; // FIX: Struct must be mutable to mutate its fields
+    AtomicData d;
     d.val = 0_i64;
 
     // Safe because d is mut

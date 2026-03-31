@@ -12,7 +12,7 @@ namespace moksha {
 class Decl;
 class ASTContext;
 
-enum class SymbolKind { Variable, Function, Type, Class, Module };
+enum class SymbolKind { Variable, Function, Type, Class, Module, Macro };
 
 // [Requirement 1] Symbol Definition
 struct Symbol {

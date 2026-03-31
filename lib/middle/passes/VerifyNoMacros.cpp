@@ -5,20 +5,13 @@
 #include "moksha/HIR/HIRModule.h"
 #include "moksha/HIR/HIRStmt.h"
 #include "moksha/HIR/HIRVisitor.h"
-// #include "moksha/Support/Diagnostics.h"
+#include "moksha/Support/Diagnostics.h"
 
 // Needed for std::remove_const_t
 #include <type_traits>
 
 namespace moksha {
 namespace mir {
-
-// [FIX] Stub DiagnosticEngine locally if header is missing
-namespace {
-struct DiagnosticEngine {
-  template <typename... Args> void report(Args... args) {}
-};
-} // namespace
 
 namespace {
 
@@ -42,12 +35,21 @@ private:
   // Bridges the gap between pointer-based AST navigation and the
   // reference-based Visitor interface.
   template <typename T> void dispatch(T *node) {
-    if (node && !hasMacro) {
-      // Cast away constness to match visitor signature (T&)
-      auto *nonConstNode = const_cast<std::remove_const_t<T> *>(node);
-      nonConstNode->accept(*this);
+      if (node && !hasMacro) {
+        // Check if this node IS a macro before we dispatch!
+        // Assuming your AST/HIR nodes have a way to identify macros, or
+        // if you are identifying them inside specific visit methods:
+
+        auto *nonConstNode = const_cast<std::remove_const_t<T> *>(node);
+        nonConstNode->accept(*this);
+
+        // If the visitor triggered the flag, report it at this node's location
+        // (Requires your HIR nodes to have a getLoc() method)
+        if (hasMacro) {
+           diags.report(node->getLoc(), DiagID::err_unexpanded_macro);
+        }
+      }
     }
-  }
 
   // --- Structural Entry Points (NOT Overrides) ---
 
@@ -287,9 +289,18 @@ private:
     dispatch(expr.getIterable());
   }
 
+  void visitInputExpr(hir::HIRInputExpr &expr) override {
+    if (hasMacro)
+      return;
+    if (expr.getPrompt()) {
+      dispatch(expr.getPrompt());
+    }
+  }
+
   // Literals are safe
   void visitIntegerLiteral(hir::HIRIntegerLiteral &) override {}
   void visitFloatLiteral(hir::HIRFloatLiteral &) override {}
+  void visitDecimalLiteral(hir::HIRDecimalLiteral &expr) override {}
   void visitBoolLiteral(hir::HIRBoolLiteral &) override {}
   void visitStringLiteral(hir::HIRStringLiteral &) override {}
   void visitNullLiteral(hir::HIRNullLiteral &) override {}

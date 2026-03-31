@@ -27,6 +27,7 @@ class HIRAsmStmt;
 // --- Forward Declarations (Expressions) ---
 class HIRIntegerLiteral;
 class HIRFloatLiteral;
+class HIRDecimalLiteral;
 class HIRBoolLiteral;
 class HIRStringLiteral;
 class HIRTemplateStringExpr;
@@ -54,6 +55,7 @@ class HIRAwaitExpr;
 class HIRSuperExpr;
 class HIRDerefExpr;
 class HIRAddressOfExpr;
+class HIRInputExpr;
 
 // ============================================================================
 // [Expression Visitor Interface]
@@ -66,6 +68,7 @@ public:
   // Literals
   virtual void visitIntegerLiteral(HIRIntegerLiteral &expr) = 0;
   virtual void visitFloatLiteral(HIRFloatLiteral &expr) = 0;
+  virtual void visitDecimalLiteral(HIRDecimalLiteral &expr) = 0;
   virtual void visitBoolLiteral(HIRBoolLiteral &expr) = 0;
   virtual void visitStringLiteral(HIRStringLiteral &expr) = 0;
   virtual void visitTemplateStringExpr(HIRTemplateStringExpr &expr) = 0;
@@ -96,6 +99,7 @@ public:
   virtual void visitSuperExpr(HIRSuperExpr &expr) = 0;
   virtual void visitDerefExpr(HIRDerefExpr &expr) = 0;
   virtual void visitAddressOfExpr(HIRAddressOfExpr &expr) = 0;
+  virtual void visitInputExpr(HIRInputExpr &expr) = 0;
 };
 
 // ============================================================================
@@ -153,6 +157,7 @@ public:
 
   virtual void visitIntegerLiteral(const HIRIntegerLiteral &expr) = 0;
   virtual void visitFloatLiteral(const HIRFloatLiteral &expr) = 0;
+  virtual void visitDecimalLiteral(const HIRDecimalLiteral &expr) = 0;
   virtual void visitBoolLiteral(const HIRBoolLiteral &expr) = 0;
   virtual void visitStringLiteral(const HIRStringLiteral &expr) = 0;
   virtual void visitTemplateStringExpr(const HIRTemplateStringExpr &expr) = 0;
@@ -180,6 +185,7 @@ public:
   virtual void visitSuperExpr(const HIRSuperExpr &expr) = 0;
   virtual void visitDerefExpr(const HIRDerefExpr &expr) = 0;
   virtual void visitAddressOfExpr(const HIRAddressOfExpr &expr) = 0;
+  virtual void visitInputExpr(const HIRInputExpr &expr) = 0;
 };
 
 class ConstHIRStmtVisitor {

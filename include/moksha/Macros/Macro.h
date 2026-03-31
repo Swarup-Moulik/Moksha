@@ -132,6 +132,7 @@ public:
   void visitPointerType(const PointerType *) override {}
   void visitReferenceType(const ReferenceType *) override {}
   void visitArrayType(const ArrayType *) override {}
+  void visitSliceType(const SliceType *type) override;
   void visitMapType(const MapType *) override {}
   void visitFunctionType(const FunctionType *) override {}
   void visitNamedType(const NamedType *) override {}
@@ -144,9 +145,13 @@ public:
   void visitNullType(const NullType *) override {}
   void visitVolatileType(const VolatileType *type) override;
   void visitConstType(const ConstType *type) override;
+  void visitWeakType(const WeakType *type) override {}
+  void visitDecimalType(const DecimalType *) override {}
+  void visitClosureType(const ClosureType *type) override;
 
   void visitIntegerLiteral(const IntegerLiteral *) override {}
   void visitFloatLiteral(const FloatLiteral *) override {}
+  void visitDecimalLiteral(const DecimalLiteral *) override {}
   void visitStringLiteral(const StringLiteral *) override {}
   void visitBoolLiteral(const BoolLiteral *) override {}
   void visitNullLiteral(const NullLiteral *) override {}
@@ -169,6 +174,7 @@ public:
   void visitSuperExpr(const SuperExpr *) override {}
   void visitAwaitExpr(const AwaitExpr *) override {}
   void visitSizeOfExpr(const SizeOfExpr *) override {}
+  void visitInputExpr(const InputExpr *expr) override;
 
   void visitVariableDecl(const VariableDecl *) override {}
   void visitImportDecl(const ImportDecl *) override {}

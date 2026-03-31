@@ -1,0 +1,12 @@
+ref class Mutex {
+    void drop() { /* releases system lock */ }
+}
+
+void test_no_elision() {
+    Mutex m = new Mutex();
+    {
+        // Even though copy is never used, the Retain/Release CANNOT be elided,
+        // because the Release triggers drop() which has side effects.
+        Mutex copy = m;
+    }
+}

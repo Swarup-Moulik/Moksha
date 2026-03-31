@@ -1,0 +1,17 @@
+struct Point {
+    int x;
+    int y;
+}
+
+void test_fields() {
+    Point p;
+
+    p.x = 0;
+    p.y = 0;
+
+    *mut int mx = &p.x;
+    *mut int my = &p.y; // MUST SUCCEED: Independent fields
+
+    *mx = 10;
+    *my = 20;
+}

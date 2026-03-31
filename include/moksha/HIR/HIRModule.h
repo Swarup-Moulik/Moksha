@@ -42,14 +42,29 @@ public:
   HIRFloatType *getFloatType(uint16_t width);
 
   StructType *getStructType(std::string name,
-                            std::vector<const HIRType *> fields);
-  UnionType *getUnionType(std::string name,
-                          std::vector<const HIRType *> fields);
-  PointerType *getPointerType(const HIRType *pointee, Ownership own);
+                            std::vector<const HIRType *> fields,
+                            std::vector<std::string> fieldNames = {});
+  UnionType *getUnionType(std::string name, std::vector<const HIRType *> fields,
+                          std::vector<std::string> fieldNames = {});
+  PointerType *getPointerType(const HIRType *pointee, Ownership own,
+                              BorrowState state = BorrowState::None);
   FunctionType *getFunctionType(const HIRType *ret,
-                                std::vector<const HIRType *> params);
+                                std::vector<const HIRType *> params,
+                                bool isVariadic = false,
+                                bool isInterrupt = false);
+  HIRClosureType *getClosureType(const HIRType *ret,
+                                 std::vector<const HIRType *> params);
   ArrayType *getArrayType(const HIRType *element, uint64_t size);
+  SliceType *getSliceType(const HIRType *element);
   HIRNullableType *getNullableType(const HIRType *inner);
+  HIRWeakType *getWeakType(const HIRType *inner);
+  HIRDecimalType *getDecimalType(unsigned int precision, unsigned int scale);
+  HIRPromiseType *getPromiseType(const HIRType *inner);
+  HIRViewType *getViewType(const HIRType *inner);
+  HIRMutType *getMutType(const HIRType *inner);
+  HIRLockType *getLockType(const HIRType *inner);
+  HIRConstType *getConstType(const HIRType *inner);
+  HIRVolatileType *getVolatileType(const HIRType *inner);
 
   // Global Variable management
   void addGlobal(std::unique_ptr<HIRStmt> global);

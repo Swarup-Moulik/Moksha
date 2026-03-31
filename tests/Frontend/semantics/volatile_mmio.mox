@@ -1,5 +1,4 @@
-// Verifies 'volatile' and 'mut' on global declarations
-extern mut volatile unsigned int SERIAL_STATUS_REG;
+extern volatile unsigned int SERIAL_STATUS_REG;
 
 void write_serial(char c) {
     // MMIO: Casting integer address to a mutable volatile pointer

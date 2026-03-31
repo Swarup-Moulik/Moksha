@@ -1,5 +1,5 @@
 void test_invalid_cfg(bool cond) {
-    mut int p = 10
+    int p = 10
     *view int v = &p  // 'v' is alive for the entire function
 
     if (cond) {
@@ -7,4 +7,6 @@ void test_invalid_cfg(bool cond) {
     } else {
         *mut int m2 = &p // ERROR EXPECTED
     }
+
+    print(*v);
 }

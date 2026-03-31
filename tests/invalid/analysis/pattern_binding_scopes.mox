@@ -1,0 +1,11 @@
+void test_pattern_scope(int val) {
+    switch (val) {
+        case 1:
+            int bound_var = 10;
+            break;
+        case 2:
+            // HIR must enforce that bindings in one switch arm do not leak into another!
+            int x = bound_var;
+            break;
+    }
+}

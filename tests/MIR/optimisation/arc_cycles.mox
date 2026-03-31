@@ -1,0 +1,15 @@
+ref class Cycle {
+    weak Cycle next;
+}
+
+void test_cycle() {
+    Cycle a = new Cycle();
+    Cycle b = new Cycle();
+
+    a.next = b; // arc_store_weak is emitted. 'b' retain count remains 1.
+    b.next = a; // arc_store_weak is emitted. 'a' retain count remains 1.
+
+    // When the function scope ends, 'a' and 'b' local variables pop off the stack.
+    // Both strong retain counts drop to 0.
+    // The ARC runtime deallocates them and safely nullifies the weak pointers!
+}

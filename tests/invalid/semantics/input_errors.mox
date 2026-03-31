@@ -1,0 +1,7 @@
+void testInvalidInputs() {
+    // ERROR: TypeChecker should flag this because the prompt is an int, not a string
+    string age = input(42);
+
+    // ERROR: TypeChecker should flag this because input() returns a string, not an int
+    int count = input("How many? ");
+}

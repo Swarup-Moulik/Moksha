@@ -29,6 +29,7 @@ public:
   void visitPrimitiveType(const PrimitiveType *type) override;
   void visitPointerType(const PointerType *type) override;
   void visitArrayType(const ArrayType *type) override;
+  void visitSliceType(const SliceType *type) override;
   void visitNamedType(const NamedType *type) override;
   void visitFunctionType(const FunctionType *type) override;
   void visitMapType(const MapType *type) override;
@@ -42,10 +43,14 @@ public:
   void visitNullType(const NullType *type) override;
   void visitVolatileType(const VolatileType *type) override;
   void visitConstType(const ConstType *type) override;
+  void visitWeakType(const WeakType *type) override;
+  void visitDecimalType(const DecimalType *type) override;
+  void visitClosureType(const ClosureType *type) override;
 
   // Expressions
   void visitIntegerLiteral(const IntegerLiteral *expr) override;
   void visitFloatLiteral(const FloatLiteral *expr) override;
+  void visitDecimalLiteral(const DecimalLiteral *expr) override;
   void visitStringLiteral(const StringLiteral *expr) override;
   void visitBoolLiteral(const BoolLiteral *expr) override;
   void visitCharLiteral(const CharLiteral *expr) override;
@@ -68,6 +73,7 @@ public:
   void visitThisExpr(const ThisExpr *expr) override;
   void visitSuperExpr(const SuperExpr *expr) override;
   void visitSizeOfExpr(const SizeOfExpr *expr) override;
+  void visitInputExpr(const InputExpr *expr) override;
 
   // Statements
   void visitBlockStmt(const BlockStmt *stmt) override;

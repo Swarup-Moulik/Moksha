@@ -1,8 +1,8 @@
 // Shared memory modifier
-shared int globalCounter = 0;
+int globalCounter = 0;
 int localCounter = 0;
 
-mut int protectedValue = 10;
+int protectedValue = 10;
 
 new thread(() => {
     // globalCounter is shared, so this is legal

@@ -9,5 +9,7 @@ void test_lock_elevation() {
         // Test: Inside the lock, you can take a shared read (view)
         *view int v = p
         int read = *v
+
+        print(read);
     }
 }

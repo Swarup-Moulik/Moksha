@@ -1,27 +1,19 @@
-ref class Buffer {
-    public int id;
-    constructor(int id) { this.id = id; }
-    destructor() { print("Freed"); }
-}
+void test_move() {
+        string s1 = "Hello";
 
-Buffer b1 = new Buffer(1);
+        // Move semantics: 's1' ownership is transferred to 's2'
+        string s2 = s1;
 
-// Move semantics: 'b1' ownership is transferred to 'b2'
-Buffer b2 = b1;
+        // ERROR EXPECTED: Use of moved value. 's1' is no longer valid!
+        string s3 = s1;
+    }
 
-// ERROR: Use after move. 'b1' is no longer valid.
-print(b1.id);
+    closure() -> void test_closure_escape() {
+        int scoped_val = 42;
 
-// --- Closure Capture ---
-any escapeClosure;
-
-{
-    Buffer scopedBuffer = new Buffer(2);
-    // ERROR: Capturing a locally owned heap object into a closure
-    // that outlives the scope requires explicit 'shared' or a clone.
-    escapeClosure = () => {
-        print(scopedBuffer.id);
-    };
-} // scopedBuffer is destructed here!
-
-escapeClosure(); // Dangling pointer access!
+        // ERROR EXPECTED: closure captures local 'scoped_val' and escapes!
+        // The heap-allocated closure tries to store a pointer to the local stack frame.
+        return () => {
+            mut int* ptr = &scoped_val;
+        };
+    }

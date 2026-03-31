@@ -413,20 +413,32 @@ void TryCatchStmt::accept(ConstHIRVisitor &v) const {
 HIRVarDeclStmt::HIRVarDeclStmt(std::string name, const HIRType *type,
                                std::unique_ptr<HIRExpr> init, bool isMutable,
                                bool isThreadLocal, bool isVolatile,
-                               int alignment, SourceLocation loc)
+                               int alignment, bool isStatic, bool isUsed,
+                               std::string sectionName, SourceLocation loc)
     : HIRStmt(Kind::VarDecl, loc), name(std::move(name)), type(std::move(type)),
       init(std::move(init)), isMutable(isMutable), isThreadLocal(isThreadLocal),
-      isVolatile(isVolatile), alignment(alignment) {}
+      isVolatile(isVolatile), alignment(alignment), isStatic(isStatic),
+      isUsed(isUsed), sectionName(std::move(sectionName)) {}
 
 void HIRVarDeclStmt::dump(llvm::raw_ostream &os, int indent) const {
   printIndent(os, indent);
-  os << "VarDecl: " << name << "\n";
+  os << "VarDecl: " << name;
+
   if (isThreadLocal)
     os << " [thread_local]";
   if (isVolatile)
     os << " [volatile]";
   if (alignment > 0)
     os << " [align(" << alignment << ")]";
+  if (isStatic)
+    os << " [static]";
+  if (isUsed)
+    os << " [used]";
+  if (!sectionName.empty())
+    os << " [section(\"" << sectionName << "\")]";
+
+  os << "\n";
+
   if (init) {
     printLabel(os, indent + 1, "Init");
     init->dump(os, indent + 2);

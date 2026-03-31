@@ -1,9 +1,25 @@
 void test_systems() {
     unsafe {
-        int* ptr = null
+        *int ptr = null;
     }
 
     defer {
-        int cleanup = 1
+        int cleanup1 = 1;
     }
+
+    defer {
+        int cleanup2 = 2;
+    }
+
+    defer {
+        int cleanup3 = 3;
+    }
+}
+
+void test_defer_logic() {
+    int x = 10;
+    defer { print(x); }
+    defer { x = x + 10; }
+
+    if (true) { return; }
 }

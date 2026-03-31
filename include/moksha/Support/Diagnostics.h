@@ -33,7 +33,10 @@ enum class DiagID {
   err_invalid_cast,
   err_missing_return,
   err_invalid_access,
+  err_argument_count_mismatch,
   err_unreachable_code,
+  err_decimal_precision_loss,
+  err_decimal_overflow,
   err_array_length,
   err_spread_fixed_array,
   err_ambiguous_inheritance,
@@ -52,6 +55,10 @@ enum class DiagID {
   // Borrow Checker Errors
   err_borrow_violation,
   err_mutation_while_borrowed,
+  err_borrow_escape,
+  err_use_after_move,
+  err_partial_move,
+  note_borrow_occurred_here,
 
   // Warnings
   warn_switch_not_exhaustive,
@@ -60,7 +67,6 @@ enum class DiagID {
 
   // General / Notes
   note_previous_definition,
-  err_argument_count_mismatch,
   err_no_member,
   err_unknown_type,
   err_break_outside_loop,

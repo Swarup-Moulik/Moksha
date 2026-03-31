@@ -1,0 +1,15 @@
+ref class Mutex {
+    void drop() {}
+  }
+
+  // Declare risky as an external or un-inlinable function
+  // so the compiler is FORCED to assume it might throw.
+  extern "C" void risky();
+
+  void test_unwind() {
+    shared Mutex m = new Mutex();
+    try {
+      risky(); // This will now generate an 'invoke' instruction
+    } catch (i32 e) {
+    }
+  }

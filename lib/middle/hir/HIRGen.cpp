@@ -37,159 +37,308 @@ static bool isTypeMutable(const Type *t) {
   return false;
 }
 
+static hir::CastOp determineCastOp(const hir::HIRType *srcTy,
+                                   const hir::HIRType *dstTy) {
+  if (!srcTy || !dstTy)
+    return hir::CastOp::BitCast;
+
+  auto srcKind = srcTy->getKind();
+  auto dstKind = dstTy->getKind();
+
+  // Float <-> Int Conversions
+  if (srcKind == hir::TypeKind::Float && dstKind == hir::TypeKind::Int)
+    return hir::CastOp::FloatToInt;
+  if (srcKind == hir::TypeKind::Int && dstKind == hir::TypeKind::Float)
+    return hir::CastOp::IntToFloat;
+
+  // Int <-> Int Conversions (Truncation & Extension)
+  if (srcKind == hir::TypeKind::Int && dstKind == hir::TypeKind::Int) {
+    if (auto *srcInt = llvm::dyn_cast<hir::HIRIntType>(srcTy)) {
+      if (auto *dstInt = llvm::dyn_cast<hir::HIRIntType>(dstTy)) {
+        if (dstInt->getWidth() < srcInt->getWidth()) {
+          return hir::CastOp::Truncate;
+        }
+        if (dstInt->getWidth() > srcInt->getWidth()) {
+          return srcInt->isSigned() ? hir::CastOp::SignExtend
+                                    : hir::CastOp::ZeroExtend;
+        }
+      }
+    }
+    return hir::CastOp::BitCast; // Same width
+  }
+
+  // Pointer Conversions
+  if (srcKind == hir::TypeKind::Pointer && dstKind == hir::TypeKind::Pointer) {
+    return hir::CastOp::PointerCast;
+  }
+
+  // Fallback for slices, structs, or any
+  return hir::CastOp::BitCast;
+}
+
 HIRGen::HIRGen(ASTContext &ctx, hir::HIRModule &hirModule)
     : ctx(ctx), hirModule(hirModule) {}
 
 const hir::HIRType *HIRGen::lowerType(const Type *astType) {
   if (!astType)
-    return hirModule.getVoidType();
+    return nullptr;
+
+  bool hasView = false, hasMut = false, hasLock = false, hasConst = false,
+       hasVolatile = false;
 
   hir::Ownership accumulatedOwn = hir::Ownership::None;
+  hir::BorrowState accumulatedState = hir::BorrowState::None;
   const Type *current = astType;
+  bool isVolatilePtr = false;
 
   while (current) {
     if (auto viewT = llvm::dyn_cast<ViewType>(current)) {
       accumulatedOwn = hir::Ownership::Borrowed; // view -> Borrowed
+      accumulatedState = hir::BorrowState::View;
+      hasView = true;
       current = viewT->getInner();
     } else if (auto lockT = llvm::dyn_cast<LockType>(current)) {
       accumulatedOwn = hir::Ownership::Shared; // lock -> Shared
+      accumulatedState = hir::BorrowState::Lock;
+      hasLock = true;
       current = lockT->getInner();
     } else if (auto mutT = llvm::dyn_cast<MutType>(current)) {
       if (accumulatedOwn == hir::Ownership::None)
         accumulatedOwn = hir::Ownership::Owned;
+      accumulatedState = hir::BorrowState::Mut;
+      hasMut = true;
       current = mutT->getInner();
     } else if (auto volT = llvm::dyn_cast<VolatileType>(current)) {
+      hasVolatile = true;
       current = volT->getInner();
     } else if (auto constT = llvm::dyn_cast<ConstType>(current)) {
+      hasConst = true;
       current = constT->getInner();
     } else {
       break; // No more wrappers to peel
     }
   }
 
-  // Primitives
-  if (auto prim = llvm::dyn_cast<PrimitiveType>(current)) {
-    switch (prim->getScalar()) {
-    case PrimitiveType::Scalar::Void:
-      return hirModule.getVoidType();
-    case PrimitiveType::Scalar::Bool:
-      return hirModule.getBoolType();
-    case PrimitiveType::Scalar::String:
-      return hirModule.getStringType();
-    case PrimitiveType::Scalar::I8:
-      return hirModule.getIntType(8, true);
-    case PrimitiveType::Scalar::U8:
-    case PrimitiveType::Scalar::Char:
-      return hirModule.getIntType(8, false);
-    case PrimitiveType::Scalar::I16:
-      return hirModule.getIntType(16, true);
-    case PrimitiveType::Scalar::U16:
-      return hirModule.getIntType(16, false);
-    case PrimitiveType::Scalar::I32:
-    case PrimitiveType::Scalar::Int:
-      return hirModule.getIntType(32, true);
-    case PrimitiveType::Scalar::U32:
-      return hirModule.getIntType(32, false);
-    case PrimitiveType::Scalar::I64:
-      return hirModule.getIntType(64, true);
-    case PrimitiveType::Scalar::U64:
-      return hirModule.getIntType(64, false);
-    case PrimitiveType::Scalar::ISize:
-      return hirModule.getIntType(64, true, true);
-    case PrimitiveType::Scalar::USize:
-      return hirModule.getIntType(64, false, true);
-    case PrimitiveType::Scalar::F8:
-      return hirModule.getFloatType(8);
-    case PrimitiveType::Scalar::F16:
-      return hirModule.getFloatType(16);
-    case PrimitiveType::Scalar::F32:
-      return hirModule.getFloatType(32);
-    case PrimitiveType::Scalar::F64:
-      return hirModule.getFloatType(64);
-    default:
-      return hirModule.getIntType(32, true);
-    }
-  }
-
-  // Handle 'ref T' (References are always Borrowed in HIR)
-  if (auto *refT = llvm::dyn_cast<ReferenceType>(current)) {
-    return hirModule.getPointerType(lowerType(refT->getInner()),
-                                    hir::Ownership::Borrowed);
-  }
-
-  // Handle Pointers (Use the ownership we accumulated from the wrappers!)
-  if (auto ptrT = llvm::dyn_cast<PointerType>(current)) {
-    hir::Ownership ptrOwn = accumulatedOwn;
-    const Type *inner = ptrT->getPointee();
-
-    while (inner) {
-      if (auto viewT = llvm::dyn_cast<ViewType>(inner)) {
-        if (ptrOwn == hir::Ownership::None)
-          ptrOwn = hir::Ownership::Borrowed;
-        inner = viewT->getInner();
-      } else if (auto lockT = llvm::dyn_cast<LockType>(inner)) {
-        if (ptrOwn == hir::Ownership::None)
-          ptrOwn = hir::Ownership::Shared;
-        inner = lockT->getInner();
-      } else if (auto mutT = llvm::dyn_cast<MutType>(inner)) {
-        if (ptrOwn == hir::Ownership::None)
-          ptrOwn = hir::Ownership::Owned;
-        inner = mutT->getInner();
-      } else if (auto volT = llvm::dyn_cast<VolatileType>(inner)) {
-        inner = volT->getInner();
-      } else if (auto constT = llvm::dyn_cast<ConstType>(inner)) {
-        inner = constT->getInner();
-      } else {
-        break;
+  // Lambda to compute the underlying base type without wrappers
+  const hir::HIRType *baseType = [&]() -> const hir::HIRType * {
+    // Primitives
+    if (auto prim = llvm::dyn_cast<PrimitiveType>(current)) {
+      switch (prim->getScalar()) {
+      case PrimitiveType::Scalar::Void:
+        return hirModule.getVoidType();
+      case PrimitiveType::Scalar::Bool:
+        return hirModule.getBoolType();
+      case PrimitiveType::Scalar::String:
+        return hirModule.getStringType();
+      case PrimitiveType::Scalar::I8:
+        return hirModule.getIntType(8, true);
+      case PrimitiveType::Scalar::U8:
+      case PrimitiveType::Scalar::Char:
+        return hirModule.getIntType(8, false);
+      case PrimitiveType::Scalar::I16:
+        return hirModule.getIntType(16, true);
+      case PrimitiveType::Scalar::U16:
+        return hirModule.getIntType(16, false);
+      case PrimitiveType::Scalar::I32:
+      case PrimitiveType::Scalar::Int:
+        return hirModule.getIntType(32, true);
+      case PrimitiveType::Scalar::U32:
+        return hirModule.getIntType(32, false);
+      case PrimitiveType::Scalar::I64:
+        return hirModule.getIntType(64, true);
+      case PrimitiveType::Scalar::U64:
+        return hirModule.getIntType(64, false);
+      case PrimitiveType::Scalar::ISize:
+        return hirModule.getIntType(64, true, true);
+      case PrimitiveType::Scalar::USize:
+        return hirModule.getIntType(64, false, true);
+      case PrimitiveType::Scalar::F8:
+        return hirModule.getFloatType(8);
+      case PrimitiveType::Scalar::F16:
+        return hirModule.getFloatType(16);
+      case PrimitiveType::Scalar::F32:
+        return hirModule.getFloatType(32);
+      case PrimitiveType::Scalar::F64:
+        return hirModule.getFloatType(64);
+      default:
+        return hirModule.getIntType(32, true);
       }
     }
 
-    return hirModule.getPointerType(lowerType(inner), ptrOwn);
-  }
+    // Handle 'ref T' (References are always Borrowed in HIR)
+    if (auto *refT = llvm::dyn_cast<ReferenceType>(current)) {
+      const hir::HIRType *innerTy = lowerType(refT->getInner());
+      if (!innerTy)
+        innerTy = hirModule.getVoidType(); // [FIX] Guard null
+      return hirModule.getPointerType(innerTy, hir::Ownership::Borrowed,
+                                      accumulatedState);
+    }
 
-  if (auto *nullT = llvm::dyn_cast<NullableType>(current)) {
-    return hirModule.getNullableType(lowerType(nullT->getInner()));
-  }
+    // Handle Pointers
+    if (auto ptrT = llvm::dyn_cast<PointerType>(current)) {
+      const Type *inner = ptrT->getPointee();
 
-  // Arrays
-  if (auto arrT = llvm::dyn_cast<ArrayType>(current)) {
-    uint64_t size = 0;
-    if (arrT->getSizeExpr()) {
-      if (auto lit = llvm::dyn_cast<IntegerLiteral>(arrT->getSizeExpr())) {
-        size = lit->getValue();
+      while (inner) {
+        if (auto viewT = llvm::dyn_cast<ViewType>(inner)) {
+          accumulatedState = hir::BorrowState::View;
+          inner = viewT->getInner();
+        } else if (auto mutT = llvm::dyn_cast<MutType>(inner)) {
+          accumulatedState = hir::BorrowState::Mut;
+          inner = mutT->getInner();
+        } else if (auto lockT = llvm::dyn_cast<LockType>(inner)) {
+          accumulatedState = hir::BorrowState::Lock;
+          inner = lockT->getInner();
+        } else if (auto volT = llvm::dyn_cast<VolatileType>(inner)) {
+          isVolatilePtr = true;
+          inner = volT->getInner();
+        } else {
+          break;
+        }
       }
+
+      const hir::HIRType *pointeeTy = lowerType(inner);
+      if (!pointeeTy)
+        pointeeTy = hirModule.getVoidType();
+
+      hir::Ownership own = (accumulatedOwn == hir::Ownership::None)
+                               ? hir::Ownership::Borrowed
+                               : accumulatedOwn;
+
+      // The PointerType is now successfully created with the rescued
+      // BorrowState!
+      return hirModule.getPointerType(pointeeTy, own, accumulatedState);
     }
-    return hirModule.getArrayType(lowerType(arrT->getElementType()), size);
-  }
-
-  // Functions
-  if (auto fnT = llvm::dyn_cast<FunctionType>(current)) {
-    std::vector<const hir::HIRType *> paramTypes;
-    for (const auto &p : fnT->getParamTypes()) {
-      paramTypes.push_back(lowerType(p.get()));
+    if (auto *nullT = llvm::dyn_cast<NullableType>(current)) {
+      const hir::HIRType *innerTy = lowerType(nullT->getInner());
+      if (!innerTy)
+        innerTy = hirModule.getVoidType();
+      return hirModule.getNullableType(innerTy);
     }
-    return hirModule.getFunctionType(lowerType(fnT->getReturnType()),
-                                     paramTypes);
+
+    if (auto *weakT = llvm::dyn_cast<WeakType>(current)) {
+      const hir::HIRType *innerTy = lowerType(weakT->getInner());
+      if (!innerTy)
+        innerTy = hirModule.getVoidType();
+      return hirModule.getWeakType(innerTy);
+    }
+
+    if (auto *decT = llvm::dyn_cast<DecimalType>(current)) {
+      return hirModule.getDecimalType(decT->getPrecision(), decT->getScale());
+    }
+
+    // Arrays
+    if (auto arrT = llvm::dyn_cast<ArrayType>(current)) {
+      uint64_t size = 0;
+      if (arrT->getSizeExpr()) {
+        if (auto lit = llvm::dyn_cast<IntegerLiteral>(arrT->getSizeExpr())) {
+          size = lit->getValue();
+        }
+      }
+      const hir::HIRType *elemTy = lowerType(arrT->getElementType());
+      if (!elemTy)
+        elemTy = hirModule.getVoidType(); // [FIX] Guard null
+      return hirModule.getArrayType(elemTy, size);
+    }
+
+    if (auto sliceT = llvm::dyn_cast<SliceType>(current)) {
+      const hir::HIRType *elemTy = lowerType(sliceT->getElementType());
+      if (!elemTy)
+        elemTy = hirModule.getVoidType();
+      return hirModule.getSliceType(elemTy);
+    }
+
+    // Functions
+    if (auto fnT = llvm::dyn_cast<FunctionType>(current)) {
+      std::vector<const hir::HIRType *> paramTypes;
+      for (const auto &p : fnT->getParamTypes()) {
+        const hir::HIRType *pTy = lowerType(p.get());
+        if (!pTy)
+          pTy = hirModule.getVoidType(); // Guard null
+        paramTypes.push_back(pTy);
+      }
+      const hir::HIRType *retTy = lowerType(fnT->getReturnType());
+      if (!retTy)
+        retTy = hirModule.getVoidType(); // Guard null
+
+      // Forward the FFI flags to the HIR Module!
+      return hirModule.getFunctionType(retTy, paramTypes, fnT->isVariadicFunc(),
+                                       fnT->isInterruptFunc());
+    }
+
+    // Closures
+    if (auto *closureTy = llvm::dyn_cast<ClosureType>(astType)) {
+      const hir::HIRType *ret = lowerType(closureTy->getReturnType());
+      std::vector<const hir::HIRType *> params;
+      for (const auto &p : closureTy->getParamTypes()) {
+        params.push_back(lowerType(p.get()));
+      }
+      return hirModule.getClosureType(ret, std::move(params));
+    }
+
+    // Named Types (Structs / Classes / Unions)
+    if (auto namedT = llvm::dyn_cast<NamedType>(current)) {
+      if (const ClassDecl *cls = ctx.lookupClass(namedT->getName())) {
+        if (cls->getAggregateKind() == AggregateKind::Union) {
+          return hirModule.getUnionType(namedT->getName(), {});
+        }
+
+        bool isRefClass = cls->isReferenceType();
+
+        // ONLY wrap 'ref class' in a PointerType (Shared/ARC).
+        if (isRefClass) {
+          hir::Ownership own = hir::Ownership::Shared;
+
+          if (accumulatedOwn == hir::Ownership::Borrowed) {
+            own = hir::Ownership::Borrowed;
+          }
+
+          auto *structTy = hirModule.getStructType(namedT->getName(), {});
+          return hirModule.getPointerType(structTy, own, accumulatedState);
+        }
+      }
+
+      // Fallback: Standard struct/class by value (Stack Semantics)
+      auto *structTy = hirModule.getStructType(namedT->getName(), {});
+      if (accumulatedOwn == hir::Ownership::Borrowed) {
+        return hirModule.getPointerType(structTy, hir::Ownership::Borrowed,
+                                        accumulatedState);
+      }
+      return structTy;
+    }
+
+    // Built-ins
+    if (llvm::dyn_cast<MapType>(current))
+      return hirModule.getStructType("table", {});
+    if (llvm::dyn_cast<AnyType>(current))
+      return hirModule.getStructType("any", {});
+
+    return hirModule.getVoidType();
+  }(); // Execute lambda
+
+  if (!baseType)
+    return nullptr;
+
+  if (!llvm::isa<hir::PointerType>(baseType) &&
+      !llvm::isa<hir::ReferenceType>(baseType)) {
+    if (hasView)
+      baseType = hirModule.getViewType(baseType);
+    if (hasMut)
+      baseType = hirModule.getMutType(baseType);
+    if (hasLock)
+      baseType = hirModule.getLockType(baseType);
+    if (hasConst)
+      baseType = hirModule.getConstType(baseType);
+    if (hasVolatile)
+      baseType = hirModule.getVolatileType(baseType);
   }
 
-  // Named Types (Structs / Classes)
-  if (auto namedT = llvm::dyn_cast<NamedType>(current)) {
-    return hirModule.getStructType(namedT->getName(), {});
-  }
-
-  // Built-ins
-  if (llvm::dyn_cast<MapType>(current))
-    return hirModule.getStructType("table", {});
-  if (llvm::dyn_cast<AnyType>(current))
-    return hirModule.getStructType("any", {});
-
-  return hirModule.getVoidType();
+  return baseType;
 }
 
 std::unique_ptr<hir::HIRStmt> HIRGen::takeStmt() { return std::move(lastStmt); }
 std::unique_ptr<hir::HIRExpr> HIRGen::takeExpr() { return std::move(lastExpr); }
 
-// [FIX] Implement the dispatchers
+// Implement the dispatchers
 void HIRGen::visit(const Decl *d) {
   if (d)
     d->accept(*this);
@@ -227,10 +376,30 @@ void HIRGen::visitFunctionDecl(const FunctionDecl *decl) {
   // 1. Lower the return type
   const hir::HIRType *retType = lowerType(decl->getReturnType());
 
+  // [FIX] Guard against null types from incomplete ASTs
+  if (!retType) {
+    retType = hirModule.getVoidType();
+  }
+
+  // --- [NEW] Wrap async return types in a Promise ---
+  if (decl->isAsyncFunc()) {
+    retType = hirModule.getPromiseType(retType);
+  }
+  // --------------------------------------------------
+
   // 2. Lower parameters
   std::vector<hir::HIRParam> hirParams;
   for (const auto &p : decl->getParams()) {
-    hirParams.emplace_back(p.name, lowerType(p.type.get()), decl->getLoc());
+    const hir::HIRType *paramType = lowerType(p.type.get());
+
+    // Lower the default value expression if it exists
+    std::unique_ptr<hir::HIRExpr> defVal = nullptr;
+    if (p.defaultValue) {
+      visit(p.defaultValue.get());
+      defVal = takeExpr();
+    }
+
+    hirParams.emplace_back(p.name, paramType, p.loc, std::move(defVal));
   }
 
   // 3. Lower the function body (if it exists)
@@ -241,33 +410,48 @@ void HIRGen::visitFunctionDecl(const FunctionDecl *decl) {
   }
 
   // 4. Setup metadata
-  std::vector<std::string> typeParams;
+  std::vector<hir::HIRGenericParam> typeParams;
 
-  // 5. Create the HIRFunction object (Now correctly passing the AST flags!)
+  // 5. Create the HIRFunction object
   auto func = std::make_unique<hir::HIRFunction>(
       decl->getName(), typeParams, std::move(hirParams), retType,
       std::move(body), decl->isAsyncFunc(), decl->isVariadicFunc(),
       decl->isInterruptFunc(), decl->isNakedFunc(), decl->isNoReturnFunc(),
       decl->getSection(), decl->getLoc());
 
+  func->setWeak(decl->isWeakFunc());
+  func->setABI(decl->getABI());
+  func->setVirtual(decl->isVirtualFunc());
+  func->setOverride(decl->isOverrideFunc());
+  func->setVTableIndex(decl->getVTableIndex());
+  func->setStatic(decl->isStaticFunc());
+  func->setNoInline(decl->isNoInlineFunc());
+  func->setInline(decl->isInlineFunc());
+  func->setPure(decl->isPureFunc());
+  func->setCold(decl->isColdFunc());
+  func->setUsed(decl->isUsedFunc());
+
   // 6. Store the generated HIR function
   functions.push_back(std::move(func));
 }
 
 void HIRGen::visitClassDecl(const ClassDecl *decl) {
-  // 1. Get the struct type representing the memory layout
+  // 1. Get the struct type representing the memory layout (starts empty)
   const hir::HIRType *classType =
       lowerType(ctx.createNamedType(decl->getName()));
 
   std::vector<std::unique_ptr<hir::HIRFunction>> methods;
+  std::vector<const hir::HIRType *> fieldTypes;
+  std::vector<std::string> fieldNames;
 
-  // 2. Lower all member functions
+  // 2. Lower all member functions AND extract fields!
   for (const auto &member : decl->getMembers()) {
-    if (auto fnDecl = llvm::dyn_cast<FunctionDecl>(member.get())) {
+    if (auto varDecl = llvm::dyn_cast<VariableDecl>(member.get())) {
+      fieldTypes.push_back(lowerType(varDecl->getType()));
+      fieldNames.push_back(varDecl->getName());
+    } else if (auto fnDecl = llvm::dyn_cast<FunctionDecl>(member.get())) {
       fnDecl->accept(*this);
 
-      // visitFunctionDecl automatically pushes to the global `functions`
-      // vector. We pop the last one off so it belongs to the class instead!
       if (!functions.empty()) {
         methods.push_back(std::move(functions.back()));
         functions.pop_back();
@@ -275,9 +459,40 @@ void HIRGen::visitClassDecl(const ClassDecl *decl) {
     }
   }
 
-  // 3. Create and store the class
-  classes.push_back(std::make_unique<hir::HIRClass>(decl->getName(), classType,
-                                                    std::move(methods)));
+  // Unwrap the pointer type before populating the fields!
+  const hir::HIRType *innerType = classType;
+  if (auto *ptrTy = llvm::dyn_cast<hir::PointerType>(innerType)) {
+    innerType = ptrTy->getPointee();
+  }
+
+  // 3. Populate the opaque Struct/Union with the extracted layout
+  if (auto *structTy = const_cast<hir::StructType *>(
+          llvm::dyn_cast<hir::StructType>(innerType))) {
+    structTy->setFields(std::move(fieldTypes), std::move(fieldNames));
+    structTy->setPacked(decl->isPackedClass());
+    structTy->setHasVTable(decl->hasVTable()); // Bind VTable presence
+  } else if (auto *unionTy = const_cast<hir::UnionType *>(
+                 llvm::dyn_cast<hir::UnionType>(innerType))) {
+    unionTy->setFields(std::move(fieldTypes), std::move(fieldNames));
+  }
+
+  // 4. Create and store the class
+  auto hirClass = std::make_unique<hir::HIRClass>(
+      decl->getName(), classType, std::move(methods), decl->isPackedClass(),
+      decl->getAlignment(), decl->getSection());
+
+  // Bind Class VTable & Parents
+  hirClass->setHasVTable(decl->hasVTable());
+
+  std::vector<const hir::HIRType *> parentTypes;
+  for (const auto &parentName : decl->getParentNames()) {
+    // Create a temporary NamedType to feed into lowerType
+    NamedType tempNamed(parentName, std::vector<TypePtr>(), decl->getLoc());
+    parentTypes.push_back(lowerType(&tempNamed));
+  }
+  hirClass->setParentTypes(std::move(parentTypes));
+
+  classes.push_back(std::move(hirClass));
 }
 
 void HIRGen::visitVariableDecl(const VariableDecl *decl) {
@@ -288,19 +503,52 @@ void HIRGen::visitVariableDecl(const VariableDecl *decl) {
     visit(decl->getInitializer());
     hirInit = takeExpr();
 
-    if (auto *addrOf =
-            llvm::dyn_cast_or_null<hir::HIRAddressOfExpr>(hirInit.get())) {
+    if (llvm::isa<ReferenceType>(decl->getType()) &&
+        !llvm::isa<hir::HIRAddressOfExpr>(hirInit.get())) {
+
+      const hir::HIRType *ptrType = lowerType(decl->getType());
+
+      hirInit = std::make_unique<hir::HIRAddressOfExpr>(
+          std::move(hirInit), ptrType, isMut, decl->getLoc());
+    } else if (auto *addrOf = llvm::dyn_cast_or_null<hir::HIRAddressOfExpr>(
+                   hirInit.get())) {
       addrOf->setMutableBorrow(isMut);
     }
   }
 
   const hir::HIRType *hirType = lowerType(decl->getType());
-  auto sharedType =
-      std::shared_ptr<const hir::HIRType>(hirType, [](const hir::HIRType *) {});
 
-  lastStmt = std::make_unique<hir::HIRVarDeclStmt>(
-      decl->getName(), sharedType.get(), std::move(hirInit), isMut, false,
-      false, 0, decl->getLoc());
+  if (hirInit && hirInit->getType()) {
+    if (auto *initPtrTy =
+            llvm::dyn_cast<hir::PointerType>(hirInit->getType())) {
+      if (hirType && hirType->getKind() == hir::TypeKind::Struct) {
+        hirType = initPtrTy;
+      }
+    }
+  }
+
+  if (decl->isSharedVar()) {
+    if (auto *ptrTy = llvm::dyn_cast<hir::PointerType>(hirType)) {
+      if (ptrTy->getOwnership() != hir::Ownership::Shared) {
+        hirType = hirModule.getPointerType(ptrTy->getPointee(),
+                                           hir::Ownership::Shared,
+                                           ptrTy->getBorrowState());
+      }
+    } else {
+      hirType = hirModule.getPointerType(hirType, hir::Ownership::Shared,
+                                         hir::BorrowState::None);
+    }
+  }
+
+  auto varStmt = std::make_unique<hir::HIRVarDeclStmt>(
+      decl->getName(), hirType, std::move(hirInit), isMut,
+      decl->isThreadLocalVar(), decl->isVolatileVar(), decl->getAlignment(),
+      decl->isStaticVar(), decl->isUsedVar(), decl->getSection(),
+      decl->getLoc());
+
+  varStmt->setExtern(decl->isExternVar());
+
+  lastStmt = std::move(varStmt);
 }
 
 void HIRGen::visitBlockStmt(const BlockStmt *stmt) {
@@ -509,13 +757,28 @@ void HIRGen::visitDeclStmt(const DeclStmt *stmt) {
 // --- Expressions ---
 
 void HIRGen::visitIntegerLiteral(const IntegerLiteral *expr) {
-  lastExpr = std::make_unique<hir::HIRIntegerLiteral>(expr->getValue(), nullptr,
+  const hir::HIRType *ty = lowerType(expr->getType());
+  if (!ty)
+    ty = hirModule.getIntType(32, true, false);
+  lastExpr = std::make_unique<hir::HIRIntegerLiteral>(expr->getValue(), ty,
                                                       expr->getLoc());
 }
 
 void HIRGen::visitFloatLiteral(const FloatLiteral *expr) {
-  lastExpr = std::make_unique<hir::HIRFloatLiteral>(expr->getValue(), nullptr,
+  const hir::HIRType *ty = lowerType(expr->getType());
+  if (!ty)
+    ty = hirModule.getFloatType(32);
+  lastExpr = std::make_unique<hir::HIRFloatLiteral>(expr->getValue(), ty,
                                                     expr->getLoc());
+}
+
+void HIRGen::visitDecimalLiteral(const DecimalLiteral *expr) {
+  // 1. Lower the AST type to the HIR type
+  const hir::HIRType *hirType = lowerType(expr->getType());
+
+  // 2. Create the HIR literal preserving the exact string
+  lastExpr = std::make_unique<hir::HIRDecimalLiteral>(expr->getValue(), hirType,
+                                                      expr->getLoc());
 }
 
 void HIRGen::visitBoolLiteral(const BoolLiteral *expr) {
@@ -524,7 +787,10 @@ void HIRGen::visitBoolLiteral(const BoolLiteral *expr) {
 }
 
 void HIRGen::visitStringLiteral(const StringLiteral *expr) {
-  lastExpr = std::make_unique<hir::HIRStringLiteral>(expr->getValue(), nullptr,
+  const hir::HIRType *ty = lowerType(expr->getType());
+  if (!ty)
+    ty = hirModule.getStringType();
+  lastExpr = std::make_unique<hir::HIRStringLiteral>(expr->getValue(), ty,
                                                      expr->getLoc());
 }
 
@@ -533,6 +799,21 @@ void HIRGen::visitBinaryExpr(const BinaryExpr *expr) {
   auto lhs = takeExpr();
   visit(expr->getRHS());
   auto rhs = takeExpr();
+
+  // OVERLOADED OPERATOR DESUGARING
+  if (const FunctionDecl *opFunc = expr->getResolvedOperator()) {
+    std::vector<std::unique_ptr<hir::HIRExpr>> args;
+    args.push_back(std::move(rhs));
+
+    auto memberAccess = std::make_unique<hir::HIRMemberExpr>(
+        std::move(lhs), opFunc->getName(), nullptr, expr->getLoc());
+
+    // Create a CallExpr representing `lhs.operator+(rhs)`
+    const hir::HIRType *retTy = lowerType(expr->getType());
+    lastExpr = std::make_unique<hir::HIRCallExpr>(
+        std::move(memberAccess), std::move(args), retTy, expr->getLoc());
+    return;
+  }
 
   hir::BinaryOp hirOp;
   bool isCompound = false;
@@ -698,6 +979,21 @@ void HIRGen::visitUnaryExpr(const UnaryExpr *expr) {
   visit(expr->getOperand());
   auto operand = takeExpr();
 
+  // OVERLOADED UNARY OPERATOR DESUGARING
+  if (const FunctionDecl *opFunc = expr->getResolvedOperator()) {
+
+    // Create a MemberExpr representing `operand.operator-`
+    auto memberAccess = std::make_unique<hir::HIRMemberExpr>(
+        std::move(operand), opFunc->getName(), nullptr, expr->getLoc());
+
+    // Create a CallExpr representing `operand.operator-()` with no args
+    std::vector<std::unique_ptr<hir::HIRExpr>> emptyArgs;
+    const hir::HIRType *retTy = lowerType(expr->getType());
+    lastExpr = std::make_unique<hir::HIRCallExpr>(
+        std::move(memberAccess), std::move(emptyArgs), retTy, expr->getLoc());
+    return;
+  }
+
   // [FIX] Map AST TokenKind to HIR Deref/AddressOf logic
   if (expr->getOp() == TokenKind::Star) {
     const hir::HIRType *derefType = lowerType(expr->getType());
@@ -745,8 +1041,7 @@ void HIRGen::visitIdentifierExpr(const IdentifierExpr *expr) {
   auto hirId = std::make_unique<hir::HIRIdentifierExpr>(
       expr->getName(), lowerType(expr->getType()), expr->getLoc());
 
-  // [FIX] If the variable is a 'ref', every access is an implicit dereference
-  // (*)
+  // If the variable is a 'ref', every access is an implicit dereference (*)
   if (auto *refT = llvm::dyn_cast_or_null<ReferenceType>(expr->getType())) {
     lastExpr = std::make_unique<hir::HIRDerefExpr>(
         std::move(hirId),
@@ -766,11 +1061,11 @@ void HIRGen::visitCallExpr(const CallExpr *expr) {
   if (expr->getCallee()->getType()) {
     const Type *t = expr->getCallee()->getType();
     while (t) {
-      if (auto m = dynamic_cast<const MutType *>(t))
+      if (auto m = llvm::dyn_cast<const MutType>(t))
         t = m->getInner();
-      else if (auto v = dynamic_cast<const ViewType *>(t))
+      else if (auto v = llvm::dyn_cast<const ViewType>(t))
         t = v->getInner();
-      else if (auto l = dynamic_cast<const LockType *>(t))
+      else if (auto l = llvm::dyn_cast<const LockType>(t))
         t = l->getInner();
       else
         break;
@@ -812,9 +1107,14 @@ void HIRGen::visitMemberExpr(const MemberExpr *expr) {
   visit(expr->getObject());
   auto object = takeExpr();
 
-  // Map AST getName() to HIR constructor
+  hir::FieldInfo fieldInfo(expr->getName(), expr->getMemberIndex(),
+                           expr->isBitfield(), expr->getBitWidth(),
+                           expr->getBitOffset());
+
+  // Pass the layout metadata to the HIR node
   lastExpr = std::make_unique<hir::HIRMemberExpr>(
-      std::move(object), expr->getName(), nullptr, expr->getLoc());
+      std::move(object), expr->getName(), lowerType(expr->getType()),
+      expr->getLoc(), std::move(fieldInfo));
 }
 
 void HIRGen::visitThreadExpr(const ThreadExpr *expr) {
@@ -825,8 +1125,21 @@ void HIRGen::visitThreadExpr(const ThreadExpr *expr) {
   hir::ThreadKind kind =
       expr->isWeakThread() ? hir::ThreadKind::Weak : hir::ThreadKind::Strong;
 
-  lastExpr = std::make_unique<hir::HIRThreadExpr>(std::move(lambdaTask), kind,
-                                                  nullptr, expr->getLoc());
+  // [FIX] Pass the lowered type instead of nullptr
+  lastExpr = std::make_unique<hir::HIRThreadExpr>(
+      std::move(lambdaTask), kind, lowerType(expr->getType()), expr->getLoc());
+}
+
+void HIRGen::visitSizeOfExpr(const SizeOfExpr *expr) {
+  // 1. The type we want to measure (e.g., from the sub-expression's type)
+  const hir::HIRType *targetTy = lowerType(expr->getExpr()->getType());
+
+  // 2. The result type of the sizeof operation (u64 / usize)
+  const hir::HIRType *usizeTy = hirModule.getIntType(64, false, true);
+
+  // 3. This call will now match the new constructor in HIRExpr.h
+  lastExpr =
+      std::make_unique<hir::HIRSizeOfExpr>(targetTy, usizeTy, expr->getLoc());
 }
 
 void HIRGen::visitNullLiteral(const NullLiteral *expr) {
@@ -841,21 +1154,38 @@ void HIRGen::visitTernaryExpr(const TernaryExpr *expr) {
   visit(expr->getFalseBranch());
   auto f = takeExpr();
 
+  // Pass the lowered type instead of nullptr
   lastExpr = std::make_unique<hir::HIRTernaryExpr>(
-      std::move(cond), std::move(t), std::move(f), nullptr, expr->getLoc());
+      std::move(cond), std::move(t), std::move(f), lowerType(expr->getType()),
+      expr->getLoc());
 }
 
 void HIRGen::visitCastExpr(const CastExpr *expr) {
   visit(expr->getExpr());
   auto e = takeExpr();
 
-  hir::CastOp castOp = static_cast<hir::CastOp>(0);
+  const hir::HIRType *sourceType = e->getType();
+  const hir::HIRType *targetType = lowerType(expr->getTargetType());
 
-  // Stubbing type conversion
-  const hir::HIRType *targetType = nullptr;
+  // Dynamically resolve the correct cast operation
+  hir::CastOp castOp = determineCastOp(sourceType, targetType);
 
   lastExpr = std::make_unique<hir::HIRCastExpr>(castOp, std::move(e),
                                                 targetType, expr->getLoc());
+}
+
+void HIRGen::visitInputExpr(const InputExpr *expr) {
+  std::unique_ptr<hir::HIRExpr> prompt = nullptr;
+  if (expr->getPrompt()) {
+    visit(expr->getPrompt());
+    prompt = takeExpr();
+  }
+
+  // input() always returns a string
+  const hir::HIRType *strType = hirModule.getStringType();
+
+  lastExpr = std::make_unique<hir::HIRInputExpr>(std::move(prompt), strType,
+                                                 expr->getLoc());
 }
 
 void HIRGen::visitCharLiteral(const CharLiteral *expr) {
@@ -927,7 +1257,8 @@ void HIRGen::visitIndexExpr(const IndexExpr *expr) {
   visit(expr->getIndex());
   auto index = takeExpr();
   lastExpr = std::make_unique<hir::HIRIndexExpr>(
-      std::move(base), std::move(index), nullptr, expr->getLoc());
+      std::move(base), std::move(index), lowerType(expr->getType()),
+      expr->getLoc());
 }
 
 void HIRGen::visitNewExpr(const NewExpr *expr) {
@@ -937,25 +1268,64 @@ void HIRGen::visitNewExpr(const NewExpr *expr) {
     args.push_back(takeExpr());
   }
 
-  // Stubbing type conversion
-  const hir::HIRType *type = nullptr;
-
+  const hir::HIRType *type = lowerType(expr->getType());
   lastExpr = std::make_unique<hir::HIRNewExpr>(type, std::move(args), type,
                                                expr->getLoc());
 }
 
 void HIRGen::visitLambdaExpr(const LambdaExpr *expr) {
-  std::vector<hir::HIRLambdaParam> params;
+  // 1. Lower Parameters
+  std::vector<hir::HIRLambdaParam> hirParams;
   for (const auto &p : expr->getParams()) {
-    params.emplace_back(p.getName(), lowerType(p.getType()));
+    const hir::HIRType *paramType =
+        p.getType() ? lowerType(p.getType()) : nullptr;
+
+    // [NEW] Lower the default value expression if it exists
+    std::unique_ptr<hir::HIRExpr> defVal = nullptr;
+    if (p.getDefaultValue()) {
+      visit(p.getDefaultValue());
+      defVal = takeExpr();
+    }
+
+    hirParams.emplace_back(p.getName(), paramType, std::move(defVal));
   }
 
+  // 2. Lower Captures (The Promise Machine Bridge)
+  std::vector<hir::HIRCapture> captures;
+  for (const auto &cap : expr->getCaptures()) {
+    // Determine how the MIR generator should handle memory ownership
+    hir::CaptureKind kind =
+        (cap.mode == CaptureMode::View || cap.mode == CaptureMode::Mut)
+            ? hir::CaptureKind::ByReference
+            : hir::CaptureKind::ByValue;
+
+    captures.emplace_back(cap.name, lowerType(cap.type), kind);
+  }
+
+  // 3. Lower Body
   visit(expr->getBody());
   auto body = castToHIR<hir::HIRStmt>(takeStmt());
 
+  // [FIX] Map the AST CaptureMode to the hir::CaptureMode
+  hir::CaptureMode hirMode = hir::CaptureMode::Snapshot;
+  switch (expr->getCaptureMode()) {
+  case CaptureMode::View:
+    hirMode = hir::CaptureMode::View;
+    break;
+  case CaptureMode::Mut:
+    hirMode = hir::CaptureMode::Mut;
+    break;
+  case CaptureMode::Move:
+    hirMode = hir::CaptureMode::Move;
+    break;
+  default:
+    break;
+  }
+
+  // 4. Construct HIR Lambda with hirMode
   lastExpr = std::make_unique<hir::HIRLambdaExpr>(
-      std::move(params), std::move(body), lowerType(expr->getType()),
-      expr->getLoc());
+      std::move(hirParams), std::move(captures), std::move(body),
+      lowerType(expr->getType()), hirMode, expr->getLoc());
 }
 
 void HIRGen::visitThisExpr(const ThisExpr *expr) {
@@ -1010,3 +1380,32 @@ void HIRGen::visitLockStmt(const LockStmt *stmt) {
   lastStmt = std::make_unique<hir::LockStmt>(
       std::move(hirTarget), std::move(hirBody), stmt->getLoc());
 }
+
+// ============================================================================
+// [Type Visitors]
+// ============================================================================
+
+void HIRGen::visitDecimalType(const DecimalType *type) {
+  // In HIRGen, types are lowered dynamically via lowerType.
+  // No statement/expression is generated here.
+}
+
+void HIRGen::visitClosureType(const ClosureType *type) {
+  // Types are lowered via lowerType(), so this visitor stub is intentionally
+  // empty.
+}
+
+void HIRGen::visitWeakType(const WeakType *type) {
+  // Handled dynamically via lowerType()
+}
+
+void HIRGen::visitSliceType(const SliceType *type) {
+  // In HIRGen, types are lowered dynamically via lowerType.
+  // No statement/expression is generated here.
+}
+
+void HIRGen::visitLockType(const LockType *type) {}
+void HIRGen::visitViewType(const ViewType *type) {}
+void HIRGen::visitMutType(const MutType *type) {}
+void HIRGen::visitConstType(const ConstType *type) {}
+void HIRGen::visitVolatileType(const VolatileType *type) {}

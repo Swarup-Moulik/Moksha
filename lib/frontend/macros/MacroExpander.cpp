@@ -52,6 +52,8 @@ public:
     if (auto *a = dyn_cast<ArrayType>(t))
       return std::make_unique<ArrayType>(cloneType(a->getElementType()),
                                          cloneExpr(a->getSizeExpr()), loc);
+    if (auto *s = dyn_cast<SliceType>(t))
+      return std::make_unique<SliceType>(cloneType(s->getElementType()), loc);
     if (auto *m = dyn_cast<MapType>(t))
       return std::make_unique<MapType>(cloneType(m->getKeyType()),
                                        cloneType(m->getValueType()), loc);
@@ -71,10 +73,25 @@ public:
       return std::make_unique<NamedType>(nt->getName(), std::move(newArgs),
                                          loc);
     }
+    if (auto *c = dyn_cast<ClosureType>(t)) {
+      std::vector<TypePtr> newParams;
+      for (const auto &pt : c->getParamTypes()) {
+        newParams.push_back(cloneType(pt.get()));
+      }
+      return std::make_unique<ClosureType>(cloneType(c->getReturnType()),
+                                           std::move(newParams), loc);
+    }
     if (auto *c = dyn_cast<ConstType>(t))
       return std::make_unique<ConstType>(cloneType(c->getInner()), loc);
     if (auto *v = dyn_cast<VolatileType>(t))
       return std::make_unique<VolatileType>(cloneType(v->getInner()), loc);
+    if (auto *w = dyn_cast<WeakType>(t))
+      return std::make_unique<WeakType>(cloneType(w->getInner()), loc);
+    if (auto *e = dyn_cast<EnumType>(t))
+      return std::make_unique<EnumType>(e->getName(), e->getMembers(), loc);
+    if (auto *d = dyn_cast<DecimalType>(t))
+      return std::make_unique<DecimalType>(d->getPrecision(), d->getScale(),
+                                           loc);
     return std::make_unique<AnyType>(loc);
   }
 
@@ -89,6 +106,8 @@ public:
     if (auto *l = dyn_cast<FloatLiteral>(e))
       return std::make_unique<FloatLiteral>(l->getValue(), NumericSuffix::None,
                                             loc);
+    if (auto *l = dyn_cast<DecimalLiteral>(e))
+      return std::make_unique<DecimalLiteral>(l->getValue(), loc);
     if (auto *l = dyn_cast<StringLiteral>(e))
       return std::make_unique<StringLiteral>(l->getValue(), false, loc);
     if (auto *l = dyn_cast<BoolLiteral>(e))
@@ -131,6 +150,9 @@ public:
     }
     if (auto *sz = dyn_cast<SizeOfExpr>(e)) {
       return std::make_unique<SizeOfExpr>(cloneExpr(sz->getExpr()), loc);
+    }
+    if (auto *inp = dyn_cast<InputExpr>(e)) {
+      return std::make_unique<InputExpr>(cloneExpr(inp->getPrompt()), loc);
     }
     return nullptr; // Simplified for brevity; keep your other expr clones!
   }
@@ -364,4 +386,26 @@ void MacroExpander::visitConstType(const ConstType *type) {
   type->getInner()->accept(*this);
 }
 
+void MacroExpander::visitClosureType(const ClosureType *type) {
+  // Traverse return type
+  if (type->getReturnType()) {
+    type->getReturnType()->accept(*this);
+  }
+  // Traverse parameter types
+  for (const auto &param : type->getParamTypes()) {
+    if (param) {
+      param->accept(*this);
+    }
+  }
+}
+
+void MacroExpander::visitInputExpr(const InputExpr *expr) {
+  if (expr->getPrompt()) {
+    expr->getPrompt()->accept(*this);
+  }
+}
+
+void MacroExpander::visitSliceType(const SliceType *type) {
+  type->getElementType()->accept(*this);
+}
 } // namespace moksha

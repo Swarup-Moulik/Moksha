@@ -1,0 +1,10 @@
+async void some_io_task() {}
+
+async void fetch_data() {
+    // The AST `await` keyword must be lowered into a state-save,
+    // a return to the event loop, and a reentry switch case.
+    await some_io_task();
+    int x = 1;
+}
+
+// LLVM Coroutine for future

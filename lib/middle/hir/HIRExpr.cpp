@@ -96,6 +96,11 @@ void HIRFloatLiteral::accept(ConstHIRVisitor &v) const {
   v.visitFloatLiteral(*this);
 }
 
+void HIRDecimalLiteral::accept(HIRVisitor &v) { v.visitDecimalLiteral(*this); }
+void HIRDecimalLiteral::accept(ConstHIRVisitor &v) const {
+  v.visitDecimalLiteral(*this);
+}
+
 void HIRBoolLiteral::accept(HIRVisitor &v) { v.visitBoolLiteral(*this); }
 void HIRBoolLiteral::accept(ConstHIRVisitor &v) const {
   v.visitBoolLiteral(*this);
@@ -216,6 +221,9 @@ void HIRSpreadExpr::accept(ConstHIRVisitor &v) const {
   v.visitSpreadExpr(*this);
 }
 
+void HIRInputExpr::accept(HIRVisitor &v) { v.visitInputExpr(*this); }
+void HIRInputExpr::accept(ConstHIRVisitor &v) const { v.visitInputExpr(*this); }
+
 // Defined here because HIRStmt is fully defined in this file (via include),
 // whereas it is only forward-declared in HIRExpr.h
 const HIRStmt *HIRLambdaExpr::getBody() const { return body.get(); }
@@ -227,6 +235,10 @@ void HIRIntegerLiteral::dump(llvm::raw_ostream &os, int indent) const {
 void HIRFloatLiteral::dump(llvm::raw_ostream &os, int indent) const {
   printExprIndent(os, indent);
   os << "FloatLiteral (" << value << ")\n";
+}
+void HIRDecimalLiteral::dump(llvm::raw_ostream &os, int indent) const {
+  printExprIndent(os, indent);
+  os << "DecimalLiteral: " << value << " (" << getType()->toString() << ")\n";
 }
 void HIRBoolLiteral::dump(llvm::raw_ostream &os, int indent) const {
   printExprIndent(os, indent);
@@ -286,6 +298,15 @@ void HIRAddressOfExpr::dump(llvm::raw_ostream &os, int indent) const {
   if (operand)
     operand->dump(os, indent + 1);
 }
+
+void HIRInputExpr::dump(llvm::raw_ostream &os, int indent) const {
+  printExprIndent(os, indent);
+  os << "InputExpr\n";
+  if (prompt) {
+    prompt->dump(os, indent + 1);
+  }
+}
+
 // ============================================================================
 // [Complex Expression Dumps]
 // ============================================================================
@@ -321,7 +342,15 @@ void HIRTemplateStringExpr::dump(llvm::raw_ostream &os, int indent) const {
 
 void HIRMemberExpr::dump(llvm::raw_ostream &os, int indent) const {
   printExprIndent(os, indent);
-  os << "MemberExpr (Member: " << getMemberName() << ")\n";
+  os << "MemberExpr (Member: " << getMemberName();
+
+  // [FIX] Print bitfield metadata in the HIR Dump
+  if (info.isBitfield) {
+    os << " [bitfield: width=" << info.bitWidth << ", offset=" << info.bitOffset
+       << "]";
+  }
+  os << ")\n";
+
   if (getObject()) {
     getObject()->dump(os, indent + 1);
   }
@@ -369,14 +398,31 @@ void HIRNewExpr::dump(llvm::raw_ostream &os, int indent) const {
 void HIRLambdaExpr::dump(llvm::raw_ostream &os, int indent) const {
   printExprIndent(os, indent);
   os << "LambdaExpr (Params: ";
-  auto params = getParams();
-  for (size_t i = 0; i < params.size(); ++i) {
-    os << params[i].name << (i < params.size() - 1 ? ", " : "");
+  const auto &paramsList = getParams();
+  for (size_t i = 0; i < paramsList.size(); ++i) {
+    os << paramsList[i].name;
+    if (paramsList[i].defaultValue) {
+      os << " = <default_val>"; // Indicate default value presence
+    }
+    if (i < paramsList.size() - 1)
+      os << ", ";
   }
   os << ")\n";
 
+  if (!captures.empty()) {
+    printExprIndent(os, indent + 1);
+    os << "[Captures: ";
+    for (size_t i = 0; i < captures.size(); ++i) {
+      os << captures[i].name
+         << (captures[i].kind == CaptureKind::ByReference ? "(&)" : "(v)");
+      if (i < captures.size() - 1)
+        os << ", ";
+    }
+    os << "]\n";
+  }
+
   if (getBody()) {
-    getBody()->dump(os, indent + 1); // body is a HIRStmt
+    getBody()->dump(os, indent + 1);
   }
 }
 
@@ -389,9 +435,7 @@ void HIRThreadExpr::dump(llvm::raw_ostream &os, int indent) const {
 
 void HIRSizeOfExpr::dump(llvm::raw_ostream &os, int indent) const {
   printExprIndent(os, indent);
-  os << "SizeOfExpr\n";
-  if (getExpr())
-    getExpr()->dump(os, indent + 1);
+  os << "SizeOfExpr (Target: " << targetType->toString() << ")\n";
 }
 
 void HIRAwaitExpr::dump(llvm::raw_ostream &os, int indent) const {

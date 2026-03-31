@@ -1,19 +1,19 @@
-ref class Resource {
-    public int id;
-    constructor(int id) { this.id = id; }
-    destructor() { print("Freed"); }
+closure() -> void create_dangling_closure() {
+    int local_data = 100;
+    *view int v = &local_data;
+
+    // Capture the view pointer by value.
+    // The closure now holds a physical memory address pointing to the stack.
+    closure() -> void bad_closure = () => {
+        print(*v);
+    };
+
+    return bad_closure; // local_data is destroyed here!
 }
 
-Resource res = new Resource(100);
 
-// Capture by reference/value in closure
-any myClosure = () => {
-    print(res.id);
-};
+    closure() -> void boom = create_dangling_closure();
 
-// Move ownership of the resource
-Resource stolen = res;
-
-// FATAL: The closure is now holding a dangling reference to a moved object.
-// The ownership pass MUST catch this.
-myClosure();
+    // FATAL: The NLL Borrow Checker MUST catch this!
+    // The closure holds a *view to a destroyed stack frame.
+    boom();

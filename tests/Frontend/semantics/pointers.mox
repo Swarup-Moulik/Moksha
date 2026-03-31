@@ -1,5 +1,5 @@
 void test_pointers() {
-    mut int val = 42;
+    int val = 42;
 
     // 1. Address-Of Operator (&)
     // Yields a mutable pointer because the storage is mutable

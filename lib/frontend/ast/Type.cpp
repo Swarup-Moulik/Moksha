@@ -142,13 +142,14 @@ bool ArrayType::isEquivalent(const Type &other) const {
 
     // 3. If both have sizes, the numbers MUST match exactly
     if (thisHasSize && otherHasSize) {
-      if (auto thisInt = llvm::dyn_cast<IntegerLiteral>(sizeExpr.get())) {
-        if (auto otherInt =
-                llvm::dyn_cast<IntegerLiteral>(otherArr->sizeExpr.get())) {
-          if (thisInt->getValue() != otherInt->getValue()) {
-            return false; // The sizes are different!
-          }
+      auto thisInt = llvm::dyn_cast<IntegerLiteral>(sizeExpr.get());
+      auto otherInt = llvm::dyn_cast<IntegerLiteral>(otherArr->sizeExpr.get());
+      if (thisInt && otherInt) {
+        if (thisInt->getValue() != otherInt->getValue()) {
+          return false; // The literal sizes are different
         }
+      } else {
+        return false;
       }
     }
     return true;
@@ -172,6 +173,9 @@ std::string ArrayType::toString() const {
   s += "]";
   return s;
 }
+
+// === Slice Type ===
+void SliceType::accept(ASTVisitor &v) const { v.visitSliceType(this); }
 
 // === Map Type ===
 void MapType::accept(ASTVisitor &v) const { v.visitMapType(this); }
@@ -204,8 +208,10 @@ bool NamedType::isEquivalent(const Type &other) const {
     if (genericArgs.size() != otherNamed->genericArgs.size())
       return false;
 
-    // 3. Arguments must be recursively equivalent (Invariance)
+    // 3. Arguments must be recursively equivalent AND match variance
     for (size_t i = 0; i < genericArgs.size(); ++i) {
+      if (genericArgs[i].variance != otherNamed->genericArgs[i].variance)
+        return false;
       if (!genericArgs[i].type->isEquivalent(*otherNamed->genericArgs[i].type))
         return false;
     }
@@ -279,6 +285,12 @@ bool MutType::isEquivalent(const Type &other) const {
 
 std::string MutType::toString() const { return "mut " + inner->toString(); }
 
+// === Weak Type ===
+void WeakType::accept(ASTVisitor &v) const { v.visitWeakType(this); }
+
+// === Decimal Type ===
+void DecimalType::accept(ASTVisitor &v) const { v.visitDecimalType(this); }
+
 void VolatileType::accept(ASTVisitor &v) const { v.visitVolatileType(this); }
 
 void ConstType::accept(ASTVisitor &v) const { v.visitConstType(this); }
@@ -288,7 +300,33 @@ std::string PointerType::toString() const { return "*" + pointee->toString(); }
 std::string ReferenceType::toString() const { return "&" + inner->toString(); }
 
 std::string NullableType::toString() const {
+  if (llvm::isa<WeakType>(innerType.get())) {
+    return innerType->toString();
+  }
   return innerType->toString() + "?";
+}
+
+void ClosureType::accept(ASTVisitor &v) const { v.visitClosureType(this); }
+
+// === View Type ===
+bool ViewType::isImmutable() const { return true; }
+const Type *ViewType::stripModifiers() const { return inner->stripModifiers(); }
+
+// === Const Type ===
+bool ConstType::isImmutable() const { return true; }
+const Type *ConstType::stripModifiers() const {
+  return inner->stripModifiers();
+}
+
+// === Mut Type ===
+const Type *MutType::stripModifiers() const { return inner->stripModifiers(); }
+
+// === Lock Type ===
+const Type *LockType::stripModifiers() const { return inner->stripModifiers(); }
+
+// === Volatile Type ===
+const Type *VolatileType::stripModifiers() const {
+  return inner->stripModifiers();
 }
 
 } // namespace moksha

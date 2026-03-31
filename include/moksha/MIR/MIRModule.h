@@ -1,6 +1,7 @@
 #pragma once
 
 #include "moksha/MIR/MIRFunction.h"
+#include "llvm/Support/raw_ostream.h"
 #include <iosfwd> // Added
 #include <memory>
 #include <string>
@@ -10,7 +11,26 @@
 namespace moksha {
 namespace mir {
 
-class MIRGlobal; // Forward decl
+class MIRGlobal;
+class MIRConstant;
+
+enum class IntrinsicID {
+  None,
+  Bswap,
+  Ctlz,
+  Cttz,
+  Ctpop,
+  Trap,
+  // --- Atomics ---
+  AtomicLoad,
+  AtomicStore,
+  AtomicAdd,
+  AtomicCAS,
+  AtomicFenceAcquire,
+  AtomicFenceRelease,
+  AtomicFenceSeqCst,
+  AtomicThreadFence
+};
 
 class MIRModule {
 public:
@@ -34,6 +54,13 @@ public:
     return globals;
   }
 
+  std::vector<std::unique_ptr<MIRGlobal>> &getGlobalsMut() { return globals; }
+  std::unordered_map<std::string, MIRGlobal *> &getGlobalMapMut() {
+    return globalMap;
+  }
+
+  IntrinsicID lookupIntrinsic(const std::string &name) const;
+
   // Legacy Helpers
   MIRGlobal *findGlobalByName(const std::string &name) const {
     return getGlobal(name);
@@ -42,7 +69,19 @@ public:
     return getFunction(name);
   }
 
-  void dump(std::ostream &os) const;
+  void dump(llvm::raw_ostream &os) const;
+
+  // Constant Management
+  template <typename T, typename... Args>
+  T *getOrInsertConstant(Args &&...args) {
+    auto c = std::make_unique<T>(std::forward<Args>(args)...);
+    T *ptr = c.get();
+    constants.push_back(std::move(c));
+    return ptr;
+  }
+
+  const hir::HIRType *getPointerType(const hir::HIRType *pointee);
+  const hir::HIRType *getArrayType(const hir::HIRType *elemTy, size_t size);
 
 private:
   std::string name;
@@ -52,6 +91,12 @@ private:
 
   std::unordered_map<std::string, MIRFunction *> functionMap;
   std::unordered_map<std::string, MIRGlobal *> globalMap;
+
+  std::vector<std::unique_ptr<MIRConstant>> constants;
+
+  std::vector<std::unique_ptr<hir::HIRType>> derivedTypes;
+  std::unordered_map<const hir::HIRType *, std::unique_ptr<hir::PointerType>>
+      pointerTypeCache;
 };
 
 } // namespace mir

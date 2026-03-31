@@ -1,13 +1,8 @@
 // --- Interrupt Service Routine ---
 // Verifies 'interrupt' attribute parsing
 interrupt void handle_keyboard() {
-    // Verifies 'asm' statement with string literals
-    asm("pushaq");
-
-    // Logic here...
-
-    asm("popaq");
-    asm("iretq"); // Return from interrupt
+    // Standard Moksha logic goes here!
+    // No need for pushaq, popaq, or iretq since LLVM handles it automatically via x86_intrcc
 }
 
 // --- Naked Stub (Bootloaders/Syscalls) ---

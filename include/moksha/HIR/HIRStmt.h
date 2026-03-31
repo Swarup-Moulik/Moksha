@@ -1,6 +1,9 @@
 #pragma once
 
+#include "moksha/HIR/HIRExpr.h"
+#include "moksha/HIR/HIRStmt.h"
 #include "moksha/HIR/HIRType.h"
+#include "moksha/MIR/MIRValue.h"
 #include "moksha/Support/SourceLocation.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cassert>
@@ -389,16 +392,39 @@ public:
   HIRVarDeclStmt(std::string name, const HIRType *type,
                  std::unique_ptr<HIRExpr> init, bool isMutable,
                  bool isThreadLocal, bool isVolatile, int alignment,
+                 bool isStatic, bool isUsed, std::string sectionName,
                  SourceLocation loc);
+
+  // Add the explicit destructor declaration
   ~HIRVarDeclStmt() override;
 
-  [[nodiscard]] const std::string &getName() const { return name; }
-  [[nodiscard]] const HIRType *getType() const { return type.get(); }
-  [[nodiscard]] const HIRExpr *getInit() const { return init.get(); }
-  [[nodiscard]] bool isMutableVar() const { return isMutable; }
-  bool isThreadLocalVar() const { return isThreadLocal; }
+  const HIRType *getType() const { return type; }
+  const std::string &getName() const { return name; }
+  const HIRExpr *getInit() const { return init.get(); }
+
   bool isVolatileVar() const { return isVolatile; }
+  void setVolatile(bool v) { isVolatile = v; }
+
+  bool isMutableVar() const { return isMutable; }
+  void setMutable(bool m) { isMutable = m; }
+
+  bool isStaticVar() const { return isStatic; }
+  void setStatic(bool v) { isStatic = v; }
+
+  bool isExternVar() const { return isExtern; }
+  void setExtern(bool v) { isExtern = v; }
+
+  bool isUsedVar() const { return isUsed; }
+  void setUsed(bool v) { isUsed = v; }
+
+  bool isThreadLocalVar() const { return isThreadLocal; }
+  void setThreadLocal(bool v) { isThreadLocal = v; }
+
   int getAlignment() const { return alignment; }
+  void setAlignment(int v) { alignment = v; }
+
+  const std::string &getSection() const { return sectionName; }
+  void setSection(std::string s) { sectionName = std::move(s); }
 
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
@@ -407,14 +433,28 @@ public:
     return S->getKind() == Kind::VarDecl;
   }
 
+  [[nodiscard]] bool isConstVar() const {
+    // If it wasn't explicitly declared with 'mut', it is inherently constant
+    if (!isMutable)
+      return true;
+    // Fallback to checking type-level semantic capabilities ('view'/'const')
+    if (type && type->isImmutable())
+      return true;
+    return false;
+  }
+
 private:
   std::string name;
-  std::shared_ptr<const HIRType> type;
+  const HIRType *type;
   std::unique_ptr<HIRExpr> init;
-  bool isMutable;
-  bool isThreadLocal;
-  bool isVolatile;
-  int alignment;
+  bool isMutable = false;
+  bool isThreadLocal = false;
+  bool isVolatile = false;
+  int alignment = 0;
+  bool isStatic = false;
+  bool isUsed = false;
+  bool isExtern = false;
+  std::string sectionName = "";
 };
 
 class ForInStmt : public HIRStmt {

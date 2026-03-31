@@ -4,6 +4,10 @@
 #include "moksha/MIR/MIRBlock.h"
 #include "moksha/MIR/MIRFunction.h"
 #include "moksha/MIR/MIRGlobal.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/Format.h"
+#include "llvm/Support/raw_ostream.h"
+#include <cctype>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -15,15 +19,27 @@ namespace mir {
 // [Helpers]
 // ============================================================================
 
-static void printType(std::ostream &os, const hir::HIRType *type) {
-  if (type) {
-    os << type->toString();
-  } else {
-    os << "void";
+static std::string getBorrowString(mir::BorrowKind bk) {
+  switch (bk) {
+  case mir::BorrowKind::Mut:
+    return " [mut]";
+  case mir::BorrowKind::View:
+    return " [view]";
+  case mir::BorrowKind::Lock:
+    return " [lock]";
+  default:
+    return "";
   }
 }
 
-static void printEscapedString(std::ostream &os, const std::string &s) {
+static void printType(llvm::raw_ostream &os, const hir::HIRType *type) {
+  if (type)
+    os << type->toString();
+  else
+    os << "void";
+}
+
+static void printEscapedString(llvm::raw_ostream &os, const std::string &s) {
   os << "c\"";
   for (unsigned char c : s) {
     if (c == '\\')
@@ -31,19 +47,27 @@ static void printEscapedString(std::ostream &os, const std::string &s) {
     else if (c == '"')
       os << "\\22";
     else if (isprint(c))
-      os << c;
+      os << (char)c;
     else {
-      os << "\\";
-      os << std::hex << std::setw(2) << std::setfill('0') << (int)c;
-      os << std::dec; // restore decimal
+      os << "\\" << llvm::format_hex_no_prefix(c, 2);
     }
   }
   os << "\\00\"";
 }
 
-static void printOperand(std::ostream &os, const MIRValue *val) {
+static void printOperand(llvm::raw_ostream &os, const MIRValue *val) {
   if (!val) {
     os << "null";
+    return;
+  }
+
+  if (auto *arr = llvm::dyn_cast<ConstantArray>(val)) {
+    arr->dump(os);
+    return;
+  }
+
+  if (auto *mapConst = llvm::dyn_cast<ConstantMap>(val)) {
+    mapConst->dump(os);
     return;
   }
 
@@ -53,10 +77,15 @@ static void printOperand(std::ostream &os, const MIRValue *val) {
   case ValueKind::ConstantBool:
   case ValueKind::ConstantString:
   case ValueKind::ConstantNull:
-    val->dump(os); // Constants dump their value directly
+  case ValueKind::ConstantDecimal:
+  case ValueKind::ConstantStruct:
+  case ValueKind::ConstantBitCast:
+  case ValueKind::ConstantSlice:
+    val->dump(os);
     break;
+  case ValueKind::Function:
   case ValueKind::Global:
-    os << "@" << val->getName();
+    os << "@\"" << val->getName() << "\"";
     break;
   case ValueKind::BasicBlock:
     os << "%" << val->getName();
@@ -112,7 +141,9 @@ static std::string getOpcodeName(Opcode op) {
   case Opcode::Shl:
     return "shl";
   case Opcode::Shr:
-    return "ashr";
+    return "shr";
+  case Opcode::Pow:
+    return "pow";
   case Opcode::ICmp:
     return "icmp";
   case Opcode::FCmp:
@@ -133,67 +164,197 @@ static std::string getOpcodeName(Opcode op) {
     return "sitofp";
   case Opcode::FloatToInt:
     return "fptosi";
+  case Opcode::ZExt:
+    return "zext";
+  case Opcode::SExt:
+    return "sext";
+  case Opcode::Trunc:
+    return "trunc";
   case Opcode::Retain:
     return "retain";
   case Opcode::Release:
     return "release";
   case Opcode::Phi:
     return "phi";
+  case Opcode::Invoke:
+    return "invoke";
+  case Opcode::LandingPad:
+    return "landingpad";
+  case Opcode::Resume:
+    return "resume";
+  case Opcode::Throw:
+    return "throw";
+  case Opcode::InlineAsm:
+    return "inlineasm";
+  case Opcode::MakeClosure:
+    return "make_closure";
+  case Opcode::Spawn:
+    return "spawn";
+  case Opcode::Await:
+    return "await";
   default:
     return "unknown";
   }
 }
 
 // ============================================================================
-// [Global & Argument] (MIRFunction/MIRBlock/MIRModule moved to respective
-// files)
+// [Global & Argument]
 // ============================================================================
 
-void MIRGlobal::dump(std::ostream &os) const {
-  os << "@" << getName() << " = ";
-  if (linkage == Linkage::Internal)
+void MIRGlobal::dump(llvm::raw_ostream &os) const {
+  os << "@\"" << getName() << "\" = ";
+
+  // [FIX 1] Print Linkage (This handles 'static' -> internal)
+  if (getLinkage() == Linkage::Internal)
     os << "internal ";
+  else if (getLinkage() == Linkage::Weak)
+    os << "weak ";
+  else if (getLinkage() == Linkage::LinkOnce)
+    os << "linkonce ";
+  else if (isExtern())
+    os << "external ";
 
-  // [FIX] Use correct member name 'isConstantFlag'
-  os << (isConstantFlag ? "constant " : "global ");
-  printType(os, getType());
-  os << " ";
+  // [FIX 2] Print Used Attribute
+  if (isUsed())
+    os << "used ";
 
-  // [FIX] Commented out initializer until supported in header
-  /*
-  if (initializer) {
-    initializer->dump(os);
-  } else {
+  // [FIX 3] Print Thread Local Attribute
+  if (isThreadLocal())
+    os << "thread_local ";
+
+  if (isVolatile())
+    os << "volatile ";
+
+  if (isConstant())
+    os << "constant ";
+  else
+    os << "global ";
+
+  if (getType()) {
+    // Unwrap the pointer so it prints "u8[4096]" instead of "&u8[4096]"
+    if (auto *ptrTy = llvm::dyn_cast<hir::PointerType>(getType())) {
+      os << ptrTy->getPointee()->toString() << " ";
+    } else {
+      os << getType()->toString() << " ";
+    }
+  }
+
+  if (getInitializer()) {
+    getInitializer()->dump(os);
+  } else if (!isExtern()) {
     os << "zeroinitializer";
   }
-  */
-  os << "zeroinitializer";
+
+  // Print the alignment for LLVM!
+  if (getAlignment() > 0) {
+    os << ", align " << getAlignment();
+  }
+
+  // [FIX 3] Print Section Attribute
+  if (!getSection().empty()) {
+    os << ", section \"" << getSection() << "\"";
+  }
 }
 
-void MIRArgument::dump(std::ostream &os) const {
+void MIRArgument::dump(llvm::raw_ostream &os) const {
   printType(os, getType());
-  os << " %" << getName();
+  if (!getName().empty()) {
+    os << " %" << getName();
+  }
 }
 
 // ============================================================================
 // [Constants]
 // ============================================================================
 
-void ConstantInt::dump(std::ostream &os) const { os << value; }
+void ConstantInt::dump(llvm::raw_ostream &os) const { os << value; }
 
-void ConstantFloat::dump(std::ostream &os) const {
-  os << std::setprecision(15) << value;
+void ConstantFloat::dump(llvm::raw_ostream &os) const {
+  os << llvm::format("%.15g", value);
 }
 
-void ConstantBool::dump(std::ostream &os) const {
+void ConstantBool::dump(llvm::raw_ostream &os) const {
   os << (value ? "true" : "false");
 }
 
-void ConstantString::dump(std::ostream &os) const {
+void ConstantString::dump(llvm::raw_ostream &os) const {
   printEscapedString(os, value);
 }
 
-void ConstantNull::dump(std::ostream &os) const { os << "null"; }
+void ConstantNull::dump(llvm::raw_ostream &os) const { os << "null"; }
+
+void ConstantUndef::dump(llvm::raw_ostream &os) const { os << "undef"; }
+
+void ConstantArray::dump(llvm::raw_ostream &os) const {
+  os << "[";
+  for (size_t i = 0; i < elements.size(); ++i) {
+    if (i > 0)
+      os << ", ";
+    if (elements[i]) {
+      printType(os, elements[i]->getType());
+      os << " ";
+      printOperand(os, elements[i]);
+    } else {
+      os << "null";
+    }
+  }
+  os << "]";
+}
+
+void ConstantSlice::dump(llvm::raw_ostream &os) const {
+  os << "[";
+  for (size_t i = 0; i < elements.size(); ++i) {
+    if (i > 0)
+      os << ", ";
+    if (elements[i]) {
+      printType(os, elements[i]->getType());
+      os << " ";
+      printOperand(os, elements[i]);
+    } else {
+      os << "null";
+    }
+  }
+  os << "]";
+}
+
+void ConstantMap::dump(llvm::raw_ostream &os) const {
+  os << "{";
+  for (size_t i = 0; i < entries.size(); ++i) {
+    if (i > 0)
+      os << ", ";
+    printOperand(os, entries[i].first);
+    os << ": ";
+    printOperand(os, entries[i].second);
+  }
+  os << "}";
+}
+
+void ConstantStruct::dump(llvm::raw_ostream &os) const {
+  os << "{ ";
+  for (size_t i = 0; i < fields.size(); ++i) {
+    if (i > 0)
+      os << ", ";
+
+    if (fields[i]) {
+      printType(os, fields[i]->getType());
+      os << " ";
+      printOperand(os, fields[i]);
+    } else {
+      os << "null";
+    }
+  }
+  os << " }";
+}
+
+void ConstantBitCast::dump(llvm::raw_ostream &os) const {
+  os << "bitcast (";
+  printType(os, value->getType());
+  os << " ";
+  printOperand(os, value);
+  os << " to ";
+  printType(os, getType());
+  os << ")";
+}
 
 // ============================================================================
 // [Terminators]
@@ -202,9 +363,15 @@ void ConstantNull::dump(std::ostream &os) const { os << "null"; }
 BranchInst::BranchInst(MIRBlock *target, SourceLocation loc)
     : MIRInst(Opcode::Br, nullptr, "", loc), target(target) {}
 
-void BranchInst::dump(std::ostream &os) const {
+void BranchInst::dump(llvm::raw_ostream &os) const {
   os << "br label ";
   printOperand(os, target);
+}
+
+void BranchInst::replaceOperand(MIRValue *oldVal, MIRValue *newVal) {
+  if (target == oldVal) {
+    target = static_cast<MIRBlock *>(newVal);
+  }
 }
 
 CondBranchInst::CondBranchInst(MIRValue *cond, MIRBlock *trueBlock,
@@ -212,7 +379,7 @@ CondBranchInst::CondBranchInst(MIRValue *cond, MIRBlock *trueBlock,
     : MIRInst(Opcode::CondBr, nullptr, "", loc), cond(cond),
       trueBlock(trueBlock), falseBlock(falseBlock) {}
 
-void CondBranchInst::dump(std::ostream &os) const {
+void CondBranchInst::dump(llvm::raw_ostream &os) const {
   os << "br ";
   printType(os, cond->getType());
   os << " ";
@@ -221,6 +388,15 @@ void CondBranchInst::dump(std::ostream &os) const {
   printOperand(os, trueBlock);
   os << ", label ";
   printOperand(os, falseBlock);
+}
+
+void CondBranchInst::replaceOperand(MIRValue *oldVal, MIRValue *newVal) {
+  if (cond == oldVal)
+    cond = newVal;
+  if (trueBlock == oldVal)
+    trueBlock = static_cast<MIRBlock *>(newVal);
+  if (falseBlock == oldVal)
+    falseBlock = static_cast<MIRBlock *>(newVal);
 }
 
 SwitchInst::SwitchInst(MIRValue *cond, MIRBlock *defaultBlock,
@@ -232,7 +408,7 @@ void SwitchInst::addCase(MIRValue *value, MIRBlock *target) {
   cases.emplace_back(value, target);
 }
 
-void SwitchInst::dump(std::ostream &os) const {
+void SwitchInst::dump(llvm::raw_ostream &os) const {
   os << "switch ";
   printType(os, cond->getType());
   os << " ";
@@ -257,10 +433,34 @@ void SwitchInst::dump(std::ostream &os) const {
   os << "  ]";
 }
 
+void SwitchInst::replaceOperand(MIRValue *oldVal, MIRValue *newVal) {
+  // 1. Update the condition
+  if (cond == oldVal)
+    cond = newVal;
+
+  // 2. Update the case values
+  for (auto &c : cases) {
+    if (c.first == oldVal)
+      c.first = newVal;
+  }
+
+  // 3. Update the target blocks (if SimplifyCFG is bypassing them)
+  if (auto *newBlock = llvm::dyn_cast<MIRBlock>(newVal)) {
+    if (static_cast<MIRValue *>(defaultBlock) == oldVal) {
+      defaultBlock = newBlock;
+    }
+    for (auto &c : cases) {
+      if (static_cast<MIRValue *>(c.second) == oldVal) {
+        c.second = newBlock;
+      }
+    }
+  }
+}
+
 ReturnInst::ReturnInst(MIRValue *val, SourceLocation loc)
     : MIRInst(Opcode::Return, nullptr, "", loc), val(val) {}
 
-void ReturnInst::dump(std::ostream &os) const {
+void ReturnInst::dump(llvm::raw_ostream &os) const {
   os << "ret ";
   if (val) {
     printType(os, val->getType());
@@ -271,35 +471,55 @@ void ReturnInst::dump(std::ostream &os) const {
   }
 }
 
+void UnreachableInst::dump(llvm::raw_ostream &os) const { os << "unreachable"; }
+
 // ============================================================================
 // [Memory Ops]
 // ============================================================================
 
-AllocaInst::AllocaInst(const hir::HIRType *allocType, std::string name,
+AllocaInst::AllocaInst(const hir::HIRType *ptrType,
+                       const hir::HIRType *allocType, std::string name,
                        SourceLocation loc, unsigned align)
-    : MIRInst(Opcode::Alloca, allocType, std::move(name), loc),
+    : MIRInst(Opcode::Alloca, ptrType, std::move(name), loc),
       allocatedType(allocType), alignment(align) {}
 
-void AllocaInst::dump(std::ostream &os) const {
-  os << "%" << getName() << " = alloca ";
+void AllocaInst::dump(llvm::raw_ostream &os) const {
+  os << "  %" << getName() << " = alloca ";
   printType(os, allocatedType);
-
+  os << getBorrowString(getBorrowKind());
   if (alignment > 0) {
     os << ", align " << alignment;
   }
 }
 
+// Add this helper function right above LoadInst
+static const hir::HIRType *determineLoadType(const MIRValue *ptr) {
+  if (!ptr || !ptr->getType())
+    return nullptr;
+
+  // Safely try to cast to a PointerType
+  if (auto *pTy = llvm::dyn_cast<hir::PointerType>(ptr->getType())) {
+    return pTy->getPointee();
+  }
+
+  // Fallback: If it's already a direct type, just return it
+  return ptr->getType();
+}
+
 LoadInst::LoadInst(MIRValue *ptr, std::string name, SourceLocation loc,
                    unsigned align)
-    : MIRInst(Opcode::Load, nullptr, std::move(name), loc), ptr(ptr),
-      alignment(align) {}
+    : MIRInst(Opcode::Load, determineLoadType(ptr), std::move(name), loc),
+      ptr(ptr), alignment(align) {}
 
-void LoadInst::dump(std::ostream &os) const {
-  os << "%" << getName() << " = load ";
-  printType(os, getType());
+void LoadInst::dump(llvm::raw_ostream &os) const {
+  os << "  %" << getName() << " = load ";
+  if (isVolatile())
+    os << "volatile ";
+  printType(os, getType()); // The type of data being loaded (e.g., i32)
+  os << getBorrowString(getBorrowKind());
   os << ", ";
-  printType(os, ptr->getType());
-  os << " ";
+  printType(os, getType());
+  os << "* "; // Standard IR notation for a pointer to that type
   printOperand(os, ptr);
 
   if (alignment > 0) {
@@ -312,14 +532,16 @@ StoreInst::StoreInst(MIRValue *val, MIRValue *ptr, SourceLocation loc,
     : MIRInst(Opcode::Store, nullptr, "", loc), val(val), ptr(ptr),
       alignment(align) {}
 
-void StoreInst::dump(std::ostream &os) const {
+void StoreInst::dump(llvm::raw_ostream &os) const {
   os << "store ";
-  printType(os, val->getType());
+  if (isVolatile())
+    os << "volatile ";
+  printType(os, val->getType()); // Type of value (e.g., i32)
   os << " ";
   printOperand(os, val);
   os << ", ";
-  printType(os, ptr->getType());
-  os << " ";
+  printType(os, val->getType()); // Pointee type
+  os << "* ";                    // Standard IR notation
   printOperand(os, ptr);
 
   if (alignment > 0) {
@@ -327,14 +549,49 @@ void StoreInst::dump(std::ostream &os) const {
   }
 }
 
+// ============================================================================
+// [Weak Memory Instructions]
+// ============================================================================
+
+StoreWeakInst::StoreWeakInst(MIRValue *val, MIRValue *ptr, SourceLocation loc)
+    : MIRInst(Opcode::StoreWeak, nullptr, "", loc), val(val), ptr(ptr) {}
+
+void StoreWeakInst::dump(llvm::raw_ostream &os) const {
+  os << "store_weak ";
+  printType(os, val->getType());
+  os << " ";
+  printOperand(os, val);
+  os << ", ";
+  printType(os, ptr->getType());
+  os << " ";
+  printOperand(os, ptr);
+}
+
+LoadWeakInst::LoadWeakInst(MIRValue *ptr, const hir::HIRType *resType,
+                           std::string name, SourceLocation loc)
+    : MIRInst(Opcode::LoadWeak, resType, std::move(name), loc), ptr(ptr) {}
+
+void LoadWeakInst::dump(llvm::raw_ostream &os) const {
+  if (!getName().empty()) {
+    os << "%" << getName() << " = ";
+  }
+  os << "load_weak ";
+  printType(os, getType());
+  os << ", ";
+  printType(os, ptr->getType());
+  os << " ";
+  printOperand(os, ptr);
+}
+
 GetElementPtrInst::GetElementPtrInst(MIRValue *ptr,
                                      std::vector<MIRValue *> &&indices,
-                                     const hir::HIRType *resultType,
+                                     const hir::HIRType *ptrType,
+                                     const hir::HIRType *resType,
                                      std::string name, SourceLocation loc)
-    : MIRInst(Opcode::GetElementPtr, resultType, std::move(name), loc),
-      ptr(ptr), indices(std::move(indices)) {}
+    : MIRInst(Opcode::GetElementPtr, ptrType, std::move(name), loc), ptr(ptr),
+      indices(std::move(indices)) {}
 
-void GetElementPtrInst::dump(std::ostream &os) const {
+void GetElementPtrInst::dump(llvm::raw_ostream &os) const {
   os << "%" << getName() << " = getelementptr ";
   printType(os, getType());
   os << ", ";
@@ -358,7 +615,7 @@ InsertValueInst::InsertValueInst(MIRValue *agg, MIRValue *val, uint32_t index,
     : MIRInst(Opcode::InsertValue, agg->getType(), std::move(name), loc),
       agg(agg), val(val), index(index) {}
 
-void InsertValueInst::dump(std::ostream &os) const {
+void InsertValueInst::dump(llvm::raw_ostream &os) const {
   os << "%" << getName() << " = insertvalue ";
   printType(os, agg->getType());
   os << " ";
@@ -376,7 +633,7 @@ ExtractValueInst::ExtractValueInst(MIRValue *agg, uint32_t index,
     : MIRInst(Opcode::ExtractValue, resType, std::move(name), loc), agg(agg),
       index(index) {}
 
-void ExtractValueInst::dump(std::ostream &os) const {
+void ExtractValueInst::dump(llvm::raw_ostream &os) const {
   os << "%" << getName() << " = extractvalue ";
   printType(os, agg->getType());
   os << " ";
@@ -391,7 +648,7 @@ void ExtractValueInst::dump(std::ostream &os) const {
 ARCInst::ARCInst(Opcode op, MIRValue *obj, SourceLocation loc)
     : MIRInst(op, nullptr, "", loc), obj(obj) {}
 
-void ARCInst::dump(std::ostream &os) const {
+void ARCInst::dump(llvm::raw_ostream &os) const {
   os << getOpcodeName(opcode) << " ";
   printType(os, obj->getType());
   os << " ";
@@ -402,7 +659,7 @@ BinaryInst::BinaryInst(Opcode op, MIRValue *lhs, MIRValue *rhs,
                        std::string name, SourceLocation loc)
     : MIRInst(op, lhs->getType(), std::move(name), loc), lhs(lhs), rhs(rhs) {}
 
-void BinaryInst::dump(std::ostream &os) const {
+void BinaryInst::dump(llvm::raw_ostream &os) const {
   os << "%" << getName() << " = " << getOpcodeName(opcode) << " ";
   printType(os, getType());
   os << " ";
@@ -415,18 +672,20 @@ CastInst::CastInst(Opcode op, MIRValue *value, const hir::HIRType *destType,
                    std::string name, SourceLocation loc)
     : MIRInst(op, destType, std::move(name), loc), value(value) {}
 
-void CastInst::dump(std::ostream &os) const {
-  os << "%" << getName() << " = " << getOpcodeName(opcode) << " ";
+void CastInst::dump(llvm::raw_ostream &os) const {
+  os << "%" << getName() << " = ";
   printType(os, value->getType());
   os << " ";
   printOperand(os, value);
   os << " to ";
   printType(os, getType());
+  os << getBorrowString(getBorrowKind());
 }
 
 CompareInst::CompareInst(Predicate pred, MIRValue *lhs, MIRValue *rhs,
-                         std::string name, SourceLocation loc)
-    : MIRInst(Opcode::ICmp, nullptr, std::move(name), loc), pred(pred),
+                         const hir::HIRType *resType, std::string name,
+                         SourceLocation loc)
+    : MIRInst(Opcode::ICmp, resType, std::move(name), loc), pred(pred),
       lhs(lhs), rhs(rhs) {}
 
 static const char *getPredicateString(CompareInst::Predicate p) {
@@ -456,8 +715,70 @@ static const char *getPredicateString(CompareInst::Predicate p) {
   }
 }
 
-void CompareInst::dump(std::ostream &os) const {
+void CompareInst::dump(llvm::raw_ostream &os) const {
   os << "%" << getName() << " = icmp " << getPredicateString(pred) << " ";
+  printType(os, lhs->getType());
+  os << " ";
+  printOperand(os, lhs);
+  os << ", ";
+  printOperand(os, rhs);
+}
+
+// ============================================================================
+// [FCmpInst]
+// ============================================================================
+
+FCmpInst::FCmpInst(Predicate pred, MIRValue *lhs, MIRValue *rhs,
+                   const hir::HIRType *resType, std::string name,
+                   SourceLocation loc)
+    : MIRInst(Opcode::FCmp, resType, std::move(name), loc), pred(pred),
+      lhs(lhs), rhs(rhs) {}
+
+void FCmpInst::dump(llvm::raw_ostream &os) const {
+  if (getType()) {
+    os << "%" << getName() << " = "; // Simplified!
+  }
+  os << "fcmp ";
+
+  switch (pred) {
+  case Predicate::OEQ:
+    os << "oeq ";
+    break;
+  case Predicate::ONE:
+    os << "one ";
+    break;
+  case Predicate::OLT:
+    os << "olt ";
+    break;
+  case Predicate::OLE:
+    os << "ole ";
+    break;
+  case Predicate::OGT:
+    os << "ogt ";
+    break;
+  case Predicate::OGE:
+    os << "oge ";
+    break;
+  case Predicate::UEQ:
+    os << "ueq ";
+    break;
+  case Predicate::UNE:
+    os << "une ";
+    break;
+  case Predicate::ULT:
+    os << "ult ";
+    break;
+  case Predicate::ULE:
+    os << "ule ";
+    break;
+  case Predicate::UGT:
+    os << "ugt ";
+    break;
+  case Predicate::UGE:
+    os << "uge ";
+    break;
+  }
+
   printType(os, lhs->getType());
   os << " ";
   printOperand(os, lhs);
@@ -472,7 +793,16 @@ void PhiInst::addIncoming(MIRValue *val, MIRBlock *block) {
   incoming.emplace_back(val, block);
 }
 
-void PhiInst::dump(std::ostream &os) const {
+void PhiInst::removeIncoming(MIRBlock *block) {
+  incoming.erase(
+      std::remove_if(incoming.begin(), incoming.end(),
+                     [block](const std::pair<MIRValue *, MIRBlock *> &inc) {
+                       return inc.second == block;
+                     }),
+      incoming.end());
+}
+
+void PhiInst::dump(llvm::raw_ostream &os) const {
   os << "%" << getName() << " = phi ";
   printType(os, getType());
   os << " ";
@@ -499,12 +829,15 @@ CallInst::CallInst(MIRValue *callee, std::vector<MIRValue *> &&args,
     : MIRInst(Opcode::Call, retType, std::move(name), loc), callee(callee),
       args(std::move(args)), isVarArg(isVarArg) {}
 
-void CallInst::dump(std::ostream &os) const {
-  if (getType()) {
-    os << "%" << getName() << " = ";
+void CallInst::dump(llvm::raw_ostream &os) const {
+  if (getType() && getType()->getKind() != hir::TypeKind::Void) {
+    if (!getName().empty()) {
+      os << "%" << getName() << " = ";
+    }
   }
   os << "call ";
   printType(os, getType());
+  os << getBorrowString(getBorrowKind());
   os << " ";
   printOperand(os, callee);
   os << "(";
@@ -518,6 +851,303 @@ void CallInst::dump(std::ostream &os) const {
   if (isVarArg)
     os << ", ...";
   os << ")";
+}
+
+// ============================================================================
+// [Exceptions & Stack Unwinding]
+// ============================================================================
+
+InvokeInst::InvokeInst(MIRValue *callee, std::vector<MIRValue *> &&args,
+                       MIRBlock *normalDest, MIRBlock *unwindDest,
+                       const hir::HIRType *retType, std::string name,
+                       SourceLocation loc)
+    : MIRInst(Opcode::Invoke, retType, std::move(name), loc), callee(callee),
+      args(std::move(args)), normalDest(normalDest), unwindDest(unwindDest) {}
+
+void InvokeInst::dump(llvm::raw_ostream &os) const {
+  if (getType() && getType()->getKind() != hir::TypeKind::Void) {
+    os << "%" << getName() << " = ";
+  }
+  os << "invoke ";
+  printType(os, getType());
+  os << " ";
+  printOperand(os, callee);
+  os << "(";
+  for (size_t i = 0; i < args.size(); ++i) {
+    if (i > 0)
+      os << ", ";
+    printType(os, args[i]->getType());
+    os << " ";
+    printOperand(os, args[i]);
+  }
+  os << ") to label ";
+  printOperand(os, normalDest);
+  os << " unwind label ";
+  printOperand(os, unwindDest);
+}
+
+void InvokeInst::replaceOperand(MIRValue *oldVal, MIRValue *newVal) {
+  if (callee == oldVal)
+    callee = newVal;
+  for (auto &arg : args) {
+    if (arg == oldVal)
+      arg = newVal;
+  }
+  // [FIX] Update the CFG block targets!
+  if (normalDest == oldVal)
+    normalDest = static_cast<MIRBlock *>(newVal);
+  if (unwindDest == oldVal)
+    unwindDest = static_cast<MIRBlock *>(newVal);
+}
+
+LandingPadInst::LandingPadInst(const hir::HIRType *catchType, std::string name,
+                               SourceLocation loc)
+    : MIRInst(Opcode::LandingPad, catchType, std::move(name), loc) {}
+
+void LandingPadInst::dump(llvm::raw_ostream &os) const {
+  os << "%" << getName() << " = landingpad ";
+  printType(os, getType());
+}
+
+ResumeInst::ResumeInst(MIRValue *exception, SourceLocation loc)
+    : MIRInst(Opcode::Resume, nullptr, "", loc), exception(exception) {}
+
+void ResumeInst::dump(llvm::raw_ostream &os) const {
+  os << "resume ";
+  printType(os, exception->getType());
+  os << " ";
+  printOperand(os, exception);
+}
+
+ThrowInst::ThrowInst(MIRValue *exception, MIRBlock *unwindDest,
+                     SourceLocation loc)
+    : MIRInst(Opcode::Throw, nullptr, "", loc), exception(exception),
+      unwindDest(unwindDest) {}
+
+void ThrowInst::dump(llvm::raw_ostream &os) const {
+  os << "throw ";
+  printType(os, exception->getType());
+  os << " ";
+  printOperand(os, exception);
+  if (unwindDest) {
+    os << " unwind label ";
+    printOperand(os, unwindDest);
+  }
+}
+
+void ThrowInst::replaceOperand(MIRValue *oldVal, MIRValue *newVal) {
+  if (exception == oldVal)
+    exception = newVal;
+  // [FIX] Update the CFG block targets!
+  if (unwindDest == oldVal)
+    unwindDest = static_cast<MIRBlock *>(newVal);
+}
+
+// ============================================================================
+// [Inline Assembly & Decimal Constants]
+// ============================================================================
+
+InlineAsmInst::InlineAsmInst(std::string asmStr, std::string constraints,
+                             std::vector<MIRValue *> &&args,
+                             const hir::HIRType *retType, SourceLocation loc)
+    : MIRInst(Opcode::InlineAsm, retType, "", loc),
+      asmString(std::move(asmStr)), constraints(std::move(constraints)),
+      args(std::move(args)) {}
+
+void InlineAsmInst::dump(llvm::raw_ostream &os) const {
+  if (getType()) {
+    os << "%" << getName() << " = ";
+  }
+  os << "call asm \"" << asmString << "\" (" << constraints << ")(";
+  for (size_t i = 0; i < args.size(); ++i) {
+    if (i > 0)
+      os << ", ";
+    printType(os, args[i]->getType());
+    os << " ";
+    printOperand(os, args[i]);
+  }
+  os << ")";
+}
+
+void ConstantDecimal::dump(llvm::raw_ostream &os) const { os << value; }
+
+static const char *memoryOrderToString(MemoryOrder order) {
+  switch (order) {
+  case MemoryOrder::Relaxed:
+    return "unordered";
+  case MemoryOrder::Consume:
+    return "consume";
+  case MemoryOrder::Acquire:
+    return "acquire";
+  case MemoryOrder::Release:
+    return "release";
+  case MemoryOrder::AcqRel:
+    return "acq_rel";
+  case MemoryOrder::SeqCst:
+    return "seq_cst";
+  }
+  return "seq_cst";
+}
+
+static const char *atomicOpToString(AtomicOp op) {
+  switch (op) {
+  case AtomicOp::Xchg:
+    return "xchg";
+  case AtomicOp::Add:
+    return "add";
+  case AtomicOp::Sub:
+    return "sub";
+  case AtomicOp::And:
+    return "and";
+  case AtomicOp::Nand:
+    return "nand";
+  case AtomicOp::Or:
+    return "or";
+  case AtomicOp::Xor:
+    return "xor";
+  case AtomicOp::Max:
+    return "max";
+  case AtomicOp::Min:
+    return "min";
+  case AtomicOp::UMax:
+    return "umax";
+  case AtomicOp::UMin:
+    return "umin";
+  }
+  return "add";
+}
+
+// ============================================================================
+// [Concurrency & Closures]
+// ============================================================================
+
+void MakeClosureInst::dump(llvm::raw_ostream &os) const {
+  os << "%" << getName() << " = make_closure ";
+  printType(os, getType());
+  os << " ";
+  printOperand(os, getFunctionPointer());
+
+  os << " [";
+  for (size_t i = 0; i < captures.size(); ++i) {
+    if (i > 0)
+      os << ", ";
+    printType(os, captures[i]->getType());
+    os << " ";
+    printOperand(os, captures[i]);
+  }
+  os << "]";
+}
+
+void SpawnInst::dump(llvm::raw_ostream &os) const {
+  if (getType() && getType()->getKind() != hir::TypeKind::Void) {
+    os << "%" << getName() << " = ";
+  }
+
+  os << "spawn ";
+  if (threadKind == hir::ThreadKind::Weak)
+    os << "weak ";
+  else if (threadKind == hir::ThreadKind::Detached)
+    os << "detached ";
+
+  printType(os, closure->getType());
+  os << " ";
+  printOperand(os, closure);
+}
+
+void AwaitInst::dump(llvm::raw_ostream &os) const {
+  if (getType() && getType()->getKind() != hir::TypeKind::Void) {
+    os << "%" << getName() << " = ";
+  }
+  os << "await ";
+  printType(os, promise->getType());
+  os << " ";
+  printOperand(os, promise);
+}
+
+AtomicLoadInst::AtomicLoadInst(MIRValue *pointer, MemoryOrder order,
+                               SourceLocation loc)
+    : MIRInst(Opcode::AtomicLoad, nullptr, "", loc), pointer(pointer),
+      order(order) {
+  if (auto *ptrTy = llvm::dyn_cast<hir::PointerType>(pointer->getType())) {
+    setType(ptrTy->getPointee());
+  }
+}
+
+void AtomicLoadInst::dump(llvm::raw_ostream &os) const {
+  os << "%" << getName() << " = load atomic ";
+  printType(os, getType());
+  os << ", ";
+  printType(os, pointer->getType());
+  os << " ";
+  printOperand(os, pointer);
+  os << " " << memoryOrderToString(order);
+}
+
+AtomicStoreInst::AtomicStoreInst(MIRValue *value, MIRValue *pointer,
+                                 MemoryOrder order, SourceLocation loc)
+    : MIRInst(Opcode::AtomicStore, nullptr, "", loc), value(value),
+      pointer(pointer), order(order) {}
+
+void AtomicStoreInst::dump(llvm::raw_ostream &os) const {
+  os << "store atomic ";
+  printType(os, value->getType());
+  os << " ";
+  printOperand(os, value);
+  os << ", ";
+  printType(os, pointer->getType());
+  os << " ";
+  printOperand(os, pointer);
+  os << " " << memoryOrderToString(order);
+}
+
+AtomicRMWInst::AtomicRMWInst(AtomicOp op, MIRValue *pointer, MIRValue *value,
+                             MemoryOrder order, SourceLocation loc)
+    : MIRInst(Opcode::AtomicRMW, value->getType(), "", loc), op(op),
+      pointer(pointer), value(value), order(order) {}
+
+void AtomicRMWInst::dump(llvm::raw_ostream &os) const {
+  os << "%" << getName() << " = atomicrmw " << atomicOpToString(op) << " ";
+  printType(os, pointer->getType());
+  os << " ";
+  printOperand(os, pointer);
+  os << ", ";
+  printType(os, value->getType());
+  os << " ";
+  printOperand(os, value);
+  os << " " << memoryOrderToString(order);
+}
+
+AtomicCmpXchgInst::AtomicCmpXchgInst(MIRValue *pointer, MIRValue *expected,
+                                     MIRValue *desired,
+                                     MemoryOrder successOrder,
+                                     MemoryOrder failureOrder,
+                                     SourceLocation loc)
+    : MIRInst(Opcode::AtomicCmpXchg, expected->getType(), "", loc),
+      pointer(pointer), expected(expected), desired(desired),
+      successOrder(successOrder), failureOrder(failureOrder) {}
+
+void AtomicCmpXchgInst::dump(llvm::raw_ostream &os) const {
+  os << "%" << getName() << " = cmpxchg ";
+  printType(os, pointer->getType());
+  os << " ";
+  printOperand(os, pointer);
+  os << ", ";
+  printType(os, expected->getType());
+  os << " ";
+  printOperand(os, expected);
+  os << ", ";
+  printType(os, desired->getType());
+  os << " ";
+  printOperand(os, desired);
+  os << " " << memoryOrderToString(successOrder) << " "
+     << memoryOrderToString(failureOrder);
+}
+
+FenceInst::FenceInst(MemoryOrder order, SourceLocation loc)
+    : MIRInst(Opcode::Fence, nullptr, "", loc), order(order) {}
+
+void FenceInst::dump(llvm::raw_ostream &os) const {
+  os << "fence " << memoryOrderToString(order);
 }
 
 } // namespace mir

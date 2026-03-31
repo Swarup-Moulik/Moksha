@@ -5,9 +5,12 @@ section(".multiboot") align(4) packed struct MultibootHeader {
     unsigned int checksum;
 }
 
+MultibootHeader boot_header;
+
 // Page Table alignment requirement
-mut align(4096) unsigned long[512] kernel_pml4;
+align(4096) unsigned long[512] kernel_pml4;
 
 void check_layout() {
     usize header_size = sizeof(MultibootHeader);
+    print(header_size)
 }

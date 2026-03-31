@@ -1,0 +1,10 @@
+closure() -> int create_closure() {
+    int local_data = 100;
+    *mut int m = &local_data;
+
+    closure() -> int clos = &() => {
+        *m = 200;
+    };
+
+    return clos;
+}

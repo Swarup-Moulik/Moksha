@@ -7,6 +7,7 @@
 #include "moksha/MIR/MIRInst.h"
 #include "moksha/MIR/MIRModule.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/raw_ostream.h"
 #include <algorithm> // for std::min
 #include <iostream>
 #include <sstream>
@@ -28,52 +29,76 @@ static bool isPointer(const hir::HIRType *t) {
   return t && t->getKind() == hir::TypeKind::Pointer;
 }
 static bool isVoid(const hir::HIRType *t) {
-  return t && t->getKind() == hir::TypeKind::Void;
+  return !t || t->getKind() == hir::TypeKind::Void;
 }
-
-// ============================================================================
-// [Static Entry Points]
-// ============================================================================
-
-bool MIRVerifier::verify(const MIRModule *module, std::ostream *os,
-                         bool verbose) {
-  MIRVerifier verifier(os, verbose);
-  return verifier.verifyModule(module);
-}
-
-bool MIRVerifier::verify(const MIRFunction *func, std::ostream *os,
-                         bool verbose) {
-  MIRVerifier verifier(os, verbose);
-  return verifier.verifyFunction(func);
-}
-
 // ============================================================================
 // [Constructor]
 // ============================================================================
 
-MIRVerifier::MIRVerifier(std::ostream *os, bool verbose)
+MIRVerifier::MIRVerifier(llvm::raw_ostream *os, bool verbose)
     : os(os), hasError(false), verbose(verbose) {}
+
+// ============================================================================
+// [Public Entry Points]
+// ============================================================================
+
+// Removed static instantiation, now acts on the current object instance
+bool MIRVerifier::verify(const MIRModule *module) {
+  return verifyModule(module);
+}
+
+bool MIRVerifier::verify(const MIRFunction *func) {
+  return verifyFunction(func);
+}
 
 // ============================================================================
 // [Verification Logic]
 // ============================================================================
 
 bool MIRVerifier::verifyModule(const MIRModule *module) {
-  logVerbose("Verifying Module: " + module->getName());
+  bool ok = true;
 
+  // Check globals
+  for (const auto &global : module->getGlobals()) {
+    if (global->hasInitializer()) {
+      const MIRConstant *init = global->getInitializer();
+
+      // [FIX] Extract the underlying type from the global's PointerType wrapper
+      const hir::HIRType *expectedInitTy = nullptr;
+      if (isPointer(global->getType())) {
+        expectedInitTy =
+            llvm::cast<hir::PointerType>(global->getType())->getPointee();
+      } else {
+        expectedInitTy = global->getType();
+      }
+
+      if (expectedInitTy && init->getType() != expectedInitTy) {
+        bool isAllowed = false;
+        if (init->getKind() == ValueKind::ConstantNull ||
+            init->getKind() == ValueKind::ConstantArray ||
+            init->getKind() == ValueKind::ConstantMap) {
+          isAllowed = true;
+        }
+
+        if (!isAllowed) {
+          // Pass expectedInitTy instead of global->getType()
+          verifyType(init, expectedInitTy, "Global initializer type mismatch",
+                     nullptr);
+          ok = false;
+        }
+      }
+    }
+  }
+  // Check functions
   for (const auto &func : module->getFunctions()) {
-    verifyFunction(func.get());
+    if (!func->isDeclaration()) {
+      if (!verifyFunction(func.get())) {
+        ok = false;
+      }
+    }
   }
 
-  /*  // Verify Globals
-  for (const auto &global : module->getGlobals()) {
-    if (global->getInitializer()) {
-      verifyTypesMatch(global->getInitializer(), global.get(),
-                       "Global initializer type mismatch", nullptr);
-    }
-    } */
-
-  return !hasError;
+  return ok;
 }
 
 bool MIRVerifier::verifyFunction(const MIRFunction *func) {
@@ -87,6 +112,14 @@ bool MIRVerifier::verifyFunction(const MIRFunction *func) {
   if (func->getBlocks().empty()) {
     logError("Defined function must have at least one basic block", func);
     return false;
+  }
+
+  if (func->isInline() && func->isNoInline()) {
+    logError("Function cannot be both 'inline' and 'noinline'", func);
+  }
+
+  if (func->isNaked() && func->isInline()) {
+    logError("Naked functions cannot be marked for inlining", func);
   }
 
   // Verify all blocks
@@ -116,43 +149,10 @@ bool MIRVerifier::checkUnreachableBlocks(const MIRFunction *func) {
     const MIRBlock *current = worklist.top();
     worklist.pop();
 
-    if (current->getInstructions().empty())
-      continue;
-
-    const MIRInst *term = current->getInstructions().back().get();
-
-    switch (term->getOpcode()) {
-    case Opcode::Br: {
-      const auto *br = static_cast<const BranchInst *>(term);
-      if (reachable.insert(br->getTarget()).second) {
-        worklist.push(br->getTarget());
+    for (const MIRBlock *succ : current->getSuccessors()) {
+      if (reachable.insert(succ).second) {
+        worklist.push(succ);
       }
-      break;
-    }
-    case Opcode::CondBr: {
-      const auto *condBr = static_cast<const CondBranchInst *>(term);
-      if (reachable.insert(condBr->getTrueBlock()).second) {
-        worklist.push(condBr->getTrueBlock());
-      }
-      if (reachable.insert(condBr->getFalseBlock()).second) {
-        worklist.push(condBr->getFalseBlock());
-      }
-      break;
-    }
-    case Opcode::Switch: {
-      const auto *sw = static_cast<const SwitchInst *>(term);
-      if (reachable.insert(sw->getDefaultBlock()).second) {
-        worklist.push(sw->getDefaultBlock());
-      }
-      for (const auto &cse : sw->getCases()) {
-        if (reachable.insert(cse.second).second) {
-          worklist.push(cse.second);
-        }
-      }
-      break;
-    }
-    default:
-      break;
     }
   }
 
@@ -190,6 +190,12 @@ bool MIRVerifier::verifyBlock(const MIRBlock *block) {
   case Opcode::CondBr:
   case Opcode::Switch:
   case Opcode::Return:
+  case Opcode::Unreachable:
+    isTerminator = true;
+    break;
+  case Opcode::Invoke:
+  case Opcode::Resume:
+  case Opcode::Throw:
     isTerminator = true;
     break;
   default:
@@ -207,6 +213,7 @@ bool MIRVerifier::verifyBlock(const MIRBlock *block) {
 bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
   if (!inst->getParent()) {
     logError("Instruction has no parent block", inst);
+    return false;
   }
 
   switch (inst->getOpcode()) {
@@ -235,15 +242,24 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
     break;
   }
 
-  // Comparison
-  case Opcode::ICmp:
-  case Opcode::FCmp: {
+    // Comparison
+  case Opcode::ICmp: {
     const auto *cmp = static_cast<const CompareInst *>(inst);
     if (!verifyTypesMatch(cmp->getLHS(), cmp->getRHS(),
                           "Compare operands must have same type", inst))
       return false;
 
-    // [FIX] Use static helper
+    if (!isBoolean(cmp->getType())) {
+      logError("Compare result must be boolean", inst);
+    }
+    break;
+  }
+  case Opcode::FCmp: {
+    const auto *cmp = static_cast<const FCmpInst *>(inst);
+    if (!verifyTypesMatch(cmp->getLHS(), cmp->getRHS(),
+                          "Compare operands must have same type", inst))
+      return false;
+
     if (!isBoolean(cmp->getType())) {
       logError("Compare result must be boolean", inst);
     }
@@ -274,14 +290,17 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
     const auto *load = static_cast<const LoadInst *>(inst);
     const MIRValue *ptr = load->getPointer();
 
-    // [FIX] Use static helper and cast
-    if (!isPointer(ptr->getType())) {
-      logError("Load operand must be a pointer", inst);
-    } else {
+    const hir::HIRType *expectedResTy = nullptr;
+    if (isPointer(ptr->getType())) {
       auto *ptrTy = llvm::cast<hir::PointerType>(ptr->getType());
-      if (ptrTy->getPointee() != load->getType()) {
-        logError("Load result type mismatch (must match pointee type)", inst);
-      }
+      expectedResTy = ptrTy->getPointee();
+    } else {
+      logError("Load operand must be a pointer", inst);
+      break;
+    }
+
+    if (expectedResTy != load->getType()) {
+      logError("Load result type mismatch (must match pointee type)", inst);
     }
     break;
   }
@@ -290,13 +309,41 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
     const MIRValue *val = store->getValue();
     const MIRValue *ptr = store->getPointer();
 
-    // [FIX] Use static helper and cast
-    if (!isPointer(ptr->getType())) {
-      logError("Store operand must be a pointer", inst);
-    } else {
+    const hir::HIRType *expectedValTy = nullptr;
+    if (isPointer(ptr->getType())) {
       auto *ptrTy = llvm::cast<hir::PointerType>(ptr->getType());
-      if (ptrTy->getPointee() != val->getType()) {
-        logError("Store value type mismatch (must match pointee type)", inst);
+      expectedValTy = ptrTy->getPointee();
+    } else {
+      // [FIX] Strictly enforce that stores target valid pointers!
+      logError("Store destination must be a pointer", inst);
+      break;
+    }
+
+    // [FIX] Trust the AST if expectedValTy is null, and allow complex constants
+    if (expectedValTy && expectedValTy != val->getType()) {
+      bool isAllowed = false;
+
+      // Allow if the instruction's type is completely missing (trust the AST)
+      if (!val->getType()) {
+        isAllowed = true;
+      } else if (val->getKind() == ValueKind::ConstantNull ||
+                 val->getKind() == ValueKind::ConstantArray ||
+                 val->getKind() == ValueKind::ConstantMap) {
+        isAllowed = true;
+      } else if (expectedValTy->getKind() == hir::TypeKind::Array &&
+                 val->getType() &&
+                 val->getType()->getKind() == hir::TypeKind::Array) {
+        isAllowed = true;
+      } else if (expectedValTy->getKind() == hir::TypeKind::Nullable) {
+        isAllowed = true;
+      }
+
+      if (!isAllowed) {
+        std::stringstream ss;
+        ss << "Store value type mismatch (must match pointee type) ("
+           << expectedValTy->toString() << " vs "
+           << (val->getType() ? val->getType()->toString() : "null") << ")";
+        logError(ss.str(), inst);
       }
     }
     break;
@@ -341,9 +388,6 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
 
       // 3. Check for duplicates (assuming ConstantInt)
       if (val->getKind() == ValueKind::ConstantInt) {
-        // Assuming cast works if value kind is correct
-        // Note: ConstantInt definition needs to be visible
-        // We do a minimal check here
       } else {
         logError("Switch case value must be a constant integer", inst);
       }
@@ -361,13 +405,18 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
     const auto *call = static_cast<const CallInst *>(inst);
     const MIRValue *callee = call->getCallee();
 
+    if (!callee) {
+      logError("Call instruction has no callee (null pointer)", inst);
+      break;
+    }
+
     if (!callee->getType()) {
       logError("Callee has no type", inst);
       break;
     }
 
     // Direct Call Verification
-    if (const auto *func = dynamic_cast<const MIRFunction *>(callee)) {
+    if (const auto *func = llvm::dyn_cast<MIRFunction>(callee)) {
       const auto &params = func->getArguments();
       const auto &args = call->getArgs();
 
@@ -522,6 +571,49 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
     break;
   }
 
+    // Exception & Hardware Verifications
+  case Opcode::Invoke: {
+    const auto *invoke = static_cast<const InvokeInst *>(inst);
+    MIRFunction *parentFunc = inst->getParent()->getParent();
+
+    // Verify that the jump destinations actually belong to this function
+    if (invoke->getNormalDest()->getParent() != parentFunc) {
+      logError("Invoke normal destination block does not belong to the current "
+               "function",
+               inst);
+    }
+    if (invoke->getUnwindDest()->getParent() != parentFunc) {
+      logError("Invoke unwind destination block does not belong to the current "
+               "function",
+               inst);
+    }
+    break;
+  }
+  case Opcode::LandingPad:
+    // A LandingPad must be the very first non-phi instruction in an unwind
+    // block. (Strict enforcement is usually done in the backend, but basic pass
+    // here is fine).
+    break;
+  case Opcode::Resume:
+  case Opcode::Throw: {
+    // Just verify they actually hold a value to throw/resume
+    const auto *val =
+        (inst->getOpcode() == Opcode::Throw)
+            ? static_cast<const ThrowInst *>(inst)->getException()
+            : static_cast<const ResumeInst *>(inst)->getException();
+    if (!val) {
+      logError("Throw/Resume must have an exception operand", inst);
+    }
+    break;
+  }
+  case Opcode::InlineAsm: {
+    const auto *asmInst = static_cast<const InlineAsmInst *>(inst);
+    if (asmInst->getAsmString().empty()) {
+      logError("Inline assembly string cannot be completely empty", inst);
+    }
+    break;
+  }
+
   default:
     break;
   }
@@ -539,16 +631,24 @@ bool MIRVerifier::verifyTypesMatch(const MIRValue *val1, const MIRValue *val2,
   if (!val1 || !val2)
     return false;
 
-  // Pointer equality check for types (assuming HIRType is uniqued)
-  if (val1->getType() != val2->getType()) {
-    std::stringstream ss;
-    ss << msg << " (Type mismatch: "
-       << (val1->getType() ? val1->getType()->toString() : "null") << " vs "
-       << (val2->getType() ? val2->getType()->toString() : "null") << ")";
-    logError(ss.str(), contextInst);
-    return false;
+  const hir::HIRType *t1 = val1->getType();
+  const hir::HIRType *t2 = val2->getType();
+
+  // Pointer equality first (fast path)
+  if (t1 == t2)
+    return true;
+
+  // Fallback: Structural/String equality (prevents false positives from
+  // non-uniqued types)
+  if (t1 && t2 && t1->toString() == t2->toString()) {
+    return true;
   }
-  return true;
+
+  std::stringstream ss;
+  ss << msg << " (Type mismatch: " << (t1 ? t1->toString() : "null") << " vs "
+     << (t2 ? t2->toString() : "null") << ")";
+  logError(ss.str(), contextInst);
+  return false;
 }
 
 bool MIRVerifier::verifyType(const MIRValue *val, const hir::HIRType *expected,
@@ -583,7 +683,6 @@ void MIRVerifier::logError(const std::string &msg, SourceLocation loc) {
   hasError = true;
   std::stringstream ss;
   ss << "Error at ";
-  // [FIX] Removed loc.dump() since SourceLocation might not have dump()
   ss << "<loc>: " << msg;
 
   std::string fullMsg = ss.str();

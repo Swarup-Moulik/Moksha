@@ -1,5 +1,5 @@
 void test_cfg_borrows(bool cond) {
-    mut int p = 10
+    int p = 10
 
     if (cond) {
         *view int v1 = &p

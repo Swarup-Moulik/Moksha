@@ -11,9 +11,8 @@ namespace mir {
 // [Helpers]
 // ============================================================================
 
-static void printType(std::ostream &os, const hir::HIRType *type) {
+static void printType(llvm::raw_ostream &os, const hir::HIRType *type) {
   if (type) {
-    // Assuming HIRType has a toString method.
     os << type->toString();
   } else {
     os << "void";
@@ -87,17 +86,71 @@ std::vector<MIRArgument *> MIRFunction::getRawArguments() const {
   return raw;
 }
 
+void MIRFunction::numberUnnamedValues() {
+  unsigned counter = 0;
+
+  // 1. Number unnamed arguments
+  for (auto &arg : args) {
+    if (arg->getName().empty()) {
+      arg->setName(std::to_string(counter++));
+    }
+  }
+
+  // 2. Number unnamed blocks and instructions
+  for (auto &block : blocks) {
+    // Number the block itself (e.g., if it's not "entry" or "if.then")
+    if (block->getName().empty()) {
+      block->setName(std::to_string(counter++));
+    }
+
+    for (auto &inst : block->getInstructions()) {
+      bool producesValue = inst->getType() != nullptr &&
+                           inst->getType()->getKind() != hir::TypeKind::Void;
+
+      if (producesValue) {
+        if (inst->getName().empty()) {
+          inst->setName(std::to_string(counter++));
+        } else {
+          inst->setName(getUniqueName(inst->getName()));
+        }
+      }
+    }
+  }
+}
+
 // ============================================================================
 // [Debug / Dump]
 // ============================================================================
 
-void MIRFunction::dump(std::ostream &os) const {
-  os << "define ";
+void MIRFunction::dump(llvm::raw_ostream &os) const {
+  // Check if it's just a prototype
+  if (isDeclaration()) {
+    os << "declare ";
+  } else {
+    os << "define ";
+  }
+  // [FIX] Handle Linkage
   if (linkage == Linkage::Internal)
     os << "internal ";
+  else if (linkage == Linkage::Weak)
+    os << "weak ";
 
+  // [FIX] Handle Calling Convention
+  switch (callingConv) {
+  case CallingConv::StdCall:
+    os << "x86_stdcallcc ";
+    break;
+  case CallingConv::FastCall:
+    os << "x86_fastcallcc ";
+    break;
+  case CallingConv::Interrupt:
+    os << "x86_intrcc ";
+    break;
+  default:
+    break;
+  }
   printType(os, getType());
-  os << " @" << getName() << "(";
+  os << " @\"" << getName() << "\"(";
 
   // Dump Arguments
   for (size_t i = 0; i < args.size(); ++i) {
@@ -105,19 +158,66 @@ void MIRFunction::dump(std::ostream &os) const {
       os << ", ";
     args[i]->dump(os);
   }
+
+  // [FIX 1] Append the variadic ellipsis to the parameters
+  if (isVariadicFlag) {
+    if (!args.empty())
+      os << ", ";
+    os << "...";
+  }
+
   os << ")";
+
+  // [FIX 2] Print the low-level system attributes
+  if (isInterruptFlag)
+    os << " interrupt";
+  if (isNakedFlag)
+    os << " naked";
+  if (isNoReturnFlag)
+    os << " noreturn";
+  if (isNoInlineFlag)
+    os << " noinline";
+  if (isInlineFlag)
+    os << " inline";
+  if (isPureFlag)
+    os << " pure";
+  if (isColdFlag)
+    os << " cold";
+  if (isUsedFlag)
+    os << " used";
+  if (!sectionName.empty())
+    os << " section(\"" << sectionName << "\")";
 
   if (isDeclaration()) {
     os << ";\n";
-  } else {
-    os << " {\n";
-    for (const auto &bb : blocks) {
-      bb->dump(os);
-      // Add a newline between blocks for better readability
-      os << "\n";
-    }
-    os << "}\n";
+    return;
   }
+
+  os << " {\n";
+  for (const auto &block : blocks) {
+    block->dump(os);
+  }
+  os << "}\n\n";
+}
+
+// ============================================================================
+// [SSA Name Resolution]
+// ============================================================================
+
+std::string MIRFunction::getUniqueName(const std::string &baseName) {
+  if (baseName.empty()) {
+    return ""; // Anonymous values don't need unique names
+  }
+
+  // Increment the counter for this specific base name
+  unsigned count = nameCounters[baseName]++;
+
+  if (count == 0) {
+    return baseName; // First use gets the clean, unnumbered name
+  }
+
+  // Subsequent uses get a dot-number suffix (e.g., closure.val.1)
+  return baseName + "." + std::to_string(count);
 }
 
 } // namespace mir

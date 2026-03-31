@@ -98,6 +98,7 @@ Token Lexer::scanNumber() {
   bool isFloat = false;
   bool isHex = false;
   bool isBin = false;
+  bool isOct = false;
   bool hadLexicalError = false;
 
   // 1. Initial Prefix and Type Detection
@@ -136,11 +137,23 @@ Token Lexer::scanNumber() {
           break;
         }
       }
+    } else if (next == 'o' || next == 'O') { // [FIX 1] Handle Octal Prefix
+      isOct = true;
+      curPtr += 2;
+      while (curPtr < bufferEnd) {
+        if ((*curPtr >= '0' && *curPtr <= '7') || *curPtr == '_') {
+          curPtr++;
+        } else if (isalpha(*curPtr)) {
+          break;
+        } else {
+          break;
+        }
+      }
     }
   }
 
   // 2. Decimal / Float Body Scanning
-  if (!isHex && !isBin) {
+  if (!isHex && !isBin && !isOct) {
     while (curPtr < bufferEnd && (isdigit(*curPtr) || *curPtr == '_'))
       curPtr++;
 
@@ -160,6 +173,10 @@ Token Lexer::scanNumber() {
                  (isdigit(*curPtr) || *curPtr == '.' || *curPtr == '_'))
             curPtr++;
         }
+      } else if (!isAsciiIdentStart(peek(1))) {
+        // [FIX 2] Handle trailing dot (e.g. `10.;`)
+        isFloat = true;
+        curPtr++;
       }
     }
 
@@ -204,6 +221,7 @@ Token Lexer::scanNumber() {
                  .Case("f16", NumericSuffix::f16)
                  .Case("f32", NumericSuffix::f32)
                  .Case("f64", NumericSuffix::f64)
+                 .Case("d", NumericSuffix::d)
                  .Default(NumericSuffix::None);
 
     if (suffix == NumericSuffix::None && !suffixStr.empty()) {
@@ -224,8 +242,14 @@ Token Lexer::scanNumber() {
   if (hadLexicalError)
     return errorAt(start);
 
-  Token tok(isFloat ? TokenKind::FloatLiteral : TokenKind::IntegerLiteral,
-            SourceLocation::getFromPointer(start), curPtr - start);
+  TokenKind kind;
+  if (suffix == NumericSuffix::d) {
+    kind = TokenKind::DecimalLiteral;
+  } else {
+    kind = isFloat ? TokenKind::FloatLiteral : TokenKind::IntegerLiteral;
+  }
+
+  Token tok(kind, SourceLocation::getFromPointer(start), curPtr - start);
   tok.suffix = suffix;
   if (isHex)
     tok.flags |= TF_IsHex;
@@ -279,9 +303,10 @@ Token Lexer::scanOperator() {
     } else if (peek() == '=') {
       curPtr++;
       kind = TokenKind::MinusEqual;
-    }
-    // [MODIFIED] Removed Arrow '->' check here
-    else
+    } else if (peek() == '>') {
+      curPtr++;
+      kind = TokenKind::Arrow;
+    } else
       kind = TokenKind::Minus;
     break;
   case '*':
@@ -642,6 +667,28 @@ bool Lexer::consumeEscape() {
   }
   case 'u': {
     curPtr++;
+
+    // [FIX 3] Handle Rust-style \u{...}
+    if (curPtr < bufferEnd && *curPtr == '{') {
+      curPtr++; // skip '{'
+      while (curPtr < bufferEnd && *curPtr != '}') {
+        if (!isHexDigit(*curPtr)) {
+          Diags.report(getLoc(), DiagID::err_unexpected_char)
+              << "invalid hex digit in unicode escape";
+          return false;
+        }
+        curPtr++;
+      }
+      if (curPtr >= bufferEnd || *curPtr != '}') {
+        Diags.report(getLoc(), DiagID::err_unexpected_char)
+            << "unterminated unicode escape sequence";
+        return false;
+      }
+      curPtr++; // skip '}'
+      return true;
+    }
+
+    // Fallback to standard 4-digit \uXXXX
     if (curPtr + 4 > bufferEnd)
       return false;
     for (int i = 0; i < 4; ++i) {
@@ -752,6 +799,7 @@ Token Lexer::scanIdentifier() {
                        .Case("char", TokenKind::KwChar)
                        .Case("half", TokenKind::KwHalf)
                        .Case("quarter", TokenKind::KwQuarter)
+                       .Case("decimal", TokenKind::KwDecimal)
                        .Case("any", TokenKind::KwAny)
                        .Case("as", TokenKind::KwAs)
                        .Case("true", TokenKind::KwTrue)
@@ -780,9 +828,17 @@ Token Lexer::scanIdentifier() {
                        .Case("naked", TokenKind::KwNaked)
                        .Case("noreturn", TokenKind::KwNoreturn)
                        .Case("noinline", TokenKind::KwNoinline)
+                       .Case("inline", TokenKind::KwInline)
+                       .Case("pure", TokenKind::KwPure)
+                       .Case("cold", TokenKind::KwCold)
                        .Case("lock", TokenKind::KwLock)
                        .Case("view", TokenKind::KwView)
                        .Case("mut", TokenKind::KwMut)
+                       .Case("virtual", TokenKind::KwVirtual)
+                       .Case("override", TokenKind::KwOverride)
+                       .Case("input", TokenKind::KwInput)
+                       .Case("closure", TokenKind::KwClosure)
+                       .Case("move", TokenKind::KwMove)
                        .Case("extern", TokenKind::KwExtern)
                        .Case("using", TokenKind::KwUsing)
                        .Case("asm", TokenKind::KwAsm)

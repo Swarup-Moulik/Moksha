@@ -1,0 +1,13 @@
+ref class Cycle {
+        // Empty class is perfectly fine, we just need it to be a 'ref class'
+        // so the compiler knows it requires ARC memory management.
+    }
+
+    void test_true_elision() {
+        Cycle c = new Cycle();
+        {
+            // ARCInserter WILL add retain(copy) and release(copy) here
+            // ARCAnalyzer WILL delete them because no side-effects happen in this block!
+            Cycle copy = c;
+        }
+    }

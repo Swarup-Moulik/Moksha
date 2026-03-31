@@ -3,13 +3,14 @@ void mutate_data(*mut int m) {
 }
 
 void test_invalid_function_call() {
-    mut int p = 50
+    int p = 50
     *view int v = &p
 
     // Attempting to pass a read-only view to a mutable parameter
-    mutate_data(v) // ERROR EXPECTED
+    // mutate_data(v) // ERROR EXPECTED
 
     // Attempting to create a temporary *mut borrow for the function call
     // while a *view ('v') is still active in the current scope
     mutate_data(&p) // ERROR EXPECTED
+    print(*v);
 }

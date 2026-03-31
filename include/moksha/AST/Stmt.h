@@ -89,6 +89,9 @@ public:
   [[nodiscard]] StmtKind getKind() const { return kind; }
   virtual void accept(ASTVisitor &v) const = 0;
   virtual std::unique_ptr<Stmt> clone() const = 0;
+  template <typename T> std::unique_ptr<T> cloneAs() const {
+    return std::unique_ptr<T>(static_cast<T *>(clone().release()));
+  }
 
 protected:
   Stmt(StmtKind kind, SourceLocation loc) : kind(kind), loc(loc) {}
@@ -141,9 +144,16 @@ public:
 
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] bool isSharedVar() const { return isShared; }
+  void setShared(bool s) { isShared = s; }
   [[nodiscard]] const Type *getType() const { return type.get(); }
   [[nodiscard]] const Expr *getInitializer() const { return initializer.get(); }
-  [[nodiscard]] bool isConstVar() const { return isConst; }
+  [[nodiscard]] bool isConstVar() const {
+    if (isConst)
+      return true;
+    if (type && (type->is<ViewType>() || type->is<ConstType>()))
+      return true;
+    return false;
+  }
   [[nodiscard]] bool isStaticVar() const { return isStatic; }
   [[nodiscard]] bool hasExplicitType() const { return true; }
   std::unique_ptr<Decl> clone() const override;
@@ -164,6 +174,11 @@ public:
   void setBitWidth(int bw) { bitWidth = bw; }
   bool isThreadLocalVar() const { return isThreadLocal; }
   void setThreadLocal(bool tl) { isThreadLocal = tl; }
+  bool isBitfield() const { return bitWidth != -1; }
+  void setBitfield(uint32_t width) {
+    bitfieldFlag = true;
+    bitWidth = width;
+  }
 
 private:
   TypePtr type;
@@ -176,6 +191,7 @@ private:
   int alignment = 0;
   std::string section = "";
   bool isUsed = false;
+  bool bitfieldFlag = false;
   int bitWidth = -1;
   bool isThreadLocal = false;
 };
@@ -186,7 +202,11 @@ public:
     std::string name;
     TypePtr type;
     SourceLocation loc;
-    Param clone() const { return Param{name, type->clone(), loc}; }
+    ExprPtr defaultValue;
+    Param clone() const {
+      return Param{name, type->clone(), loc,
+                   defaultValue ? defaultValue->clone() : nullptr};
+    }
   };
 
   // Constructor matching Parser usage (ret, name, params, body, async, loc)
@@ -226,10 +246,24 @@ public:
   void setNoReturn(bool nr) { isNoReturn = nr; }
   bool isNoInlineFunc() const { return isNoInline; }
   void setNoInline(bool ni) { isNoInline = ni; }
+  bool isInlineFunc() const { return isInline; }
+  void setInline(bool i) { isInline = i; }
+  bool isPureFunc() const { return isPure; }
+  void setPure(bool p) { isPure = p; }
+  bool isColdFunc() const { return isCold; }
+  void setCold(bool c) { isCold = c; }
   bool isUsedFunc() const { return isUsed; }
   void setUsed(bool u) { isUsed = u; }
   const std::string &getSection() const { return section; }
   void setSection(std::string s) { section = std::move(s); }
+  const std::string &getABI() const { return abi; }
+  void setABI(std::string abiStr) { abi = std::move(abiStr); }
+  bool isVirtualFunc() const { return isVirtual; }
+  void setVirtual(bool v) { isVirtual = v; }
+  bool isOverrideFunc() const { return isOverride; }
+  void setOverride(bool o) { isOverride = o; }
+  int getVTableIndex() const { return vtableIndex; }
+  void setVTableIndex(int idx) { vtableIndex = idx; }
 
 private:
   std::vector<Param> params;
@@ -247,8 +281,15 @@ private:
   bool isNaked = false;
   bool isNoReturn = false;
   bool isNoInline = false;
+  bool isInline = false;
+  bool isPure = false;
+  bool isCold = false;
   bool isUsed = false;
   std::string section = "";
+  std::string abi = "C";
+  bool isVirtual = false;
+  bool isOverride = false;
+  int vtableIndex = -1;
 };
 
 class ClassDecl : public Decl {
@@ -281,6 +322,8 @@ public:
   void setAlignment(int a) { alignment = a; }
   const std::string &getSection() const { return section; }
   void setSection(std::string s) { section = std::move(s); }
+  bool hasVTable() const { return hasVTableFlag; }
+  void setHasVTable(bool v) { hasVTableFlag = v; }
 
 private:
   std::vector<std::string> parentNames;
@@ -290,20 +333,28 @@ private:
   bool isPacked = false;
   int alignment = 0;
   std::string section = "";
+  bool hasVTableFlag = false;
 };
 
 class GenericDecl : public Decl {
 public:
-  // Constructor matching Parser usage (name, params, inner, loc)
-  GenericDecl(std::string name, std::vector<std::string> typeParams,
+  // Strongly typed parameter to hold lifetime constraints
+  struct GenericParam {
+    std::string name;
+    bool isShared;
+    SourceLocation loc;
+  };
+
+  GenericDecl(std::string name, std::vector<GenericParam> typeParams,
               DeclPtr innerDecl, SourceLocation loc)
       : Decl(StmtKind::GenericDecl, std::move(name), Visibility::Default, loc),
         typeParams(std::move(typeParams)), innerDecl(std::move(innerDecl)) {}
 
   void accept(ASTVisitor &v) const override;
-  [[nodiscard]] const std::vector<std::string> &getTypeParams() const {
+  [[nodiscard]] const std::vector<GenericParam> &getTypeParams() const {
     return typeParams;
   }
+
   [[nodiscard]] const Decl *getInnerDecl() const { return innerDecl.get(); }
   std::unique_ptr<Decl> clone() const override;
   static bool classof(const Decl *D) {
@@ -311,7 +362,7 @@ public:
   }
 
 private:
-  std::vector<std::string> typeParams;
+  std::vector<GenericParam> typeParams;
   DeclPtr innerDecl;
 };
 

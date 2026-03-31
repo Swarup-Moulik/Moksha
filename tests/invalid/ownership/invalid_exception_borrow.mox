@@ -1,5 +1,5 @@
 void test_exception_leak() {
-    mut int p = 100
+    int p = 100
     *view int outer_view = &p // Lives for the whole function
 
     try {
@@ -8,5 +8,7 @@ void test_exception_leak() {
         // ERROR: The unwind destroyed the 'try' scope,
         // but 'outer_view' is still alive in the parent scope!
         *mut int m = &p
+        print(m);
     }
+    print(*outer_view);
 }

@@ -10,7 +10,8 @@
 namespace moksha {
 namespace hir {
 
-HIRFunction::HIRFunction(std::string name, std::vector<std::string> typeParams,
+HIRFunction::HIRFunction(std::string name,
+                         std::vector<HIRGenericParam> typeParams,
                          std::vector<HIRParam> params,
                          const HIRType *returnType,
                          std::unique_ptr<HIRStmt> body, bool isAsync,
@@ -33,7 +34,7 @@ HIRFunction::HIRFunction(std::string name, std::vector<std::string> typeParams,
 }
 
 const std::string &HIRFunction::getName() const { return name; }
-const std::vector<std::string> &HIRFunction::getTypeParams() const {
+const std::vector<HIRGenericParam> &HIRFunction::getTypeParams() const {
   return typeParams;
 }
 const std::vector<HIRParam> &HIRFunction::getParams() const { return params; }
@@ -57,7 +58,6 @@ static void printIndent(llvm::raw_ostream &os, int indent) {
     os << "  ";
 }
 
-// [FIX] Updated signature to use ostream
 void HIRFunction::dump(llvm::raw_ostream &os, int indent) const {
   printIndent(os, indent);
   os << "Func: " << name;
@@ -66,7 +66,10 @@ void HIRFunction::dump(llvm::raw_ostream &os, int indent) const {
   if (!typeParams.empty()) {
     os << "<";
     for (size_t i = 0; i < typeParams.size(); ++i) {
-      os << typeParams[i] << (i < typeParams.size() - 1 ? ", " : "");
+      // [FIX] Safely unpack the new struct
+      if (typeParams[i].isShared)
+        os << "shared ";
+      os << typeParams[i].name << (i < typeParams.size() - 1 ? ", " : "");
     }
     os << ">";
   }
@@ -84,8 +87,30 @@ void HIRFunction::dump(llvm::raw_ostream &os, int indent) const {
     os << " [naked]";
   if (isNoReturn)
     os << " [noreturn]";
+  if (isStaticFunc())
+    os << " [static]";
+  if (isInlineFunc())
+    os << " [inline]";
+  if (isNoInlineFunc())
+    os << " [noinline]";
+  if (isPureFunc())
+    os << " [pure]";
+  if (isColdFunc())
+    os << " [cold]";
+  if (isUsedFunc())
+    os << " [used]";
+  if (isWeakFlag)
+    os << " [weak]";
+  if (!abi.empty() && abi != "C")
+    os << " [abi(\"" << abi << "\")]";
   if (!sectionName.empty())
     os << " [section(\"" << sectionName << "\")]";
+  if (isVirtual)
+    os << " [virtual]";
+  if (isOverride)
+    os << " [override]";
+  if (vtableIndex >= 0)
+    os << " [vtable_idx=" << vtableIndex << "]";
 
   os << "\n";
 
@@ -94,10 +119,11 @@ void HIRFunction::dump(llvm::raw_ostream &os, int indent) const {
     printIndent(os, indent + 1);
     os << "Params: ";
     for (size_t i = 0; i < params.size(); ++i) {
-      os << params[i].name << ": ";
-      // [FIX] No longer need to check if params[i].type is null due to
-      // constructor assert
-      os << params[i].type->toString();
+      os << params[i].name << ": " << params[i].type->toString();
+
+      if (params[i].getDefaultValue()) {
+        os << " = <default_val>";
+      }
 
       if (i < params.size() - 1)
         os << ", ";
@@ -125,7 +151,26 @@ void HIRFunction::dump(llvm::raw_ostream &os, int indent) const {
 
 void HIRClass::dump(llvm::raw_ostream &os, int indent) const {
   printIndent(os, indent);
-  os << "Class: " << name << "\n";
+  os << "Class: " << name;
+
+  if (isPacked()) {
+    os << " [packed]";
+  }
+  if (alignment > 0)
+    os << " [align(" << alignment << ")]";
+  if (!sectionName.empty())
+    os << " [section(\"" << sectionName << "\")]";
+  if (hasVTableFlag)
+    os << " [vtable]";
+  if (!parentTypes.empty()) {
+    os << " : ";
+    for (size_t i = 0; i < parentTypes.size(); ++i) {
+      os << parentTypes[i]->toString();
+      if (i < parentTypes.size() - 1)
+        os << ", ";
+    }
+  }
+  os << "\n";
 
   for (const auto &method : methods) {
     if (method)

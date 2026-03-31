@@ -1,7 +1,7 @@
-#ifndef MOKSHA_MIR_MIRARGUMENT_H
-#define MOKSHA_MIR_MIRARGUMENT_H
+#pragma once
 
 #include "moksha/MIR/MIRValue.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace moksha {
 namespace mir {
@@ -18,7 +18,7 @@ public:
   MIRFunction *getParent() const { return parent; }
   unsigned getIndex() const { return index; }
 
-  void dump(std::ostream &os) const override;
+  void dump(llvm::raw_ostream &os) const override;
 
   static bool classof(const MIRValue *v) {
     return v->getKind() == ValueKind::Argument;
@@ -31,5 +31,3 @@ private:
 
 } // namespace mir
 } // namespace moksha
-
-#endif // MOKSHA_MIR_MIRARGUMENT_H

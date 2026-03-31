@@ -1,0 +1,16 @@
+class Resource {
+    destructor() {
+        print("Dropping!");
+    } // Custom destructor
+}
+
+void test_drop_order() {
+    // 1. Pure value class allocations (Stack / NLL managed)
+    // We declare 'a' first, then 'b'.
+    Resource a = new Resource();
+    Resource b = new Resource();
+
+    // 2. Take an immutable borrow of 'a'
+    // (Using your verified pointer syntax from the previous NLL tests)
+    view Resource* v = (&a);
+}

@@ -8,6 +8,9 @@ void IntegerLiteral::accept(ASTVisitor &v) const {
   v.visitIntegerLiteral(this);
 }
 void FloatLiteral::accept(ASTVisitor &v) const { v.visitFloatLiteral(this); }
+void DecimalLiteral::accept(ASTVisitor &v) const {
+  v.visitDecimalLiteral(this);
+}
 void StringLiteral::accept(ASTVisitor &v) const { v.visitStringLiteral(this); }
 void BoolLiteral::accept(ASTVisitor &v) const { v.visitBoolLiteral(this); }
 void NullLiteral::accept(ASTVisitor &v) const { v.visitNullLiteral(this); }
@@ -40,6 +43,7 @@ void ThreadExpr::accept(ASTVisitor &v) const { v.visitThreadExpr(this); }
 void ThisExpr::accept(ASTVisitor &v) const { v.visitThisExpr(this); }
 void SuperExpr::accept(ASTVisitor &v) const { v.visitSuperExpr(this); }
 void SizeOfExpr::accept(ASTVisitor &v) const { v.visitSizeOfExpr(this); }
+void InputExpr::accept(ASTVisitor &v) const { v.visitInputExpr(this); }
 
 // --- Expr Cloning Implementations ---
 
@@ -48,6 +52,11 @@ std::unique_ptr<Expr> IntegerLiteral::clone() const {
 }
 std::unique_ptr<Expr> FloatLiteral::clone() const {
   return std::make_unique<FloatLiteral>(value, suffix, loc);
+}
+std::unique_ptr<Expr> DecimalLiteral::clone() const {
+  auto copy = std::make_unique<DecimalLiteral>(exactValue, loc);
+  copy->setType(type); // Preserve the type if already checked
+  return copy;
 }
 std::unique_ptr<Expr> StringLiteral::clone() const {
   return std::make_unique<StringLiteral>(value, isTemplate, loc);
@@ -75,10 +84,19 @@ std::unique_ptr<Expr> MapLiteral::clone() const {
   return std::make_unique<MapLiteral>(std::move(clonedEntries), loc);
 }
 std::unique_ptr<Expr> BinaryExpr::clone() const {
-  return std::make_unique<BinaryExpr>(lhs->clone(), op, rhs->clone(), loc);
+  auto cloned =
+      std::make_unique<BinaryExpr>(lhs->clone(), op, rhs->clone(), loc);
+  cloned->setType(type);
+  cloned->setResolvedOperator(resolvedOperator);
+  return cloned;
 }
+
 std::unique_ptr<Expr> UnaryExpr::clone() const {
-  return std::make_unique<UnaryExpr>(op, operand->clone(), isPostfix, loc);
+  auto cloned =
+      std::make_unique<UnaryExpr>(op, operand->clone(), isPostfix, loc);
+  cloned->setType(type);
+  cloned->setResolvedOperator(resolvedOperator);
+  return cloned;
 }
 std::unique_ptr<Expr> TernaryExpr::clone() const {
   return std::make_unique<TernaryExpr>(condition->clone(), trueBranch->clone(),
@@ -98,8 +116,13 @@ std::unique_ptr<Expr> CallExpr::clone() const {
                                     loc);
 }
 std::unique_ptr<Expr> MemberExpr::clone() const {
-  return std::make_unique<MemberExpr>(object->clone(), memberName, isOptional,
-                                      loc);
+  auto cloned = std::make_unique<MemberExpr>(object->clone(), memberName,
+                                             isOptionalAccess(), loc);
+  cloned->setType(getType());
+  cloned->setLayoutInfo(getMemberIndex(), isBitfield(), getBitWidth(),
+                        getBitOffset());
+  cloned->setVirtualMethodInfo(isVirtualMethod(), getMemberIndex());
+  return cloned;
 }
 std::unique_ptr<Expr> IndexExpr::clone() const {
   return std::make_unique<IndexExpr>(array->clone(), index->clone(), loc);
@@ -131,22 +154,23 @@ std::unique_ptr<Expr> SizeOfExpr::clone() const {
 
 LambdaExpr::LambdaExpr(std::vector<LambdaParam> params,
                        std::unique_ptr<Stmt> body, bool isExprBody,
-                       SourceLocation loc)
+                       CaptureMode mode, SourceLocation loc)
     : Expr(ExprKind::LambdaExpr, loc), params(std::move(params)),
-      body(std::move(body)), isExprBody(isExprBody) {}
+      body(std::move(body)), isExprBody(isExprBody), captureMode(mode) {}
 
 std::unique_ptr<Expr> LambdaExpr::clone() const {
   std::vector<LambdaParam> clonedParams;
   for (const auto &p : params) {
-    clonedParams.push_back(p.clone());
+    clonedParams.push_back(
+        p.clone()); // Assuming LambdaParam has a clone() method
   }
-  return std::make_unique<LambdaExpr>(
-      std::move(clonedParams), body ? body->clone() : nullptr, isExprBody, loc);
+  // [FIX] Pass the captureMode to the new clone
+  return std::make_unique<LambdaExpr>(std::move(clonedParams), body->clone(),
+                                      isExprBody, captureMode, loc);
 }
 
 std::unique_ptr<Expr> ThreadExpr::clone() const {
-  auto clonedBody = std::unique_ptr<LambdaExpr>(
-      static_cast<LambdaExpr *>(body->clone().release()));
+  auto clonedBody = body ? body->cloneAs<LambdaExpr>() : nullptr;
   return std::make_unique<ThreadExpr>(isWeak, std::move(clonedBody), loc);
 }
 

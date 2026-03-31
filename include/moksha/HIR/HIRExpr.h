@@ -1,11 +1,14 @@
 #pragma once
 
 #include "moksha/AST/Expr.h"
+#include "moksha/HIR/HIRParam.h"
+#include "moksha/HIR/HIRStmt.h"
 #include "moksha/HIR/HIRType.h"
 #include "moksha/Support/SourceLocation.h"
 #include "llvm/Support/raw_ostream.h"
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace moksha {
@@ -69,6 +72,14 @@ enum class ValueCategory {
   RValue  // Represents a temporary value (e.g., literals, arithmetic results)
 };
 
+// Define the explicit capture modes for HIR
+enum class CaptureMode {
+  Snapshot, // Default: by-value copy ()
+  View,     // Immutable borrow &()
+  Mut,      // Mutable borrow &mut ()
+  Move      // Ownership transfer move ()
+};
+
 // ============================================================================
 // [HIR Expression Base]
 // ============================================================================
@@ -78,6 +89,7 @@ public:
   enum class Kind {
     IntegerLiteral,
     FloatLiteral,
+    DecimalLiteral,
     BoolLiteral,
     StringLiteral,
     TemplateString,
@@ -102,7 +114,8 @@ public:
     Super,
     Deref,
     AddressOf,
-    Member
+    Member,
+    Input
   };
 
   virtual ~HIRExpr() = default;
@@ -170,6 +183,26 @@ public:
 
 private:
   double value;
+};
+
+class HIRDecimalLiteral : public HIRExpr {
+public:
+  HIRDecimalLiteral(std::string value, const HIRType *type, SourceLocation loc)
+      : HIRExpr(Kind::DecimalLiteral, type, ValueCategory::RValue, loc),
+        value(std::move(value)) {}
+
+  const std::string &getValue() const { return value; }
+
+  void accept(HIRVisitor &v) override;
+  void accept(ConstHIRVisitor &v) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
+
+  static bool classof(const HIRExpr *E) {
+    return E->getKind() == Kind::DecimalLiteral;
+  }
+
+private:
+  std::string value;
 };
 
 class HIRBoolLiteral : public HIRExpr {
@@ -404,22 +437,48 @@ private:
 
 class HIRMemberExpr : public HIRExpr {
 public:
-  HIRMemberExpr(std::unique_ptr<HIRExpr> object, std::string member,
-                const HIRType *type, SourceLocation loc)
+  HIRMemberExpr(
+      std::unique_ptr<HIRExpr> object, std::string member,
+      std::unordered_map<std::string, const HIRType *> genericBindings,
+      const HIRType *type, SourceLocation loc, FieldInfo info = FieldInfo())
       : HIRExpr(Kind::Member, type, ValueCategory::LValue, loc),
-        object(std::move(object)), member(std::move(member)) {}
+        object(std::move(object)), member(std::move(member)),
+        info(std::move(info)), genericBindings(std::move(genericBindings)) {}
+
+  HIRMemberExpr(std::unique_ptr<HIRExpr> object, std::string member,
+                const HIRType *type, SourceLocation loc,
+                FieldInfo info = FieldInfo())
+      : HIRExpr(Kind::Member, type, ValueCategory::LValue, loc),
+        object(std::move(object)), member(std::move(member)),
+        info(std::move(info)) {}
 
   [[nodiscard]] HIRExpr *getObject() const { return object.get(); }
   [[nodiscard]] const std::string &getMemberName() const { return member; }
-
+  [[nodiscard]] const FieldInfo &getMemberInfo() const { return info; }
+  const std::unordered_map<std::string, const HIRType *> &
+  getGenericBindings() const {
+    return genericBindings;
+  }
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
   static bool classof(const HIRExpr *E) { return E->getKind() == Kind::Member; }
 
+  bool isVirtualMethod() const { return virtualMethod; }
+  uint32_t getVTableIndex() const { return vtableIndex; }
+
+  void setVirtualMethodInfo(bool isVirtual, uint32_t vtableIdx) {
+    virtualMethod = isVirtual;
+    vtableIndex = vtableIdx;
+  }
+
 private:
   HIRExprPtr object;
   std::string member;
+  FieldInfo info;
+  bool virtualMethod = false;
+  uint32_t vtableIndex = 0;
+  std::unordered_map<std::string, const HIRType *> genericBindings;
 };
 
 class HIRIndexExpr : public HIRExpr {
@@ -471,13 +530,22 @@ public:
 class HIRCallExpr : public HIRExpr {
 public:
   HIRCallExpr(HIRExprPtr callee, std::vector<HIRExprPtr> args,
+              std::unordered_map<std::string, const HIRType *> genericBindings,
+              const HIRType *type, SourceLocation loc)
+      : HIRExpr(Kind::Call, type, ValueCategory::RValue, loc),
+        callee(std::move(callee)), args(std::move(args)) {}
+
+  HIRCallExpr(HIRExprPtr callee, std::vector<HIRExprPtr> args,
               const HIRType *type, SourceLocation loc)
       : HIRExpr(Kind::Call, type, ValueCategory::RValue, loc),
         callee(std::move(callee)), args(std::move(args)) {}
 
   [[nodiscard]] HIRExpr *getCallee() const { return callee.get(); }
   [[nodiscard]] const std::vector<HIRExprPtr> &getArgs() const { return args; }
-
+  const std::unordered_map<std::string, const HIRType *> &
+  getGenericBindings() const {
+    return genericBindings;
+  }
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
@@ -486,10 +554,18 @@ public:
 private:
   HIRExprPtr callee;
   std::vector<HIRExprPtr> args;
+  std::unordered_map<std::string, const HIRType *> genericBindings;
 };
 
 class HIRNewExpr : public HIRExpr {
 public:
+  HIRNewExpr(const HIRType *allocatedType, std::vector<HIRExprPtr> args,
+             std::unordered_map<std::string, const HIRType *> genericBindings,
+             const HIRType *type, SourceLocation loc)
+      : HIRExpr(Kind::New, type, ValueCategory::RValue, loc),
+        allocatedType(allocatedType), args(std::move(args)),
+        genericBindings(std::move(genericBindings)) {}
+
   HIRNewExpr(const HIRType *allocatedType, std::vector<HIRExprPtr> args,
              const HIRType *type, SourceLocation loc)
       : HIRExpr(Kind::New, type, ValueCategory::RValue, loc),
@@ -499,7 +575,10 @@ public:
   [[nodiscard]] const HIRType *getAllocatedType() const {
     return allocatedType;
   }
-
+  const std::unordered_map<std::string, const HIRType *> &
+  getGenericBindings() const {
+    return genericBindings;
+  }
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
@@ -508,37 +587,67 @@ public:
 private:
   const HIRType *allocatedType;
   std::vector<HIRExprPtr> args;
+  std::unordered_map<std::string, const HIRType *> genericBindings;
+};
+
+// ============================================================================
+// [Lambda & Closure Implementation]
+// ============================================================================
+
+// [NEW] Define how a variable is captured by the closure
+enum class CaptureKind {
+  ByValue,    // Deep copy or Arc<T> clone (Required for Threads!)
+  ByReference // Weak pointer / raw reference
+};
+
+// [NEW] Struct to hold capture metadata
+struct HIRCapture {
+  std::string name;
+  const HIRType *type;
+  CaptureKind kind;
+
+  HIRCapture(std::string n, const HIRType *t, CaptureKind k)
+      : name(std::move(n)), type(t), kind(k) {}
 };
 
 struct HIRLambdaParam {
   std::string name;
   const HIRType *type;
+  std::unique_ptr<HIRExpr> defaultValue;
 
-  HIRLambdaParam(std::string n, const HIRType *t)
-      : name(std::move(n)), type(t) {}
+  HIRLambdaParam(std::string n, const HIRType *t,
+                 std::unique_ptr<HIRExpr> defVal = nullptr)
+      : name(std::move(n)), type(t), defaultValue(std::move(defVal)) {}
+
+  const std::string &getName() const { return name; }
+  const HIRType *getType() const { return type; }
+  const HIRExpr *getDefaultValue() const { return defaultValue.get(); }
 };
 
 class HIRLambdaExpr : public HIRExpr {
 public:
   HIRLambdaExpr(std::vector<HIRLambdaParam> params,
-                std::unique_ptr<HIRStmt> body, const HIRType *functionType,
-                SourceLocation loc)
-      : HIRExpr(Kind::Lambda, functionType, ValueCategory::RValue, loc),
-        params(std::move(params)), body(std::move(body)) {}
+                std::vector<HIRCapture> captures, std::unique_ptr<HIRStmt> body,
+                const HIRType *type, CaptureMode mode, SourceLocation loc)
+      : HIRExpr(Kind::Lambda, type, ValueCategory::RValue, loc),
+        params(std::move(params)), captures(std::move(captures)),
+        body(std::move(body)), captureMode(mode) {}
 
-  [[nodiscard]] const std::vector<HIRLambdaParam> &getParams() const {
-    return params;
-  }
-  [[nodiscard]] const HIRStmt *getBody() const;
-
+  const std::vector<HIRLambdaParam> &getParams() const { return params; }
+  const std::vector<HIRCapture> &getCaptures() const { return captures; }
+  const HIRStmt *getBody() const;
+  CaptureMode getCaptureMode() const { return captureMode; }
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
+
   static bool classof(const HIRExpr *E) { return E->getKind() == Kind::Lambda; }
 
 private:
   std::vector<HIRLambdaParam> params;
+  std::vector<HIRCapture> captures;
   std::unique_ptr<HIRStmt> body;
+  CaptureMode captureMode;
 };
 
 class HIRThreadExpr : public HIRExpr {
@@ -562,19 +671,21 @@ private:
 
 class HIRSizeOfExpr : public HIRExpr {
 public:
-  HIRSizeOfExpr(std::unique_ptr<HIRExpr> expr, const HIRType *usizeType,
+  HIRSizeOfExpr(const HIRType *targetType, const HIRType *usizeType,
                 SourceLocation loc)
       : HIRExpr(Kind::SizeOf, usizeType, ValueCategory::RValue, loc),
-        expression(std::move(expr)) {}
+        targetType(targetType) {}
 
-  [[nodiscard]] const HIRExpr *getExpr() const { return expression.get(); }
+  const HIRType *getTargetType() const { return targetType; }
+
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
+
   static bool classof(const HIRExpr *E) { return E->getKind() == Kind::SizeOf; }
 
 private:
-  std::unique_ptr<HIRExpr> expression;
+  const HIRType *targetType;
 };
 
 class HIRAwaitExpr : public HIRExpr {
@@ -658,6 +769,26 @@ public:
 
 private:
   std::unique_ptr<HIRExpr> iterable;
+};
+
+class HIRInputExpr : public HIRExpr {
+public:
+  // prompt can be null if it's just `input()` without arguments
+  HIRInputExpr(std::unique_ptr<HIRExpr> prompt, const HIRType *type,
+               SourceLocation loc)
+      : HIRExpr(Kind::Input, type, ValueCategory::RValue, loc),
+        prompt(std::move(prompt)) {}
+
+  [[nodiscard]] const HIRExpr *getPrompt() const { return prompt.get(); }
+
+  void accept(HIRVisitor &v) override;
+  void accept(ConstHIRVisitor &v) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
+
+  static bool classof(const HIRExpr *E) { return E->getKind() == Kind::Input; }
+
+private:
+  std::unique_ptr<HIRExpr> prompt;
 };
 
 } // namespace hir

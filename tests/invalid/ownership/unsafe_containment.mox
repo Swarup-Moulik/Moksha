@@ -1,9 +1,9 @@
-int immutable_val = 100
+view int mutable_val = 100
 *mut int leaked_mut = null
 
 unsafe {
     // OK: Inside unsafe, we can force a cast from immutable to mutable
-    *mut int raw_ptr = cast<*mut int>(&immutable_val)
+    *mut int raw_ptr = cast<*mut int>(&mutable_val)
     *raw_ptr = 200
 
     // Attempting to leak the illegal capability out of the block

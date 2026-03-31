@@ -1,41 +1,89 @@
-// --- 1. Register Preservation & Stack Discipline ---
-// 'interrupt' attribute triggers backend register-save logic
+// ============================================================================
+// [1. Register Preservation & Stack Discipline]
+// ============================================================================
 interrupt void handle_keyboard_isr() {
-    // Verifies clobber list in inline assembly
-    // Ensures backend knows which registers are manually dirtied
     asm("push %rax; push %rbx", "clobber: rax, rbx");
-
-    // Red-zone avoidance and stack alignment check (Manual validation)
-    asm("and $-16, %rsp"); // Align stack to 16-bytes for ABI compliance
-
+    asm("and $-16, %rsp");
     asm("pop %rbx; pop %rax");
     asm("iretq");
 }
 
-// --- 2. Nested Interrupt Handling ---
+// ============================================================================
+// [2. Nested Interrupt Handling]
+// ============================================================================
 interrupt void high_priority_isr() {
     // Logic for top-half...
 }
 
 interrupt void low_priority_isr() {
-    asm("sti"); // Enable nested interrupts
-    high_priority_isr(); // Verifies recursive ISR calling
+    asm("sti");
+    high_priority_isr();
     asm("cli");
 }
 
-// --- 3. ISR + Fence Interaction ---
-mut int device_buffer_ready = 0;
+// ============================================================================
+// [3. ISR + Fence & Volatile Interaction]
+// ============================================================================
+// 'volatile' prevents the optimizer from caching this hardware register in a GPR
+volatile int device_buffer_ready = 0;
 
 interrupt void dma_handler() {
-    // Ensures memory barriers survive ISR context
     atomic_thread_fence("acquire");
     if (device_buffer_ready == 1) {
         // Process buffer...
     }
 }
 
-// --- 4. Inlining Prevention ---
-// Verifies that 'interrupt' functions are marked 'noinline'
+// ============================================================================
+// [4. Inlining Prevention & Cold Paths]
+// ============================================================================
+// 'noinline' guarantees the ISR isn't swallowed by a caller.
 noinline interrupt void serial_isr() {
     asm("in $0x3F8, %al");
 }
+
+// 'cold' pushes this error path out of the hot instruction cache
+cold void panic_handler() {
+    // Log fatal error...
+}
+
+// ============================================================================
+// [5. System/Hardware Level Functions]
+// ============================================================================
+// 'naked' prevents standard stack frame prologue/epilogue generation
+// 'noreturn' allows the MIR to terminate the basic block here (unreachable)
+naked noreturn void cpu_halt() {
+    asm("cli");
+    asm("1: hlt; jmp 1b"); // Infinite halt loop
+}
+
+// ============================================================================
+// [6. Optimization Hints & Side-Effect Analysis]
+// ============================================================================
+// 'pure' guarantees no side effects, allowing the MIR optimizer to fold/memoize
+pure int compute_hash(int input_data) {
+    return (input_data * 16777619) ^ 2166136261;
+}
+
+// 'inline' aggressively pushes this into the caller's MIR block
+inline int quick_status_check() {
+    return 1;
+}
+
+// ============================================================================
+// [7. Linkage & Advanced Memory Layout]
+// ============================================================================
+// 'weak' allows this symbol to be overridden at link-time without conflicts
+weak void default_fault_handler() {
+    cpu_halt();
+}
+
+// 'extern' declares a function signature without a body (handled in MIRFunction)
+extern void platform_specific_init();
+
+// 'thread_local' allocates this to TLS (Thread Local Storage)
+thread_local int current_core_id = 0;
+
+// 'used' forces the compiler to emit this variable even if no code references it
+// (Very common for interrupt vector tables or linker script markers!)
+used static int magic_boot_signature = 0x1BADB002;

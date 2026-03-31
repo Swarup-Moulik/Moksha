@@ -5,6 +5,42 @@
 using namespace moksha::hir;
 
 // ============================================================================
+// [HIRIntType]
+// ============================================================================
+std::string HIRIntType::toString() const {
+  return (isSignedFlag ? "i" : "u") + std::to_string(width);
+}
+
+void HIRIntType::Profile(llvm::FoldingSetNodeID &ID) const {
+  ID.AddInteger(static_cast<int>(kind));
+  ID.AddInteger(width);
+  ID.AddBoolean(isSignedFlag);
+  ID.AddBoolean(isPtrWidth);
+}
+
+// ============================================================================
+// [HIRFloatType] - Now successfully uses 'width'
+// ============================================================================
+std::string HIRFloatType::toString() const {
+  // Returns f8, f16, f32, f64 etc.
+  return "f" + std::to_string(width);
+}
+
+void HIRFloatType::Profile(llvm::FoldingSetNodeID &ID) const {
+  ID.AddInteger(static_cast<int>(kind));
+  ID.AddInteger(width); // Used for interning unique float types
+}
+
+// ============================================================================
+// [HIRStringType]
+// ============================================================================
+std::string HIRStringType::toString() const { return "string"; }
+
+void HIRStringType::Profile(llvm::FoldingSetNodeID &ID) const {
+  ID.AddInteger(static_cast<int>(kind));
+}
+
+// ============================================================================
 // [PrimitiveType]
 // ============================================================================
 
@@ -14,6 +50,12 @@ std::string PrimitiveType::toString() const {
     return "void";
   case TypeKind::Bool:
     return "bool";
+  case TypeKind::String:
+    return "string";
+  case TypeKind::Int:
+    return "int_generic";
+  case TypeKind::Float:
+    return "float_generic";
   default:
     return "unknown_primitive";
   }
@@ -22,47 +64,6 @@ std::string PrimitiveType::toString() const {
 void PrimitiveType::Profile(llvm::FoldingSetNodeID &ID) const {
   ID.AddInteger(static_cast<int>(kind));
   // Primitives are always leaf nodes with implied Ownership::None.
-}
-
-// ============================================================================
-// [PointerType]
-// ============================================================================
-
-std::string PointerType::toString() const {
-  // [FIX] Assert pointee is not null to prevent invalid states
-  assert(pointee && "PointerType must have a valid pointee");
-
-  std::string s;
-  switch (ownership) {
-  case Ownership::Borrowed:
-    s = "&";
-    break;
-  case Ownership::Owned:
-    s = "Box<";
-    break;
-  case Ownership::Shared:
-    s = "Arc<";
-    break;
-  case Ownership::None:
-    s = "*";
-    break; // Explicit Raw Pointer
-  default:
-    s = "*";
-    break;
-  }
-
-  s += pointee->toString();
-
-  if (ownership == Ownership::Owned || ownership == Ownership::Shared) {
-    s += ">";
-  }
-  return s;
-}
-
-void PointerType::Profile(llvm::FoldingSetNodeID &ID) const {
-  ID.AddInteger(static_cast<int>(kind));
-  ID.AddPointer(pointee);
-  ID.AddInteger(static_cast<int>(ownership));
 }
 
 // ============================================================================
@@ -88,12 +89,23 @@ std::string FunctionType::toString() const {
     if (i < paramTypes.size() - 1)
       ss << ", ";
   }
+
+  if (isVariadic) {
+    if (!paramTypes.empty())
+      ss << ", ";
+    ss << "...";
+  }
+
   ss << ") -> ";
 
   if (returnType) {
     ss << returnType->toString();
   } else {
     ss << "void";
+  }
+
+  if (isInterrupt) {
+    ss << " [interrupt]";
   }
 
   return ss.str();
@@ -105,6 +117,9 @@ void FunctionType::Profile(llvm::FoldingSetNodeID &ID) const {
   for (const auto *param : paramTypes) {
     ID.AddPointer(param);
   }
+
+  ID.AddBoolean(isVariadic);
+  ID.AddBoolean(isInterrupt);
 }
 
 // ============================================================================
@@ -120,3 +135,15 @@ void ArrayType::Profile(llvm::FoldingSetNodeID &ID) const {
 }
 
 std::string UnionType::toString() const { return name; }
+
+// ============================================================================
+// [SliceType]
+// ============================================================================
+std::string SliceType::toString() const {
+  return elementType->toString() + "[]";
+}
+
+void SliceType::Profile(llvm::FoldingSetNodeID &ID) const {
+  ID.AddInteger(static_cast<int>(kind));
+  ID.AddPointer(elementType);
+}

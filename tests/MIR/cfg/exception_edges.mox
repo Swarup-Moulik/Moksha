@@ -1,0 +1,9 @@
+void risky_function() {}
+
+void test_exceptions() {
+    try {
+        risky_function();
+    } catch (int e) {
+        int handled = e;
+    }
+}

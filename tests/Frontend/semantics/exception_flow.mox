@@ -3,7 +3,7 @@ int riskyCall(int x) { throw 1; }
 int safeCall(int x) { return x; }
 
 // 2. Pass dummy arg to match new signature
-any fn = () => {
+closure() -> any fn = () => {
     try { riskyCall(0); } catch(any e) {}
 };
 

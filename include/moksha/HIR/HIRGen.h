@@ -81,10 +81,11 @@ public:
   // ========================================================================
   void visitIntegerLiteral(const IntegerLiteral *expr) override;
   void visitFloatLiteral(const FloatLiteral *expr) override;
+  void visitDecimalLiteral(const DecimalLiteral *expr) override;
   void visitBoolLiteral(const BoolLiteral *expr) override;
   void visitStringLiteral(const StringLiteral *expr) override;
   void visitMapLiteral(const MapLiteral *) override;
-  void visitSizeOfExpr(const SizeOfExpr *) override {}
+  void visitSizeOfExpr(const SizeOfExpr *) override;
   void visitBinaryExpr(const BinaryExpr *expr) override;
   void visitCallExpr(const CallExpr *expr) override;
   void visitIdentifierExpr(const IdentifierExpr *expr) override;
@@ -103,6 +104,7 @@ public:
   void visitThisExpr(const ThisExpr *expr) override;
   void visitSuperExpr(const SuperExpr *expr) override;
   void visitAwaitExpr(const AwaitExpr *expr) override;
+  void visitInputExpr(const InputExpr *expr) override;
 
   // ========================================================================
   // [Types] (Stubbed)
@@ -110,19 +112,23 @@ public:
   void visitPrimitiveType(const PrimitiveType *) override {}
   void visitPointerType(const PointerType *) override {}
   void visitArrayType(const ArrayType *type) override {}
+  void visitSliceType(const SliceType *type) override;
   void visitFunctionType(const FunctionType *) override {}
   void visitNamedType(const NamedType *) override {}
   void visitNullableType(const NullableType *type) override {}
   void visitAnyType(const AnyType *) override {}
   void visitMapType(const MapType *) override {}
   void visitReferenceType(const ReferenceType *) override {}
-  void visitLockType(const LockType *) override {}
-  void visitViewType(const ViewType *) override {}
-  void visitMutType(const MutType *) override {}
+  void visitLockType(const LockType *type) override;
+  void visitViewType(const ViewType *type) override;
+  void visitMutType(const MutType *type) override;
+  void visitConstType(const ConstType *type) override;
+  void visitVolatileType(const VolatileType *type) override;
   void visitEnumType(const EnumType *) override {}
   void visitNullType(const NullType *) override {}
-  void visitVolatileType(const VolatileType *) override {}
-  void visitConstType(const ConstType *) override {}
+  void visitDecimalType(const DecimalType *type) override;
+  void visitClosureType(const ClosureType *type) override;
+  void visitWeakType(const WeakType *type) override;
 
 private:
   ASTContext &ctx;

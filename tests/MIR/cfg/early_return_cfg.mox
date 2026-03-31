@@ -1,0 +1,11 @@
+void test_return(bool abort) {
+    int state = 0;
+
+    if (abort) {
+      state = 1;
+      return; // Tests CFG branching to the function exit block
+    }
+
+    state = 2;
+    // Implicit return at the end
+  }

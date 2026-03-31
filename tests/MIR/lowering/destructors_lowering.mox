@@ -1,0 +1,9 @@
+ref class File {
+    // Custom destructor hook
+    void drop() {}
+}
+
+void test_destructors() {
+    File f = new File();
+    // Lowering must explicitly inject the call to `drop()` right before the arc_release
+}

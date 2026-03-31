@@ -1,0 +1,13 @@
+ref class Node {
+    weak Node parent; // Weak reference to prevent cycle
+    Node child;
+}
+
+void test_weak_arc() {
+    Node p = new Node();
+    Node c = new Node();
+
+    // The MIR lowerer must correctly emit weak variants of the ARC instructions
+    c.parent = p;
+    p.child = c;
+}

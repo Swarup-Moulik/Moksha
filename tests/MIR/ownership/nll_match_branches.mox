@@ -1,0 +1,16 @@
+void test_switch_borrow(int state) {
+    int shared_data = 100;
+
+    switch (state) {
+        case 1: {
+            *mut int m1 = &shared_data;
+            *m1 = 1;
+            break;
+        }
+        case 2: {
+            *mut int m2 = &shared_data; // Perfectly safe! m1 cannot exist here.
+            *m2 = 2;
+            break;
+        }
+    }
+}

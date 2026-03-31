@@ -19,7 +19,7 @@ generic Container<T> {
 int[] arr = [1, 2, 3];
 
 // Generic inference flowing through a pipe with lambdas
-arr |> map((int x) => x + 1);
+arr |> map((int x) =>  x + 1 );
 
 // Deeply nested generic resolution
 Container<Container<int>> nested = new Container<Container<int>>(new Container<int>(10));

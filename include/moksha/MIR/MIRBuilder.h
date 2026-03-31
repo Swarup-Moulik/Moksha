@@ -1,9 +1,9 @@
 #pragma once
 
-#include "moksha/Support/SourceLocation.h"
 #include "moksha/MIR/MIRBlock.h"
 #include "moksha/MIR/MIRFunction.h"
 #include "moksha/MIR/MIRInst.h"
+#include "moksha/Support/SourceLocation.h"
 #include <cassert>
 #include <initializer_list>
 #include <memory>
@@ -13,10 +13,24 @@
 namespace moksha {
 namespace mir {
 
+class MIRGlobal;
+class MIRModule;
+class MIRConstant;
+
 class MIRBuilder {
 public:
-  MIRBuilder();
+  explicit MIRBuilder(MIRModule *module);
   explicit MIRBuilder(MIRBlock *block);
+  MIRModule *getModule() const { return module; }
+
+  // ========================================================================
+  // [Globals]
+  // ========================================================================
+
+  MIRGlobal *
+  createGlobal(MIRModule *module, std::string name, const hir::HIRType *type,
+               MIRConstant *initializer = nullptr, bool isConstant = false,
+               Linkage linkage = Linkage::External, unsigned alignment = 0);
 
   // ========================================================================
   // [Positioning]
@@ -37,6 +51,29 @@ public:
   ReturnInst *createRetVoid(SourceLocation loc = {});
   SwitchInst *createSwitch(MIRValue *cond, MIRBlock *defaultBlock,
                            SourceLocation loc = {});
+
+  // ========================================================================
+  // [Exceptions & Hardware]
+  // ========================================================================
+
+  InvokeInst *createInvoke(MIRValue *callee, std::vector<MIRValue *> args,
+                           MIRBlock *normalDest, MIRBlock *unwindDest,
+                           const hir::HIRType *retType,
+                           const std::string &name = "",
+                           SourceLocation loc = {});
+
+  LandingPadInst *createLandingPad(const hir::HIRType *catchType,
+                                   const std::string &name = "",
+                                   SourceLocation loc = {});
+
+  ResumeInst *createResume(MIRValue *exception, SourceLocation loc = {});
+  ThrowInst *createThrow(MIRValue *exception, MIRBlock *unwindDest,
+                         SourceLocation loc = {});
+
+  InlineAsmInst *createInlineAsm(std::string asmString, std::string constraints,
+                                 std::vector<MIRValue *> args,
+                                 const hir::HIRType *retType,
+                                 SourceLocation loc = {});
 
   // ========================================================================
   // [Arithmetic & Logic]
@@ -86,8 +123,12 @@ public:
   // ========================================================================
 
   CompareInst *createICmp(CompareInst::Predicate pred, MIRValue *lhs,
-                          MIRValue *rhs, const std::string &name = "",
-                          SourceLocation loc = {});
+                          MIRValue *rhs, const hir::HIRType *resType,
+                          const std::string &name, SourceLocation loc);
+
+  FCmpInst *createFCmp(FCmpInst::Predicate pred, MIRValue *lhs, MIRValue *rhs,
+                       const hir::HIRType *resType,
+                       const std::string &name = "", SourceLocation loc = {});
 
   // ========================================================================
   // [Memory Operations]
@@ -133,6 +174,23 @@ public:
                      SourceLocation loc = {});
 
   // ========================================================================
+  // [Concurrency & Closures]
+  // ========================================================================
+
+  MakeClosureInst *createMakeClosure(MIRValue *funcPtr,
+                                     std::vector<MIRValue *> captures,
+                                     const hir::HIRType *closureType,
+                                     const std::string &name = "",
+                                     SourceLocation loc = {});
+
+  SpawnInst *createSpawn(MIRValue *closure, hir::ThreadKind threadKind,
+                         const hir::HIRType *handleType,
+                         const std::string &name = "", SourceLocation loc = {});
+
+  AwaitInst *createAwait(MIRValue *promise, const hir::HIRType *resolvedType,
+                         const std::string &name = "", SourceLocation loc = {});
+
+  // ========================================================================
   // [Casts & ARC]
   // ========================================================================
 
@@ -141,6 +199,11 @@ public:
                           SourceLocation loc = {});
   ARCInst *createRetain(MIRValue *obj, SourceLocation loc = {});
   ARCInst *createRelease(MIRValue *obj, SourceLocation loc = {});
+  StoreWeakInst *createStoreWeak(MIRValue *val, MIRValue *ptr,
+                                 SourceLocation loc = {});
+  LoadWeakInst *createLoadWeak(MIRValue *ptr, const hir::HIRType *resType,
+                               const std::string &name = "",
+                               SourceLocation loc = {});
 
   template <typename InstTy> InstTy *insert(std::unique_ptr<InstTy> inst) {
     assert(currentBlock && "Insert point not set for MIRBuilder");
@@ -150,6 +213,7 @@ public:
   }
 
 private:
+  MIRModule *module;
   MIRBlock *currentBlock;
 };
 

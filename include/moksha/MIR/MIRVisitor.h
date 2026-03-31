@@ -142,6 +142,53 @@ public:
       visitExtractValueInst(static_cast<ExtractValueInst *>(inst));
       break;
 
+      // Exceptions & Stack Unwinding
+    case Opcode::Invoke:
+      visitInvokeInst(static_cast<InvokeInst *>(inst));
+      break;
+    case Opcode::LandingPad:
+      visitLandingPadInst(static_cast<LandingPadInst *>(inst));
+      break;
+    case Opcode::Resume:
+      visitResumeInst(static_cast<ResumeInst *>(inst));
+      break;
+    case Opcode::Throw:
+      visitThrowInst(static_cast<ThrowInst *>(inst));
+      break;
+
+    // Inline Assembly
+    case Opcode::InlineAsm:
+      visitInlineAsmInst(static_cast<InlineAsmInst *>(inst));
+      break;
+
+      // Concurrency & Async
+    case Opcode::MakeClosure:
+      visitMakeClosureInst(static_cast<MakeClosureInst *>(inst));
+      break;
+    case Opcode::Spawn:
+      visitSpawnInst(static_cast<SpawnInst *>(inst));
+      break;
+    case Opcode::Await:
+      visitAwaitInst(static_cast<AwaitInst *>(inst));
+      break;
+
+    // Atomics
+    case Opcode::AtomicLoad:
+      visitAtomicLoadInst(static_cast<AtomicLoadInst *>(inst));
+      break;
+    case Opcode::AtomicStore:
+      visitAtomicStoreInst(static_cast<AtomicStoreInst *>(inst));
+      break;
+    case Opcode::AtomicRMW:
+      visitAtomicRMWInst(static_cast<AtomicRMWInst *>(inst));
+      break;
+    case Opcode::AtomicCmpXchg:
+      visitAtomicCmpXchgInst(static_cast<AtomicCmpXchgInst *>(inst));
+      break;
+    case Opcode::Fence:
+      visitFenceInst(static_cast<FenceInst *>(inst));
+      break;
+
     default:
       visitInstruction(inst);
       break;
@@ -173,6 +220,34 @@ public:
   virtual void visitExtractValueInst(ExtractValueInst *inst) {
     visitInstruction(inst);
   }
+  virtual void visitInvokeInst(InvokeInst *inst) { visitInstruction(inst); }
+  virtual void visitLandingPadInst(LandingPadInst *inst) {
+    visitInstruction(inst);
+  }
+  virtual void visitResumeInst(ResumeInst *inst) { visitInstruction(inst); }
+  virtual void visitThrowInst(ThrowInst *inst) { visitInstruction(inst); }
+  virtual void visitInlineAsmInst(InlineAsmInst *inst) {
+    visitInstruction(inst);
+  }
+  virtual void visitMakeClosureInst(MakeClosureInst *inst) {
+    visitInstruction(inst);
+  }
+  virtual void visitSpawnInst(SpawnInst *inst) { visitInstruction(inst); }
+  virtual void visitAwaitInst(AwaitInst *inst) { visitInstruction(inst); }
+
+  virtual void visitAtomicLoadInst(AtomicLoadInst *inst) {
+    visitInstruction(inst);
+  }
+  virtual void visitAtomicStoreInst(AtomicStoreInst *inst) {
+    visitInstruction(inst);
+  }
+  virtual void visitAtomicRMWInst(AtomicRMWInst *inst) {
+    visitInstruction(inst);
+  }
+  virtual void visitAtomicCmpXchgInst(AtomicCmpXchgInst *inst) {
+    visitInstruction(inst);
+  }
+  virtual void visitFenceInst(FenceInst *inst) { visitInstruction(inst); }
 
 protected:
   virtual void traverseGlobals(MIRModule *module) {

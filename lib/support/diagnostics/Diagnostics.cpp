@@ -103,6 +103,8 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
     return "Non-void function may end without returning a value";
   case DiagID::err_invalid_access:
     return "Invalid access to member";
+    case DiagID::err_argument_count_mismatch:
+        return "Function argument count mismatch: expected vs provided";
   case DiagID::warn_implicit_bool_conv:
     return "Implicit conversion to boolean";
   case DiagID::err_array_length:
@@ -125,6 +127,10 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
     return "Uninitialized variable";
   case DiagID::err_unreachable_code:
     return "Unreachable code";
+  case DiagID::err_decimal_precision_loss:
+    return "Decimal scale truncation";
+  case DiagID::err_decimal_overflow:
+    return "Possible decimal overflow";
 
   // MIR / Lowering Errors (Added)
   case DiagID::err_unexpanded_macro:
@@ -139,6 +145,14 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
     return "Borrow checker violation";
   case DiagID::err_mutation_while_borrowed:
     return "Cannot mutate variable while it is actively borrowed";
+  case DiagID::err_borrow_escape:
+    return "Borrow escape detected";
+    case DiagID::err_use_after_move:
+        return "Use of moved value";
+      case DiagID::err_partial_move:
+        return "Use of partially moved value";
+  case DiagID::note_borrow_occurred_here:
+    return "Borrow occurred here";
 
   // Warnings
   case DiagID::warn_switch_not_exhaustive:

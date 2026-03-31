@@ -37,6 +37,12 @@ ASTContext::ASTContext() {
 
 ASTContext::~ASTContext() = default;
 
+const Type *ASTContext::createDecimalType(unsigned int precision,
+                                          unsigned int scale) {
+  return saveType(
+      std::make_unique<DecimalType>(precision, scale, SourceLocation()));
+}
+
 const Type *ASTContext::createPointerType(const Type *pointee) {
   // Use saveType to store the unique_ptr in the context's ownedTypes vector
   return saveType(
@@ -52,6 +58,14 @@ const Type *ASTContext::createNullableType(const Type *inner) {
 
 const Type *ASTContext::createMutType(const Type *inner) {
   return saveType(std::make_unique<MutType>(inner->clone(), inner->getLoc()));
+}
+
+const Type *ASTContext::createViewType(const Type *inner) {
+  return saveType(std::make_unique<ViewType>(inner->clone(), inner->getLoc()));
+}
+
+const Type *ASTContext::createLockType(const Type *inner) {
+  return saveType(std::make_unique<LockType>(inner->clone(), inner->getLoc()));
 }
 
 const Type *ASTContext::createArrayType(const Type *element,
@@ -85,6 +99,37 @@ const Type *ASTContext::createNamedType(const std::string &name) {
       std::make_unique<NamedType>(name, std::move(args), SourceLocation()));
 }
 
+const Type *
+ASTContext::createClosureType(const std::vector<const Type *> &params,
+                              const Type *ret) {
+  std::vector<TypePtr> clonedParams;
+  for (const auto *p : params) {
+    clonedParams.push_back(p->clone());
+  }
+  return saveType(std::make_unique<ClosureType>(
+      ret->clone(), std::move(clonedParams), ret->getLoc()));
+}
+
+const Type *ASTContext::createWeakType(const Type *inner) {
+  auto weakTy = std::make_unique<WeakType>(inner->clone(), inner->getLoc());
+  return saveType(
+      std::make_unique<NullableType>(std::move(weakTy), inner->getLoc()));
+}
+
+const Type *ASTContext::createConstType(const Type *inner) {
+  return saveType(std::make_unique<ConstType>(inner->clone(), inner->getLoc()));
+}
+
+const Type *ASTContext::createVolatileType(const Type *inner) {
+  return saveType(
+      std::make_unique<VolatileType>(inner->clone(), inner->getLoc()));
+}
+
+const Type *ASTContext::createEnumType(const std::string &name) {
+  return saveType(std::make_unique<EnumType>(name, std::vector<std::string>{},
+                                             SourceLocation()));
+}
+
 void ASTContext::registerClass(const ClassDecl *decl) {
   classMap[decl->getName()] = decl;
 }
@@ -92,6 +137,12 @@ void ASTContext::registerClass(const ClassDecl *decl) {
 const ClassDecl *ASTContext::lookupClass(llvm::StringRef name) const {
   auto it = classMap.find(name);
   return it != classMap.end() ? it->second : nullptr;
+}
+
+const Type *ASTContext::getSliceType(const Type *elementType) {
+  // If you aren't interning slices yet, just return a new owned instance:
+  return saveType(
+      std::make_unique<SliceType>(elementType->clone(), elementType->getLoc()));
 }
 
 } // namespace moksha

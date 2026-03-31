@@ -1,9 +1,0 @@
-void test_arc() {
-    shared string my_str = "hello"
-    {
-        shared string copy = my_str
-        // arc_retain(copy) should happen here implicitly
-    }
-    // arc_release(copy) should happen here implicitly
-}
-// arc_release(my_str) should happen here implicitly

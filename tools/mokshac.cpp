@@ -3,13 +3,29 @@
 #include "moksha/Builtins/BuiltinRegistry.h"
 #include "moksha/HIR/HIRModule.h"
 #include "moksha/Lexer/Lexer.h"
+#include "moksha/MIR/Analysis/NLLBorrowChecker.h"
+#include "moksha/MIR/LowerHIRToMIR.h"
+#include "moksha/MIR/MIRModule.h"
+#include "moksha/MIR/MIRVerifier.h"
+#include "moksha/MIR/Passes/ConstantFoldingPass.h"
+#include "moksha/MIR/Passes/DeadCodeEliminationPass.h"
+#include "moksha/MIR/Passes/DropElisionPass.h"
+#include "moksha/MIR/Passes/EscapeAnalysisPass.h"
+#include "moksha/MIR/Passes/InliningPass.h"
+#include "moksha/MIR/Passes/JumpThreadingPass.h"
+#include "moksha/MIR/Passes/Mem2RegPass.h"
+#include "moksha/MIR/Passes/PassManager.h"
+#include "moksha/MIR/Passes/SROAPass.h"
+#include "moksha/MIR/Passes/SimplifyCFGPass.h"
+#include "moksha/MIR/VerifyNoMacros.h"
 #include "moksha/Macros/Macro.h"
+#include "moksha/Ownership/ARCAnalyzer.h"
+#include "moksha/Ownership/ARCInserter.h"
+#include "moksha/Ownership/BorrowChecker.h"
 #include "moksha/Parser/Parser.h"
 #include "moksha/Sema/SymbolTable.h"
 #include "moksha/Sema/TypeChecker.h"
 #include "moksha/Support/Diagnostics.h"
-// --- ADD THE BORROW CHECKER HEADER ---
-#include "moksha/Ownership/BorrowChecker.h"
 
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
@@ -49,6 +65,16 @@ static cl::opt<bool>
 static cl::opt<bool> RunHIRPasses(
     "run-hir-passes",
     cl::desc("Run High-Level IR analysis passes (e.g., Borrow Checker)"),
+    cl::cat(MokshaCategory));
+
+// --- CLI FLAG FOR MIR PASSES ---
+static cl::opt<bool> DumpMIR("dump-mir",
+                             cl::desc("Print the Mid-Level IR (MIR)"),
+                             cl::cat(MokshaCategory));
+
+static cl::opt<bool> RunMIRPasses(
+    "run-mir-passes",
+    cl::desc("Run Mid-Level IR analysis passes (NLL Borrow Checker, ARC)"),
     cl::cat(MokshaCategory));
 
 int main(int argc, char **argv) {
@@ -129,21 +155,67 @@ int main(int argc, char **argv) {
     llvm::outs() << "================\n\n";
   }
 
-  // --- 7. HIR SEMANTIC ANALYSIS (BORROW CHECKING) ---
-  // We run this if specifically requested by the test suite, OR if we
-  // are doing a standard compilation (i.e. not just dumping the AST/HIR).
-  if (RunHIRPasses || (!DumpAST && !DumpHIR)) {
-    llvm::outs() << "Running Borrow Checker...\n";
-    ownership::BorrowChecker borrowChecker(diags);
-    borrowChecker.checkModule(*hirModule);
+  // --- 7. VERIFY NO MACROS (Pipeline Safety Barrier) ---
+  if (!mir::VerifyNoMacros(hirModule.get(), diags)) {
+    llvm::errs() << "Compilation halted: Unexpanded macros found in HIR.\n";
+    return 1;
+  }
+
+  // --- 8. LOWER HIR TO MIR ---
+  auto mirModule = mir::LowerHIRToMIR(hirModule.get(), diags);
+  if (!mirModule) {
+    llvm::errs() << "Failed to lower HIR to MIR.\n";
+    return 1;
+  }
+
+  // --- 9. MIR PASSES ---
+  if (RunMIRPasses || (!DumpAST && !DumpHIR && !DumpMIR)) {
+
+    // A. ARC Insertion (Memory Management)
+    mir::runARCInsertion(mirModule.get(), diags);
+
+    // B. NLL Borrow Checker (Memory Safety MUST run before optimizations)
+    mir::NLLBorrowChecker nllChecker(diags);
+    nllChecker.checkModule(mirModule.get());
 
     if (diags.hasErrors()) {
-      llvm::errs() << "Borrow checking failed with " << diags.getNumErrors()
+      llvm::errs() << "NLL Borrow checking failed with " << diags.getNumErrors()
                    << " error(s).\n";
-      return 1; // Halt compilation if memory safety is violated!
+      return 1;
     }
-    llvm::outs() << "Borrow Check passed! Memory is safe.\n";
+
+    // C. Core MIR Optimizations
+    mir::PassManager pm;
+    pm.addPass(std::make_unique<mir::InliningPass>());
+    pm.addPass(std::make_unique<mir::EscapeAnalysisPass>());
+    pm.addPass(std::make_unique<mir::DropElisionPass>());
+    pm.addPass(std::make_unique<mir::SROAPass>());
+    pm.addPass(std::make_unique<mir::Mem2RegPass>());
+    pm.addPass(std::make_unique<mir::JumpThreadingPass>());
+    pm.addPass(std::make_unique<mir::ConstantFoldingPass>());
+    pm.addPass(std::make_unique<mir::DeadCodeEliminationPass>());
+    pm.addPass(std::make_unique<mir::SimplifyCFGPass>());
+
+    pm.run(*mirModule);
+
+    // D. ARC Optimization (Zero-Cost Elision)
+    mir::runARCOptimization(mirModule.get(), diags);
+
+    // E. MIR Verification (Sanity Check CFG)
+    mir::MIRVerifier verifier(&llvm::errs(), true);
+    if (!verifier.verify(mirModule.get())) {
+      llvm::errs() << "MIR Verification failed!\n";
+      return 1;
+    }
   }
+
+  if (DumpMIR) {
+    std::cout << "\n=== MIR Dump ===\n";
+    mirModule->dump(llvm::outs());
+    std::cout << "================\n\n";
+  }
+
+  llvm::outs() << "Compilation successfully reached MIR phase!\n";
 
   return 0;
 }

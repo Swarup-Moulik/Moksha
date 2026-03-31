@@ -16,6 +16,7 @@ enum class TypeKind {
   Pointer,
   Reference,
   Array,
+  Slice,
   Map,
   Function,
   Named,
@@ -27,7 +28,10 @@ enum class TypeKind {
   Mut,
   Null,
   Volatile,
-  Const
+  Const,
+  Decimal,
+  Closure,
+  Weak
 };
 
 enum class Variance { Invariant, Covariant, Contravariant };
@@ -51,8 +55,13 @@ public:
   virtual bool isNumeric() const { return isInteger() || isFloat(); }
   virtual bool isString() const { return false; }
   virtual bool isArray() const { return false; }
+  virtual bool isSlice() const { return false; }
   virtual bool isBool() const { return false; }
   virtual bool isVoid() const { return false; }
+  virtual bool isRefClass() const { return false; }
+
+  virtual bool isImmutable() const { return false; }
+  virtual const Type *stripModifiers() const { return this; }
 
 protected:
   Type(TypeKind kind, SourceLocation loc) : kind(kind), loc(loc) {}
@@ -74,7 +83,6 @@ public:
   }
   bool isEquivalent(const Type &other) const override;
   std::string toString() const override { return "null"; }
-
   static bool classof(const Type *T) { return T->getKind() == TypeKind::Null; }
 };
 
@@ -224,6 +232,40 @@ private:
   std::unique_ptr<Expr> sizeExpr;
 };
 
+class SliceType : public Type {
+  TypePtr elementType;
+
+public:
+  static constexpr TypeKind classKind = TypeKind::Slice;
+
+  // Fix 1: Accept TypePtr and use std::move
+  SliceType(TypePtr element, SourceLocation loc = SourceLocation())
+      : Type(TypeKind::Slice, loc), elementType(std::move(element)) {}
+
+  // Fix 2: Return the raw pointer from the unique_ptr
+  const Type *getElementType() const { return elementType.get(); }
+
+  void accept(ASTVisitor &v) const override;
+
+  bool isEquivalent(const Type &other) const override {
+    if (const auto *otherSlice = llvm::dyn_cast<SliceType>(&other)) {
+      return elementType->isEquivalent(*otherSlice->elementType);
+    }
+    return false;
+  }
+
+  std::string toString() const override {
+    return elementType->toString() + "[]";
+  }
+
+  // Fix 3: The constructor now matches the TypePtr returned by clone()
+  std::unique_ptr<Type> clone() const override {
+    return std::make_unique<SliceType>(elementType->clone(), getLoc());
+  }
+
+  static bool classof(const Type *T) { return T->getKind() == TypeKind::Slice; }
+};
+
 class MapType : public Type {
 public:
   static constexpr TypeKind classKind = TypeKind::Map;
@@ -244,6 +286,54 @@ public:
 private:
   TypePtr keyType;
   TypePtr valueType;
+};
+
+class ClosureType : public Type {
+public:
+  static constexpr TypeKind classKind = TypeKind::Closure;
+  ClosureType(TypePtr returnType, std::vector<TypePtr> paramTypes,
+              SourceLocation loc)
+      : Type(TypeKind::Closure, loc), returnType(std::move(returnType)),
+        paramTypes(std::move(paramTypes)) {}
+
+  void accept(ASTVisitor &v) const override;
+
+  std::unique_ptr<Type> clone() const override {
+    std::vector<TypePtr> clonedParams;
+    for (const auto &p : paramTypes)
+      clonedParams.push_back(p->clone());
+    return std::make_unique<ClosureType>(returnType->clone(),
+                                         std::move(clonedParams), loc);
+  }
+
+  bool isEquivalent(const Type &other) const override {
+    if (!other.is<ClosureType>())
+      return false;
+    auto &c = static_cast<const ClosureType &>(other);
+    if (!returnType->isEquivalent(*c.getReturnType()))
+      return false;
+    if (paramTypes.size() != c.getParamTypes().size())
+      return false;
+    for (size_t i = 0; i < paramTypes.size(); ++i) {
+      if (!paramTypes[i]->isEquivalent(*c.getParamTypes()[i]))
+        return false;
+    }
+    return true;
+  }
+
+  std::string toString() const override { return "closure"; }
+  [[nodiscard]] const Type *getReturnType() const { return returnType.get(); }
+  [[nodiscard]] const std::vector<TypePtr> &getParamTypes() const {
+    return paramTypes;
+  }
+
+  static bool classof(const Type *T) {
+    return T->getKind() == TypeKind::Closure;
+  }
+
+private:
+  TypePtr returnType;
+  std::vector<TypePtr> paramTypes;
 };
 
 class FunctionType : public Type {
@@ -312,13 +402,15 @@ public:
     Variance variance;
   };
 
-  NamedType(std::string name, std::vector<GenericArg> args, SourceLocation loc)
+  NamedType(std::string name, std::vector<GenericArg> args, SourceLocation loc,
+            bool isRefClass = false)
       : Type(TypeKind::Named, loc), name(std::move(name)),
-        genericArgs(std::move(args)) {}
+        genericArgs(std::move(args)), isRefClassFlag(isRefClass) {}
 
   NamedType(std::string name, std::vector<TypePtr> &&simpleArgs,
-            SourceLocation loc)
-      : Type(TypeKind::Named, loc), name(std::move(name)) {
+            SourceLocation loc, bool isRefClass = false)
+      : Type(TypeKind::Named, loc), name(std::move(name)),
+        isRefClassFlag(isRefClass) {
     for (auto &t : simpleArgs)
       genericArgs.push_back({std::move(t), Variance::Invariant});
   }
@@ -329,7 +421,8 @@ public:
     for (auto &arg : genericArgs) {
       newArgs.push_back({arg.type->clone(), arg.variance});
     }
-    return std::make_unique<NamedType>(name, std::move(newArgs), loc);
+    return std::make_unique<NamedType>(name, std::move(newArgs), loc,
+                                       isRefClassFlag);
   }
   bool isEquivalent(const Type &other) const override;
   std::string toString() const override;
@@ -338,10 +431,13 @@ public:
     return genericArgs;
   }
   static bool classof(const Type *T) { return T->getKind() == TypeKind::Named; }
+  bool isRefClass() const override { return isRefClassFlag; }
+  void setRefClass(bool isRef) { isRefClassFlag = isRef; }
 
 private:
   std::string name;
   std::vector<GenericArg> genericArgs;
+  bool isRefClassFlag = false;
 };
 
 class NullableType : public Type {
@@ -412,6 +508,7 @@ public:
     return std::make_unique<LockType>(inner->clone(), loc);
   }
   [[nodiscard]] const Type *getInner() const { return inner.get(); }
+  const Type *stripModifiers() const override;
   bool isEquivalent(const Type &other) const override;
   std::string toString() const override;
   static bool classof(const Type *T) { return T->getKind() == TypeKind::Lock; }
@@ -431,6 +528,8 @@ public:
     return std::make_unique<ViewType>(inner->clone(), loc);
   }
   [[nodiscard]] const Type *getInner() const { return inner.get(); }
+  bool isImmutable() const override;
+  const Type *stripModifiers() const override;
   bool isEquivalent(const Type &other) const override;
   std::string toString() const override;
   static bool classof(const Type *T) { return T->getKind() == TypeKind::View; }
@@ -450,6 +549,7 @@ public:
     return std::make_unique<MutType>(inner->clone(), loc);
   }
   [[nodiscard]] const Type *getInner() const { return inner.get(); }
+  const Type *stripModifiers() const override;
   bool isEquivalent(const Type &other) const override;
   std::string toString() const override;
   static bool classof(const Type *T) { return T->getKind() == TypeKind::Mut; }
@@ -466,6 +566,8 @@ public:
   VolatileType(TypePtr inner, SourceLocation loc)
       : Type(TypeKind::Volatile, loc), inner(std::move(inner)) {}
   const Type *getInner() const { return inner.get(); }
+
+  const Type *stripModifiers() const override;
 
   // [FIX] Removed inline body
   void accept(ASTVisitor &v) const override;
@@ -500,6 +602,9 @@ public:
       : Type(TypeKind::Const, loc), inner(std::move(inner)) {}
   const Type *getInner() const { return inner.get(); }
 
+  bool isImmutable() const override;
+  const Type *stripModifiers() const override;
+
   // [FIX] Removed inline body
   void accept(ASTVisitor &v) const override;
 
@@ -514,8 +619,76 @@ public:
     return std::make_unique<ConstType>(inner->clone(), loc);
   }
 
-  // [FIX] Added missing LLVM classof
+  // Added missing LLVM classof
   static bool classof(const Type *T) { return T->getKind() == TypeKind::Const; }
+};
+
+class WeakType : public Type {
+  TypePtr inner;
+
+public:
+  static constexpr TypeKind classKind = TypeKind::Weak;
+  WeakType(TypePtr inner, SourceLocation loc)
+      : Type(TypeKind::Weak, loc), inner(std::move(inner)) {}
+
+  const Type *getInner() const { return inner.get(); }
+
+  void accept(ASTVisitor &v) const override;
+
+  bool isEquivalent(const Type &other) const override {
+    if (!other.is<WeakType>())
+      return false;
+    return inner->isEquivalent(
+        *static_cast<const WeakType &>(other).getInner());
+  }
+
+  std::string toString() const override { return "weak " + inner->toString(); }
+
+  std::unique_ptr<Type> clone() const override {
+    return std::make_unique<WeakType>(inner->clone(), loc);
+  }
+
+  static bool classof(const Type *T) { return T->getKind() == TypeKind::Weak; }
+};
+
+// --- [NEW] Decimal / Fixed-Point Type ---
+class DecimalType : public Type {
+  unsigned int precision;
+  unsigned int scale;
+
+public:
+  static constexpr TypeKind classKind = TypeKind::Decimal;
+
+  DecimalType(unsigned int p, unsigned int s,
+              SourceLocation loc = SourceLocation())
+      : Type(TypeKind::Decimal, loc), precision(p), scale(s) {}
+
+  unsigned int getPrecision() const { return precision; }
+  unsigned int getScale() const { return scale; }
+
+  void accept(ASTVisitor &v) const override;
+
+  bool isEquivalent(const Type &other) const override {
+    if (!other.is<DecimalType>())
+      return false;
+    const auto &otherDec = static_cast<const DecimalType &>(other);
+    return precision == otherDec.precision && scale == otherDec.scale;
+  }
+
+  std::string toString() const override {
+    return "decimal<" + std::to_string(precision) + ", " +
+           std::to_string(scale) + ">";
+  }
+
+  std::unique_ptr<Type> clone() const override {
+    return std::make_unique<DecimalType>(precision, scale, loc);
+  }
+
+  bool isNumeric() const override { return true; }
+
+  static bool classof(const Type *T) {
+    return T->getKind() == TypeKind::Decimal;
+  }
 };
 
 } // namespace moksha

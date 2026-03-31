@@ -80,7 +80,8 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
         nullptr, false, false, false, false, Visibility::Public, loc);
     funcDecl->setBuiltin(true);
     auto genericDecl = std::make_unique<GenericDecl>(
-        "push", std::vector<std::string>{"T"}, std::move(funcDecl), loc);
+        "push", std::vector<GenericDecl::GenericParam>{{"T", false, loc}},
+        std::move(funcDecl), loc);
 
     // [FIX] Register the GenericDecl directly. No synthetic FunctionType!
     sym.addSymbol("push", Symbol(SymbolKind::Function, "push", nullptr,
@@ -105,7 +106,8 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
         nullptr, false, false, false, false, Visibility::Public, loc);
     funcDecl->setBuiltin(true);
     auto genericDecl = std::make_unique<GenericDecl>(
-        "pop", std::vector<std::string>{"T"}, std::move(funcDecl), loc);
+        "pop", std::vector<GenericDecl::GenericParam>{{"T", false, loc}},
+        std::move(funcDecl), loc);
 
     sym.addSymbol(
         "pop", Symbol(SymbolKind::Function, "pop", nullptr, genericDecl.get()));
@@ -128,7 +130,8 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
         nullptr, false, false, false, false, Visibility::Public, loc);
     funcDecl->setBuiltin(true);
     auto genericDecl = std::make_unique<GenericDecl>(
-        "length", std::vector<std::string>{"T"}, std::move(funcDecl), loc);
+        "length", std::vector<GenericDecl::GenericParam>{{"T", false, loc}},
+        std::move(funcDecl), loc);
 
     sym.addSymbol("length", Symbol(SymbolKind::Function, "length", nullptr,
                                    genericDecl.get()));
@@ -156,7 +159,8 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
         nullptr, false, false, false, false, Visibility::Public, loc);
     funcDecl->setBuiltin(true);
     auto genericDecl = std::make_unique<GenericDecl>(
-        "at", std::vector<std::string>{"T"}, std::move(funcDecl), loc);
+        "at", std::vector<GenericDecl::GenericParam>{{"T", false, loc}},
+        std::move(funcDecl), loc);
 
     sym.addSymbol(
         "at", Symbol(SymbolKind::Function, "at", nullptr, genericDecl.get()));
@@ -316,7 +320,8 @@ void BuiltinRegistry::registerAtomics(ASTContext &ctx, SymbolTable &sym) {
     funcDecl->setIntrinsicKind(kind);
 
     auto genericDecl = std::make_unique<GenericDecl>(
-        name, std::vector<std::string>{"T"}, std::move(funcDecl), loc);
+        name, std::vector<GenericDecl::GenericParam>{{"T", false, loc}},
+        std::move(funcDecl), loc);
     sym.addSymbol(
         name, Symbol(SymbolKind::Function, name, nullptr, genericDecl.get()));
     ctx.takeOwnership(std::move(genericDecl));

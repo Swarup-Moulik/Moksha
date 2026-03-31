@@ -1,6 +1,7 @@
 #pragma once
 
-#include "moksha/MIR/MIRInst.h" // Required for MIRValue inheritance and Linkage enum
+#include "moksha/MIR/MIRInst.h"
+#include "llvm/Support/raw_ostream.h"
 #include <iosfwd>
 #include <memory>
 #include <string>
@@ -46,18 +47,28 @@ public:
   const std::vector<MIRBlock *> &getPredecessors() const {
     return predecessors;
   }
+  const std::vector<MIRBlock *> &getSuccessors() const { return successors; }
 
   // [ADDED] Helper to mutable predecessors if needed
   std::vector<MIRBlock *> &getPredecessors() { return predecessors; }
+  std::vector<MIRBlock *> &getSuccessors() { return successors; }
 
   // [ADDED] Helper to add a predecessor edge
-  void addPredecessor(MIRBlock *pred) { predecessors.push_back(pred); }
+  void addPredecessor(MIRBlock *pred);
+  void addSuccessor(MIRBlock *succ);
+
+  void removePredecessor(MIRBlock *pred);
+  void removeSuccessor(MIRBlock *succ);
 
   // ------------------------------------------------------------------------
   // Instruction Management
   // ------------------------------------------------------------------------
 
   const std::vector<std::unique_ptr<MIRInst>> &getInstructions() const {
+    return instructions;
+  }
+
+  std::vector<std::unique_ptr<MIRInst>> &getInstructionsMut() {
     return instructions;
   }
 
@@ -79,7 +90,7 @@ public:
   // Debugging / RTTI
   // ------------------------------------------------------------------------
 
-  void dump(std::ostream &os) const override;
+  void dump(llvm::raw_ostream &os) const override;
 
   static bool classof(const MIRValue *v) {
     return v->getKind() == ValueKind::BasicBlock;
@@ -91,6 +102,7 @@ private:
 
   // [ADDED] Storage for Control Flow Graph edges
   std::vector<MIRBlock *> predecessors;
+  std::vector<MIRBlock *> successors;
 };
 
 } // namespace mir

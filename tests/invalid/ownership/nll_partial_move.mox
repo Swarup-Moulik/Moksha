@@ -1,0 +1,15 @@
+class Pair {
+    int x;
+    int y;
+}
+
+void test_partial() {
+    Pair p = new Pair();
+
+    *view int vx = &p.x; // Borrow JUST the x field
+
+    p.y = 20; // SUCCESS: y is not borrowed!
+
+    p.x = 10; // ERROR: x is actively borrowed by vx!
+    int read = *vx;
+}

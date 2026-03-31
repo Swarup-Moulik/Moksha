@@ -14,6 +14,7 @@ public:
   virtual void visitPointerType(const PointerType *type) = 0;
   virtual void visitReferenceType(const ReferenceType *type) = 0;
   virtual void visitArrayType(const ArrayType *type) = 0;
+  virtual void visitSliceType(const SliceType *type) = 0;
   virtual void visitMapType(const MapType *type) = 0;
   virtual void visitFunctionType(const FunctionType *type) = 0;
   virtual void visitNamedType(const NamedType *type) = 0;
@@ -26,10 +27,14 @@ public:
   virtual void visitNullType(const NullType *type) = 0;
   virtual void visitVolatileType(const VolatileType *type) = 0;
   virtual void visitConstType(const ConstType *type) = 0;
+  virtual void visitDecimalType(const DecimalType *type) = 0;
+  virtual void visitClosureType(const ClosureType *type) = 0;
+  virtual void visitWeakType(const WeakType *type) = 0;
 
   // --- Expressions ---
   virtual void visitIntegerLiteral(const IntegerLiteral *expr) = 0;
   virtual void visitFloatLiteral(const FloatLiteral *expr) = 0;
+  virtual void visitDecimalLiteral(const DecimalLiteral *expr) = 0;
   virtual void visitStringLiteral(const StringLiteral *expr) = 0;
   virtual void visitBoolLiteral(const BoolLiteral *expr) = 0;
   virtual void visitNullLiteral(const NullLiteral *expr) = 0;
@@ -52,6 +57,7 @@ public:
   virtual void visitSuperExpr(const SuperExpr *expr) = 0;
   virtual void visitAwaitExpr(const AwaitExpr *expr) = 0;
   virtual void visitSizeOfExpr(const SizeOfExpr *expr) = 0;
+  virtual void visitInputExpr(const InputExpr *expr) = 0;
 
   // --- Declarations ---
   virtual void visitModuleDecl(const ModuleDecl *decl) = 0;

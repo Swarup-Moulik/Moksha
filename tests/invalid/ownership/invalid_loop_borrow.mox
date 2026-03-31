@@ -1,10 +1,11 @@
 void test_invalid_loop_lifetimes() {
-    mut int p = 10
-    *view int v = &p // Borrowed BEFORE the loop
+    int p = 10;
+    *view int v = &p;
 
     while (p < 20) {
-        // ERROR EXPECTED: The outer view is still active across all loop iterations!
-        *mut int m = &p
-        *m = *m + 1
+        *mut int m = &p; // Now THIS will error!
+        *m = *m + 1;
     }
+
+    int read = *v; // Keeps 'v' alive across the whole loop!
 }

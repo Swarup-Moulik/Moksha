@@ -44,16 +44,26 @@ public:
   [[nodiscard]] const Type *getF64Type() const { return F64Ty.get(); }
 
   // Factory Methods
+  const Type *createDecimalType(unsigned int precision, unsigned int scale);
   const Type *createPointerType(const Type *pointee);
   const Type *createNullableType(const Type *inner);
   const Type *createMutType(const Type *inner);
+  const Type *createViewType(const Type *inner);
+  const Type *createLockType(const Type *inner);
+  const Type *createWeakType(const Type *inner);
   const Type *createArrayType(const Type *element,
                               std::unique_ptr<Expr> sizeExpr);
+  const Type *getSliceType(const Type *elementType);
   const Type *createMapType(const Type *key, const Type *value);
+  const Type *createClosureType(const std::vector<const Type *> &params,
+                                const Type *ret);
   const Type *createFunctionType(const std::vector<const Type *> &params,
                                  const Type *ret, bool isVariadic = false,
                                  bool isInterrupt = false);
   const Type *createNamedType(const std::string &name);
+  const Type *createConstType(const Type *inner);
+  const Type *createVolatileType(const Type *inner);
+  const Type *createEnumType(const std::string &name);
   void registerClass(const ClassDecl *decl);
   const ClassDecl *lookupClass(llvm::StringRef name) const;
 
@@ -62,12 +72,12 @@ public:
     builtinDecls.push_back(std::move(decl));
   }
 
-private:
   template <typename T> const Type *saveType(std::unique_ptr<T> t) {
     ownedTypes.push_back(std::move(t));
     return ownedTypes.back().get();
   }
 
+private:
   llvm::StringMap<const ClassDecl *> classMap;
   std::vector<TypePtr> ownedTypes;
   std::vector<std::unique_ptr<Decl>> builtinDecls;

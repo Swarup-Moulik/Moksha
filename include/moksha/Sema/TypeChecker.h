@@ -40,6 +40,7 @@ private:
   // --- State ---
   const Type *lastComputedType;
   const Type *currentExpectedReturnType;
+  const Type *expectedExprType = nullptr;
   const ClassDecl
       *currentClassDecl; // Added: Tracks current class for 'this'/'super'
   bool hasError;
@@ -65,6 +66,7 @@ private:
   // --- ASTVisitor Overrides ---
   void visitIntegerLiteral(const IntegerLiteral *expr) override;
   void visitFloatLiteral(const FloatLiteral *expr) override;
+  void visitDecimalLiteral(const DecimalLiteral *expr) override;
   void visitStringLiteral(const StringLiteral *expr) override;
   void visitBoolLiteral(const BoolLiteral *expr) override;
   void visitNullLiteral(const NullLiteral *expr) override;
@@ -87,6 +89,8 @@ private:
   void visitSuperExpr(const SuperExpr *expr) override;
   void visitAwaitExpr(const AwaitExpr *expr) override;
   void visitSizeOfExpr(const SizeOfExpr *expr) override;
+  void visitInputExpr(const InputExpr *expr) override;
+  void visitClosureType(const ClosureType *type) override;
 
   // Statements
   void visitReturnStmt(const ReturnStmt *stmt) override;
@@ -124,6 +128,7 @@ private:
   void visitPointerType(const PointerType *type) override;
   void visitReferenceType(const ReferenceType *type) override;
   void visitArrayType(const ArrayType *type) override;
+  void visitSliceType(const SliceType *type) override;
   void visitMapType(const MapType *type) override;
   void visitFunctionType(const FunctionType *type) override;
   void visitNullableType(const NullableType *type) override;
@@ -136,6 +141,8 @@ private:
   void visitNullType(const NullType *type) override;
   void visitVolatileType(const VolatileType *type) override;
   void visitConstType(const ConstType *type) override;
+  void visitWeakType(const WeakType *type) override;
+  void visitDecimalType(const DecimalType *type) override;
 };
 
 } // namespace moksha

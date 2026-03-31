@@ -8,7 +8,6 @@ macro setDouble(target, val) {
 // 1. Global variable to test that the macro doesn't "leak" its internal temp
 int internal_temp = 100;
 
-{
     int safeVal = 5;
     int result = 0; // Explicitly initialized to 0
 
@@ -18,7 +17,6 @@ int internal_temp = 100;
 
     // Should print 10
     print(result);
-}
 
 // 3. This MUST still be 100.
 // If hygiene failed, the macro's 'internal_temp = 5' would have overwritten this.

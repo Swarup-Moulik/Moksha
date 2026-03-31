@@ -2,6 +2,7 @@
 #include "moksha/MIR/MIRBlock.h"
 #include "moksha/MIR/MIRFunction.h"
 #include "moksha/MIR/MIRInst.h"
+#include "llvm/Support/Casting.h"
 #include <algorithm>
 #include <cassert>
 #include <unordered_map>
@@ -13,62 +14,77 @@ namespace mir {
 
 namespace {
 
-std::vector<MIRBlock *> getSuccessors(MIRBlock *block) {
-  std::vector<MIRBlock *> succs;
-  if (!block || block->getInstructions().empty())
-    return succs;
-
-  MIRInst *term = block->getInstructions().back().get();
-  if (auto *br = dynamic_cast<BranchInst *>(term)) {
-    succs.push_back(br->getTarget());
-  } else if (auto *cbr = dynamic_cast<CondBranchInst *>(term)) {
-    // [FIX] Use correct accessor names
-    succs.push_back(cbr->getTrueBlock());
-    succs.push_back(cbr->getFalseBlock());
-  }
-  return succs;
-}
-
 std::vector<MIRValue *> getOperands(MIRInst *inst) {
   std::vector<MIRValue *> ops;
 
-  if (auto *bin = dynamic_cast<BinaryInst *>(inst)) {
+  if (auto *bin = llvm::dyn_cast<BinaryInst>(inst)) {
     ops.push_back(bin->getLHS());
     ops.push_back(bin->getRHS());
-  } else if (auto *store = dynamic_cast<StoreInst *>(inst)) {
+  } else if (auto *store = llvm::dyn_cast<StoreInst>(inst)) {
     ops.push_back(store->getValue());
     ops.push_back(store->getPointer());
-  } else if (auto *load = dynamic_cast<LoadInst *>(inst)) {
+  } else if (auto *load = llvm::dyn_cast<LoadInst>(inst)) {
     ops.push_back(load->getPointer());
-
-    // [FIX 1] Use getObject() for ARCInst
-  } else if (auto *arc = dynamic_cast<ARCInst *>(inst)) {
+  } else if (auto *storeW = llvm::dyn_cast<StoreWeakInst>(inst)) {
+    ops.push_back(storeW->getValue());
+    ops.push_back(storeW->getPointer());
+  } else if (auto *loadW = llvm::dyn_cast<LoadWeakInst>(inst)) {
+    ops.push_back(loadW->getPointer());
+  } else if (auto *arc = llvm::dyn_cast<ARCInst>(inst)) {
     ops.push_back(arc->getObject());
-
-  } else if (auto *cond = dynamic_cast<CondBranchInst *>(inst)) {
+  } else if (auto *cond = llvm::dyn_cast<CondBranchInst>(inst)) {
     ops.push_back(cond->getCondition());
-
-    // [FIX 2] Use getReturnValue() for ReturnInst
-  } else if (auto *ret = dynamic_cast<ReturnInst *>(inst)) {
+  } else if (auto *ret = llvm::dyn_cast<ReturnInst>(inst)) {
     if (auto *val = ret->getReturnValue()) {
       ops.push_back(val);
     }
+  } else if (auto *call = llvm::dyn_cast<CallInst>(inst)) {
+    ops.push_back(call->getCallee());
+    for (auto *arg : call->getArgs())
+      ops.push_back(arg);
+    // --- [NEW] Hardware & Exceptions ---
+  } else if (auto *inv = llvm::dyn_cast<InvokeInst>(inst)) {
+    ops.push_back(inv->getCallee());
+    for (auto *arg : inv->getArgs())
+      ops.push_back(arg);
+  } else if (auto *res = llvm::dyn_cast<ResumeInst>(inst)) {
+    ops.push_back(res->getException());
+  } else if (auto *thr = llvm::dyn_cast<ThrowInst>(inst)) {
+    ops.push_back(thr->getException());
+  } else if (auto *ia = llvm::dyn_cast<InlineAsmInst>(inst)) {
+    for (auto *arg : ia->getArgs())
+      ops.push_back(arg);
+  } else if (auto *makeClosure = llvm::dyn_cast<MakeClosureInst>(inst)) {
+    ops.push_back(makeClosure->getFunctionPointer());
+    for (auto *cap : makeClosure->getCaptures()) {
+      ops.push_back(cap);
+    }
+  } else if (auto *spawn = llvm::dyn_cast<SpawnInst>(inst)) {
+    ops.push_back(spawn->getClosure());
+  } else if (auto *awaitInst = llvm::dyn_cast<AwaitInst>(inst)) {
+    ops.push_back(awaitInst->getPromise());
+  } else if (auto *ext = llvm::dyn_cast<ExtractValueInst>(inst)) {
+    ops.push_back(ext->getAggregate());
+  } else if (auto *ins = llvm::dyn_cast<InsertValueInst>(inst)) {
+    ops.push_back(ins->getAggregate());
+    ops.push_back(ins->getValue());
   }
 
   return ops;
 }
-} // namespace
 
 void computeRPO(MIRBlock *entry, std::vector<MIRBlock *> &rpo,
                 std::unordered_set<MIRBlock *> &visited) {
   if (visited.count(entry))
     return;
   visited.insert(entry);
-  for (auto *succ : getSuccessors(entry)) {
+  for (auto *succ : entry->getSuccessors()) {
     computeRPO(succ, rpo, visited);
   }
   rpo.push_back(entry);
 }
+
+} // namespace
 
 void MIRDominance::analyze() {
   if (func->getBlocks().empty())
@@ -186,9 +202,9 @@ bool MIRDominance::verifySSA() const {
     MIRBlock *useBlock = blockPtr.get();
     for (auto &instPtr : useBlock->getInstructions()) {
       MIRInst *inst = instPtr.get();
-      if (auto *phi = dynamic_cast<PhiInst *>(inst)) {
+      if (auto *phi = llvm::dyn_cast<PhiInst>(inst)) {
         for (auto const &[val, pred] : phi->getIncoming()) {
-          if (auto *defInst = dynamic_cast<MIRInst *>(val)) {
+          if (auto *defInst = llvm::dyn_cast<MIRInst>(val)) {
             if (!dominates(defInst->getParent(), pred))
               return false;
           }
@@ -196,7 +212,7 @@ bool MIRDominance::verifySSA() const {
         continue;
       }
       for (MIRValue *op : getOperands(inst)) {
-        if (auto *defInst = dynamic_cast<MIRInst *>(op)) {
+        if (auto *defInst = llvm::dyn_cast<MIRInst>(op)) {
           MIRBlock *defBlock = defInst->getParent();
           if (!dominates(defBlock, useBlock))
             return false;

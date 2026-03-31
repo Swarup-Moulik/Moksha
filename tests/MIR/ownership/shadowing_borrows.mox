@@ -1,0 +1,11 @@
+void test_shadowing() {
+    int p = 42
+    *view int v = &p
+
+    // Shadowing the variable name 'v' with another *view is perfectly fine
+    // because multiple shared reads are allowed by the matrix.
+    *view int v = &p
+    int x = *v
+
+    println(x);
+}

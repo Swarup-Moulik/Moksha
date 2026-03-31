@@ -1,4 +1,4 @@
-class Node {
+ref class Node {
     public int[] values;
     public Node? next;
     constructor() {

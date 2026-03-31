@@ -1,4 +1,6 @@
 #include "moksha/MIR/MIRBuilder.h"
+#include "moksha/MIR/MIRGlobal.h"
+#include "moksha/MIR/MIRModule.h"
 #include <memory>
 
 namespace moksha {
@@ -8,7 +10,8 @@ namespace mir {
 // [Constructors & Positioning]
 // ============================================================================
 
-MIRBuilder::MIRBuilder() : currentBlock(nullptr) {}
+MIRBuilder::MIRBuilder(MIRModule *module)
+    : module(module), currentBlock(nullptr) {}
 
 MIRBuilder::MIRBuilder(MIRBlock *block) : currentBlock(block) {}
 
@@ -18,20 +21,52 @@ MIRBlock *MIRBuilder::getInsertBlock() const { return currentBlock; }
 
 void MIRBuilder::clearInsertPoint() { currentBlock = nullptr; }
 
-// Note: The generic 'insert' method is now a private template defined in the
-// header to handle ownership transfer (std::unique_ptr) correctly.
+// ========================================================================
+// [Globals]
+// ========================================================================
+
+MIRGlobal *MIRBuilder::createGlobal(MIRModule *module, std::string name,
+                                    const hir::HIRType *type,
+                                    MIRConstant *initializer, bool isConstant,
+                                    Linkage linkage, unsigned alignment) {
+  assert(module && "Cannot create global without a valid MIRModule");
+
+  const hir::HIRType *ptrTy = module->getPointerType(type);
+
+  auto global = std::make_unique<MIRGlobal>(std::move(name), ptrTy, initializer,
+                                            isConstant, linkage);
+  if (alignment > 0)
+    global->setAlignment(alignment);
+  MIRGlobal *rawPtr = global.get();
+  module->addGlobal(std::move(global));
+  return rawPtr;
+}
 
 // ============================================================================
 // [Terminators]
 // ============================================================================
 
 BranchInst *MIRBuilder::createBr(MIRBlock *dest, SourceLocation loc) {
+  if (currentBlock && dest) {
+    currentBlock->addSuccessor(dest);
+    dest->addPredecessor(currentBlock);
+  }
   return insert(std::make_unique<BranchInst>(dest, loc));
 }
 
 CondBranchInst *MIRBuilder::createCondBr(MIRValue *cond, MIRBlock *trueBlock,
                                          MIRBlock *falseBlock,
                                          SourceLocation loc) {
+  if (currentBlock) {
+    if (trueBlock) {
+      currentBlock->addSuccessor(trueBlock);
+      trueBlock->addPredecessor(currentBlock);
+    }
+    if (falseBlock) {
+      currentBlock->addSuccessor(falseBlock);
+      falseBlock->addPredecessor(currentBlock);
+    }
+  }
   return insert(
       std::make_unique<CondBranchInst>(cond, trueBlock, falseBlock, loc));
 }
@@ -46,6 +81,10 @@ ReturnInst *MIRBuilder::createRetVoid(SourceLocation loc) {
 
 SwitchInst *MIRBuilder::createSwitch(MIRValue *cond, MIRBlock *defaultBlock,
                                      SourceLocation loc) {
+  if (currentBlock && defaultBlock) {
+    currentBlock->addSuccessor(defaultBlock);
+    defaultBlock->addPredecessor(currentBlock);
+  }
   return insert(std::make_unique<SwitchInst>(cond, defaultBlock, loc));
 }
 
@@ -141,9 +180,17 @@ BinaryInst *MIRBuilder::createShr(MIRValue *lhs, MIRValue *rhs,
 // ============================================================================
 
 CompareInst *MIRBuilder::createICmp(CompareInst::Predicate pred, MIRValue *lhs,
-                                    MIRValue *rhs, const std::string &name,
+                                    MIRValue *rhs, const hir::HIRType *resType,
+                                    const std::string &name,
                                     SourceLocation loc) {
-  return insert(std::make_unique<CompareInst>(pred, lhs, rhs, name, loc));
+  return insert(
+      std::make_unique<CompareInst>(pred, lhs, rhs, resType, name, loc));
+}
+
+FCmpInst *MIRBuilder::createFCmp(FCmpInst::Predicate pred, MIRValue *lhs,
+                                 MIRValue *rhs, const hir::HIRType *resType,
+                                 const std::string &name, SourceLocation loc) {
+  return insert(std::make_unique<FCmpInst>(pred, lhs, rhs, resType, name, loc));
 }
 
 // ============================================================================
@@ -153,7 +200,9 @@ CompareInst *MIRBuilder::createICmp(CompareInst::Predicate pred, MIRValue *lhs,
 AllocaInst *MIRBuilder::createAlloca(const hir::HIRType *type,
                                      const std::string &name,
                                      SourceLocation loc, unsigned align) {
-  return insert(std::make_unique<AllocaInst>(type, name, loc, align));
+  // Request the pointer type from the module
+  const hir::HIRType *ptrTy = module->getPointerType(type);
+  return insert(std::make_unique<AllocaInst>(ptrTy, type, name, loc, align));
 }
 
 LoadInst *MIRBuilder::createLoad(MIRValue *ptr, const std::string &name,
@@ -173,9 +222,10 @@ GetElementPtrInst *MIRBuilder::createGEP(MIRValue *ptr,
                                          const hir::HIRType *resType,
                                          const std::string &name,
                                          SourceLocation loc) {
-  // Explicitly move indices into the constructor
+  // Request the pointer type from the module
+  const hir::HIRType *ptrTy = module->getPointerType(resType);
   return insert(std::make_unique<GetElementPtrInst>(ptr, std::move(indices),
-                                                    resType, name, loc));
+                                                    ptrTy, resType, name, loc));
 }
 
 GetElementPtrInst *
@@ -222,6 +272,100 @@ ARCInst *MIRBuilder::createRetain(MIRValue *obj, SourceLocation loc) {
 
 ARCInst *MIRBuilder::createRelease(MIRValue *obj, SourceLocation loc) {
   return insert(std::make_unique<ARCInst>(Opcode::Release, obj, loc));
+}
+
+StoreWeakInst *MIRBuilder::createStoreWeak(MIRValue *val, MIRValue *ptr,
+                                           SourceLocation loc) {
+  return insert(std::make_unique<StoreWeakInst>(val, ptr, loc));
+}
+
+LoadWeakInst *MIRBuilder::createLoadWeak(MIRValue *ptr,
+                                         const hir::HIRType *resType,
+                                         const std::string &name,
+                                         SourceLocation loc) {
+  return insert(std::make_unique<LoadWeakInst>(ptr, resType, name, loc));
+}
+
+// ========================================================================
+// [Exceptions & Hardware]
+// ========================================================================
+
+InvokeInst *MIRBuilder::createInvoke(MIRValue *callee,
+                                     std::vector<MIRValue *> args,
+                                     MIRBlock *normalDest, MIRBlock *unwindDest,
+                                     const hir::HIRType *retType,
+                                     const std::string &name,
+                                     SourceLocation loc) {
+  if (currentBlock) {
+    if (normalDest) {
+      currentBlock->addSuccessor(normalDest);
+      normalDest->addPredecessor(currentBlock);
+    }
+    if (unwindDest) {
+      currentBlock->addSuccessor(unwindDest);
+      unwindDest->addPredecessor(currentBlock);
+    }
+  }
+  return insert(std::make_unique<InvokeInst>(
+      callee, std::move(args), normalDest, unwindDest, retType, name, loc));
+}
+
+LandingPadInst *MIRBuilder::createLandingPad(const hir::HIRType *catchType,
+                                             const std::string &name,
+                                             SourceLocation loc) {
+  return insert(std::make_unique<LandingPadInst>(catchType, name, loc));
+}
+
+ResumeInst *MIRBuilder::createResume(MIRValue *exception, SourceLocation loc) {
+  return insert(std::make_unique<ResumeInst>(exception, loc));
+}
+
+ThrowInst *MIRBuilder::createThrow(MIRValue *exception, MIRBlock *unwindDest,
+                                   SourceLocation loc) {
+  if (currentBlock && unwindDest) {
+    currentBlock->addSuccessor(unwindDest);
+    unwindDest->addPredecessor(currentBlock);
+  }
+  return insert(std::make_unique<ThrowInst>(exception, unwindDest, loc));
+}
+
+InlineAsmInst *MIRBuilder::createInlineAsm(std::string asmString,
+                                           std::string constraints,
+                                           std::vector<MIRValue *> args,
+                                           const hir::HIRType *retType,
+                                           SourceLocation loc) {
+  return insert(std::make_unique<InlineAsmInst>(std::move(asmString),
+                                                std::move(constraints),
+                                                std::move(args), retType, loc));
+}
+
+// ========================================================================
+// [Concurrency & Closures]
+// ========================================================================
+
+MakeClosureInst *MIRBuilder::createMakeClosure(MIRValue *funcPtr,
+                                               std::vector<MIRValue *> captures,
+                                               const hir::HIRType *closureType,
+                                               const std::string &name,
+                                               SourceLocation loc) {
+  return insert(std::make_unique<MakeClosureInst>(funcPtr, std::move(captures),
+                                                  closureType, name, loc));
+}
+
+SpawnInst *MIRBuilder::createSpawn(MIRValue *closure,
+                                   hir::ThreadKind threadKind,
+                                   const hir::HIRType *handleType,
+                                   const std::string &name,
+                                   SourceLocation loc) {
+  return insert(
+      std::make_unique<SpawnInst>(closure, threadKind, handleType, name, loc));
+}
+
+AwaitInst *MIRBuilder::createAwait(MIRValue *promise,
+                                   const hir::HIRType *resolvedType,
+                                   const std::string &name,
+                                   SourceLocation loc) {
+  return insert(std::make_unique<AwaitInst>(promise, resolvedType, name, loc));
 }
 
 } // namespace mir

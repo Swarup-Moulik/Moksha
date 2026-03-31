@@ -8,7 +8,7 @@ int x = 100; // Global/Module scope
 
         for (int x in [1, 2, 3]) { // Shadows outer block
 
-            any closure = (int x) => { // Shadows loop variable
+            closure(int) -> any clos = (int x) => { // Shadows loop variable
                 int x = 5; // Shadows lambda param
                 return x;
             };

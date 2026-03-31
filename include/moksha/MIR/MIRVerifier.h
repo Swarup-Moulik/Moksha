@@ -1,13 +1,14 @@
 #pragma once
 
 #include "moksha/Support/SourceLocation.h"
+#include "llvm/Support/raw_ostream.h"
 #include <iosfwd>
 #include <string>
 #include <vector>
 
 namespace moksha {
 
-// [FIX] Forward declare HIRType in the correct namespace (outside mir)
+// Forward declare HIRType in the correct namespace (outside mir)
 namespace hir {
 class HIRType;
 }
@@ -23,21 +24,23 @@ class MIRValue;
 
 class MIRVerifier {
 public:
+  // [FIX] 1. Constructor is now public so the caller can own the state.
+  explicit MIRVerifier(llvm::raw_ostream *os = nullptr, bool verbose = false);
+
+  // [FIX] 2. Removed 'static'. These now update the instance's 'errors' vector.
   // Check a module for errors.
-  [[nodiscard]] static bool verify(const MIRModule *module,
-                                   std::ostream *os = nullptr,
-                                   bool verbose = false);
+  [[nodiscard]] bool verify(const MIRModule *module);
 
   // Check a single function for errors.
-  [[nodiscard]] static bool verify(const MIRFunction *func,
-                                   std::ostream *os = nullptr,
-                                   bool verbose = false);
+  [[nodiscard]] bool verify(const MIRFunction *func);
 
   const std::vector<std::string> &getErrors() const { return errors; }
 
-private:
-  explicit MIRVerifier(std::ostream *os, bool verbose);
+  // Optional: A quick helper to check if errors were found without pulling the
+  // vector
+  bool hasFailed() const { return hasError; }
 
+private:
   bool verifyModule(const MIRModule *module);
   bool verifyFunction(const MIRFunction *func);
   bool verifyBlock(const MIRBlock *block);
@@ -45,7 +48,6 @@ private:
 
   bool checkUnreachableBlocks(const MIRFunction *func);
 
-  // [FIX] Use hir::HIRType fully qualified or ensure namespace visibility
   bool verifyTypesMatch(const MIRValue *val1, const MIRValue *val2,
                         const std::string &msg,
                         const MIRInst *contextInst = nullptr);
@@ -60,7 +62,7 @@ private:
 
   void logVerbose(const std::string &msg);
 
-  std::ostream *os;
+  llvm::raw_ostream *os;
   bool hasError;
   bool verbose;
   std::vector<std::string> errors;

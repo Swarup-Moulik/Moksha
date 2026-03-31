@@ -10,11 +10,13 @@ namespace moksha {
 
 class Stmt;
 class ASTVisitor;
+class FunctionDecl;
 
 /// Discriminator for LLVM-style RTTI (dyn_cast/isa)
 enum class ExprKind {
   IntegerLiteral,
   FloatLiteral,
+  DecimalLiteral,
   StringLiteral,
   BoolLiteral,
   NullLiteral,
@@ -36,7 +38,8 @@ enum class ExprKind {
   ThisExpr,
   SuperExpr,
   AwaitExpr,
-  SizeOfExpr
+  SizeOfExpr,
+  InputExpr
 };
 
 /// Base Expression Node
@@ -50,6 +53,9 @@ public:
   void setType(const Type *newType) { type = newType; }
   virtual void accept(ASTVisitor &visitor) const = 0;
   virtual std::unique_ptr<Expr> clone() const = 0;
+  template <typename T> std::unique_ptr<T> cloneAs() const {
+    return std::unique_ptr<T>(static_cast<T *>(clone().release()));
+  }
 
 protected:
   Expr(ExprKind kind, SourceLocation loc) : kind(kind), loc(loc) {}
@@ -96,12 +102,32 @@ private:
   NumericSuffix suffix;
 };
 
+class DecimalLiteral : public Expr {
+public:
+  DecimalLiteral(std::string exactValue, SourceLocation loc)
+      : Expr(ExprKind::DecimalLiteral, loc), exactValue(std::move(exactValue)) {
+  }
+
+  const std::string &getValue() const { return exactValue; }
+
+  void accept(ASTVisitor &v) const override;
+  std::unique_ptr<Expr> clone() const override;
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == ExprKind::DecimalLiteral;
+  }
+
+private:
+  std::string exactValue;
+};
+
 class StringLiteral : public Expr {
 public:
   StringLiteral(std::string val, bool isTemplate, SourceLocation loc)
       : Expr(ExprKind::StringLiteral, loc), value(std::move(val)),
         isTemplate(isTemplate) {}
   const std::string &getValue() const { return value; }
+  bool isTemplateString() const { return isTemplate; }
   void accept(ASTVisitor &v) const override;
   std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
@@ -197,8 +223,14 @@ public:
   void accept(ASTVisitor &v) const override;
   const Expr *getLHS() const { return lhs.get(); }
   const Expr *getRHS() const { return rhs.get(); }
+  ExprPtr &getLHSMut() { return lhs; }
+  ExprPtr &getRHSMut() { return rhs; }
   TokenKind getOp() const { return op; }
   std::unique_ptr<Expr> clone() const override;
+  void setResolvedOperator(const FunctionDecl *func) {
+    resolvedOperator = func;
+  }
+  const FunctionDecl *getResolvedOperator() const { return resolvedOperator; }
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::BinaryExpr;
   }
@@ -207,6 +239,7 @@ private:
   ExprPtr lhs;
   TokenKind op;
   ExprPtr rhs;
+  const FunctionDecl *resolvedOperator = nullptr;
 };
 
 class UnaryExpr : public Expr {
@@ -219,6 +252,10 @@ public:
   TokenKind getOp() const { return op; }
   bool isPostfixOp() const { return isPostfix; }
   std::unique_ptr<Expr> clone() const override;
+  void setResolvedOperator(const FunctionDecl *func) {
+    resolvedOperator = func;
+  }
+  const FunctionDecl *getResolvedOperator() const { return resolvedOperator; }
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::UnaryExpr;
   }
@@ -227,6 +264,7 @@ private:
   TokenKind op;
   ExprPtr operand;
   bool isPostfix;
+  const FunctionDecl *resolvedOperator = nullptr;
 };
 
 class TernaryExpr : public Expr {
@@ -291,6 +329,7 @@ public:
   void accept(ASTVisitor &v) const override;
   const Expr *getCallee() const { return callee.get(); }
   const std::vector<ExprPtr> &getArgs() const { return args; }
+  std::vector<ExprPtr> &getArgsMut() { return args; }
   std::unique_ptr<Expr> clone() const override;
   void insertFirstArg(std::unique_ptr<Expr> arg) {
     args.insert(args.begin(), std::move(arg));
@@ -318,11 +357,32 @@ public:
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::MemberExpr;
   }
+  uint32_t getMemberIndex() const { return memberIndex; }
+  bool isBitfield() const { return bitfield; }
+  uint32_t getBitWidth() const { return bitWidth; }
+  uint32_t getBitOffset() const { return bitOffset; }
+  void setLayoutInfo(uint32_t index, bool isBf = false, uint32_t width = 0,
+                     uint32_t offset = 0) {
+    memberIndex = index;
+    bitfield = isBf;
+    bitWidth = width;
+    bitOffset = offset;
+  }
+  bool isVirtualMethod() const { return virtualMethod; }
+  void setVirtualMethodInfo(bool isVirtual, uint32_t vtableIdx) {
+    virtualMethod = isVirtual;
+    memberIndex = vtableIdx;
+  }
 
 private:
   ExprPtr object;
   std::string memberName;
   bool isOptional;
+  uint32_t memberIndex = 0;
+  bool bitfield = false;
+  uint32_t bitWidth = 0;
+  uint32_t bitOffset = 0;
+  bool virtualMethod = false;
 };
 
 class IndexExpr : public Expr {
@@ -347,31 +407,57 @@ private:
 
 class LambdaParam {
 public:
-  LambdaParam(TypePtr t, std::string n)
-      : type(std::move(t)), name(std::move(n)) {}
+  LambdaParam(TypePtr t, std::string n, ExprPtr defVal = nullptr)
+      : type(std::move(t)), name(std::move(n)),
+        defaultValue(std::move(defVal)) {}
   LambdaParam(LambdaParam &&) = default;
   LambdaParam &operator=(LambdaParam &&) = default;
   const Type *getType() const { return type.get(); }
   const std::string &getName() const { return name; }
-  LambdaParam clone() const { return LambdaParam(type->clone(), name); }
+  const Expr *getDefaultValue() const { return defaultValue.get(); }
+  LambdaParam clone() const {
+    return LambdaParam(type->clone(), name,
+                       defaultValue ? defaultValue->clone() : nullptr);
+  }
 
 private:
   TypePtr type;
   std::string name;
+  ExprPtr defaultValue;
+};
+
+enum class CaptureMode {
+  Snapshot, // closure -> "take a snapshot" (value copy)
+  View,     // &closure -> "look at it" (immutable borrow)
+  Mut,      // &mut closure -> "modify it" (mutable borrow)
+  Move      // move closure -> "take it completely" (ownership transfer)
+};
+
+struct ASTCapture {
+  std::string name;
+  const Type *type;
+  CaptureMode mode;
 };
 
 class LambdaExpr : public Expr {
 public:
-  // [FIX] Add destructor declaration
   ~LambdaExpr() override;
 
   LambdaExpr(std::vector<LambdaParam> params, std::unique_ptr<Stmt> body,
-             bool isExprBody, SourceLocation loc);
+             bool isExprBody, CaptureMode mode, SourceLocation loc);
+
   void accept(ASTVisitor &v) const override;
   const std::vector<LambdaParam> &getParams() const { return params; }
   const Stmt *getBody() const { return body.get(); }
   bool isExpressionBody() const { return isExprBody; }
   std::unique_ptr<Expr> clone() const override;
+  const std::vector<ASTCapture> &getCaptures() const { return captures; }
+
+  // [FIX] Update to use the new CaptureMode enum
+  void addCapture(std::string name, const Type *type, CaptureMode mode) const {
+    captures.push_back({std::move(name), type, mode});
+  }
+  CaptureMode getCaptureMode() const { return captureMode; }
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::LambdaExpr;
   }
@@ -380,6 +466,8 @@ private:
   std::vector<LambdaParam> params;
   std::unique_ptr<Stmt> body;
   bool isExprBody;
+  mutable std::vector<ASTCapture> captures;
+  CaptureMode captureMode;
 };
 
 class NewExpr : public Expr {
@@ -390,6 +478,7 @@ public:
   void accept(ASTVisitor &v) const override;
   const Type *getType() const override { return type.get(); }
   const std::vector<ExprPtr> &getArgs() const { return args; }
+  std::vector<ExprPtr> &getArgsMut() { return args; }
   std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::NewExpr;
@@ -482,6 +571,24 @@ public:
 
 private:
   ExprPtr expression;
+};
+
+class InputExpr : public Expr {
+public:
+  // prompt can be null if the user just types `input()`
+  InputExpr(ExprPtr prompt, SourceLocation loc)
+      : Expr(ExprKind::InputExpr, loc), prompt(std::move(prompt)) {}
+
+  void accept(ASTVisitor &v) const override;
+  const Expr *getPrompt() const { return prompt.get(); }
+  std::unique_ptr<Expr> clone() const override;
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == ExprKind::InputExpr;
+  }
+
+private:
+  ExprPtr prompt;
 };
 
 } // namespace moksha

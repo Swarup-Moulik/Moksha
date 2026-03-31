@@ -42,9 +42,7 @@ SwitchCase SwitchCase::clone() const {
   std::vector<ExprPtr> clonedVals;
   for (const auto &v : values)
     clonedVals.push_back(v->clone());
-  auto clonedBody = body ? std::unique_ptr<BlockStmt>(static_cast<BlockStmt *>(
-                               body->clone().release()))
-                         : nullptr;
+  auto clonedBody = body ? body->cloneAs<BlockStmt>() : nullptr;
   return SwitchCase(std::move(clonedVals), std::move(clonedBody), isDefault);
 }
 
@@ -90,6 +88,12 @@ std::unique_ptr<Decl> FunctionDecl::clone() const {
   cloned->setNoInline(isNoInlineFunc());
   cloned->setUsed(isUsedFunc());
   cloned->setSection(getSection());
+  cloned->setVirtual(isVirtualFunc());
+  cloned->setOverride(isOverrideFunc());
+  cloned->setVTableIndex(getVTableIndex());
+  cloned->setInline(isInlineFunc());
+  cloned->setPure(isPureFunc());
+  cloned->setCold(isColdFunc());
   return cloned;
 }
 
@@ -103,6 +107,7 @@ std::unique_ptr<Decl> ClassDecl::clone() const {
   cloned->setPacked(isPackedClass());
   cloned->setAlignment(getAlignment());
   cloned->setSection(getSection());
+  cloned->setHasVTable(hasVTable());
   return cloned;
 }
 
@@ -227,6 +232,10 @@ std::unique_ptr<Stmt> AsmStmt::clone() const {
 std::unique_ptr<Stmt> LockStmt::clone() const {
   return std::make_unique<LockStmt>(target ? target->clone() : nullptr,
                                     body ? body->clone() : nullptr, loc);
+}
+
+std::unique_ptr<Expr> InputExpr::clone() const {
+  return std::make_unique<InputExpr>(prompt ? prompt->clone() : nullptr, loc);
 }
 
 } // namespace moksha

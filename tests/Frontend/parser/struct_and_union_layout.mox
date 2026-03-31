@@ -45,4 +45,6 @@ void test_physical_layout() {
     mut DevicePacket pkt;
     pkt.h.version = 2;
     pkt.m.sensor_id = 99;
+
+    print(check);
 }

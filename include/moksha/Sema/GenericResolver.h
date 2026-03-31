@@ -1,6 +1,7 @@
 #pragma once
 
 #include "moksha/AST/ASTContext.h"
+#include "moksha/AST/Stmt.h"
 #include "moksha/AST/Type.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -10,7 +11,11 @@
 namespace moksha {
 
 class FunctionDecl;
-enum class GenericError { ArityMismatch, ConstraintViolation };
+enum class GenericError {
+  ArityMismatch,
+  AnyConstraintViolation,
+  SharedConstraintViolation
+};
 
 /// Handles the logic for generic instantiation, substitution, and validation.
 class GenericResolver {
@@ -21,7 +26,7 @@ public:
   /// parameters. Checks for: Argument count mismatch, 'any' type constraint.
   /// \return std::nullopt if valid, or a GenericError if invalid.
   [[nodiscard]] std::optional<GenericError>
-  validateGenericArgs(const std::vector<std::string> &typeParams,
+  validateGenericArgs(const std::vector<GenericDecl::GenericParam> &typeParams,
                       const std::vector<NamedType::GenericArg> &args);
 
   /// Creates a new Type with generic parameters substituted by concrete
@@ -36,6 +41,7 @@ public:
   /// Resolves a generic function signature into a concrete one.
   /// Used when calling 'update(T val)' on 'Box<int>'.
   struct [[nodiscard]] ConcreteSignature {
+    const FunctionDecl *decl;
     TypePtr returnType;
     std::vector<TypePtr> paramTypes;
   };

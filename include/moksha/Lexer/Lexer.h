@@ -4,7 +4,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ConvertUTF.h"
-#include <algorithm> // For std::max
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -23,6 +23,7 @@ enum class TokenKind {
   // --- Literals ---
   IntegerLiteral,
   FloatLiteral,
+  DecimalLiteral,
   StringLiteral,
   TemplateString,
   CharLiteral,
@@ -78,6 +79,7 @@ enum class TokenKind {
   KwUSize,
   KwHalf,
   KwQuarter,
+  KwDecimal,
   KwAny,
   KwAs,
   KwTrue,
@@ -106,9 +108,17 @@ enum class TokenKind {
   KwNaked,
   KwNoreturn,
   KwNoinline,
+  KwInline,
+  KwPure,
+  KwCold,
   KwLock,
   KwView,
   KwMut,
+  KwVirtual,
+  KwOverride,
+  KwInput,
+  KwClosure,
+  KwMove,
 
   // --- OS & Low-Level Additions ---
   KwExtern,
@@ -155,6 +165,7 @@ enum class TokenKind {
   Greater,
   GreaterEqual,
   FatArrow,
+  Arrow,
   Dot,
   DotDotDot,
   QuestionDot,
@@ -186,7 +197,8 @@ enum class NumericSuffix : uint8_t {
   f8,
   f16,
   f32,
-  f64
+  f64,
+  d
 };
 
 enum TokenFlag : uint32_t {

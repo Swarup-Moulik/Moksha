@@ -10,24 +10,32 @@ namespace moksha {
 GenericResolver::GenericResolver(ASTContext &ctx) : context(ctx) {}
 
 std::optional<GenericError> GenericResolver::validateGenericArgs(
-    const std::vector<std::string> &typeParams,
+    const std::vector<GenericDecl::GenericParam> &typeParams,
     const std::vector<NamedType::GenericArg> &args) {
 
   if (typeParams.size() != args.size()) {
     return GenericError::ArityMismatch;
   }
 
-  for (const auto &arg : args) {
-    bool isAny = arg.type->is<AnyType>();
+  // [FIX] Changed to index-based loop so 'i' is defined
+  for (size_t i = 0; i < args.size(); ++i) {
+    bool isAny = args[i].type->is<AnyType>();
     if (!isAny) {
-      if (auto named = dynamic_cast<const NamedType *>(arg.type.get())) {
+      if (auto named = llvm::dyn_cast<const NamedType>(args[i].type.get())) {
         if (named->getName() == "any")
           isAny = true;
       }
     }
 
     if (isAny) {
-      return GenericError::ConstraintViolation;
+      return GenericError::AnyConstraintViolation;
+    }
+
+    if (typeParams[i].isShared) {
+      if (args[i].type->is<ViewType>() || args[i].type->is<MutType>() ||
+          args[i].type->is<PointerType>()) {
+        return GenericError::SharedConstraintViolation;
+      }
     }
   }
 
@@ -45,6 +53,12 @@ TypePtr GenericResolver::substituteType(
   case TypeKind::Primitive: {
     auto *prim = llvm::cast<PrimitiveType>(type);
     return std::make_unique<PrimitiveType>(prim->getScalar(), loc);
+  }
+
+  case TypeKind::Decimal: {
+    auto *dec = llvm::cast<DecimalType>(type);
+    return std::make_unique<DecimalType>(dec->getPrecision(), dec->getScale(),
+                                         loc);
   }
 
   case TypeKind::Named: {
@@ -68,20 +82,10 @@ TypePtr GenericResolver::substituteType(
                                        loc);
   }
 
-  case TypeKind::Lock: {
-    auto *l = llvm::cast<LockType>(type);
-    return std::make_unique<LockType>(
-        substituteType(l->getInner(), substitutions), loc);
-  }
-  case TypeKind::View: {
-    auto *v = llvm::cast<ViewType>(type);
-    return std::make_unique<ViewType>(
-        substituteType(v->getInner(), substitutions), loc);
-  }
-  case TypeKind::Mut: {
-    auto *m = llvm::cast<MutType>(type);
-    return std::make_unique<MutType>(
-        substituteType(m->getInner(), substitutions), loc);
+  case TypeKind::Weak: {
+    auto *w = llvm::cast<WeakType>(type);
+    return std::make_unique<WeakType>(
+        substituteType(w->getInner(), substitutions), loc);
   }
   case TypeKind::Null:
     return std::make_unique<NullType>(loc);
@@ -112,6 +116,12 @@ TypePtr GenericResolver::substituteType(
         substituteType(arr->getElementType(), substitutions),
         arr->getSizeExpr() ? arr->getSizeExpr()->clone() : nullptr,
         arr->getLoc());
+  }
+
+  case TypeKind::Slice: {
+    auto *s = llvm::cast<SliceType>(type);
+    return std::make_unique<SliceType>(
+        substituteType(s->getElementType(), substitutions), loc);
   }
 
   case TypeKind::Map: {
@@ -147,6 +157,41 @@ TypePtr GenericResolver::substituteType(
         substituteType(v->getInner(), substitutions), loc);
   }
 
+  case TypeKind::Mut: {
+    auto *m = llvm::cast<MutType>(type);
+    return std::make_unique<MutType>(
+        substituteType(m->getInner(), substitutions), loc);
+  }
+  case TypeKind::View: {
+    auto *v = llvm::cast<ViewType>(type);
+    return std::make_unique<ViewType>(
+        substituteType(v->getInner(), substitutions), loc);
+  }
+  case TypeKind::Lock: {
+    auto *l = llvm::cast<LockType>(type);
+    return std::make_unique<LockType>(
+        substituteType(l->getInner(), substitutions), loc);
+  }
+
+  case TypeKind::Closure: {
+    auto *clos = llvm::cast<ClosureType>(type);
+    TypePtr newRet = substituteType(clos->getReturnType(), substitutions);
+
+    std::vector<TypePtr> newParams;
+    for (const auto &p : clos->getParamTypes()) {
+      newParams.push_back(substituteType(p.get(), substitutions));
+    }
+
+    return std::make_unique<ClosureType>(std::move(newRet),
+                                         std::move(newParams), loc);
+  }
+
+  case TypeKind::Enum: {
+    auto *e = llvm::cast<EnumType>(type);
+    return std::make_unique<EnumType>(e->getName(), std::vector<std::string>{},
+                                      loc);
+  }
+
   default:
     llvm_unreachable("Unhandled TypeKind in substituteType");
   }
@@ -157,6 +202,7 @@ GenericResolver::ConcreteSignature GenericResolver::resolveFunctionSignature(
     const llvm::StringMap<const Type *> &substitutions) {
 
   ConcreteSignature sig;
+  sig.decl = funcDecl;
   sig.returnType = substituteType(funcDecl->getReturnType(), substitutions);
 
   for (const auto &param : funcDecl->getParams()) {

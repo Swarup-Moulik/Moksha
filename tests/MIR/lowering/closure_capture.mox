@@ -1,0 +1,11 @@
+void test_closures() {
+    int x = 42;
+
+    // Lowering must convert this into a flat struct environment
+    // holding a pointer to 'x', and a standard function pointer.
+    closure() -> int lambda = () => {
+        x = x + 1;
+    };
+
+    lambda();
+}

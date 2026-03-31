@@ -3,8 +3,8 @@ async int fetch_data() {
 }
 
 async void test_async_borrow() {
-    mut int local_data = 42;
-    mut *mut int ptr = &local_data;
+    int local_data = 42;
+    *mut int ptr = &local_data;
 
     // ERROR EXPECTED: Cannot hold a mutable borrow across an `await` suspension point.
     // The underlying memory might be moved or invalidated when the coroutine suspends!

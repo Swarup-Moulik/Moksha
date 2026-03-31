@@ -81,9 +81,25 @@ HIRFloatType *HIRModule::getFloatType(uint16_t width) {
 
   void *insertPos = nullptr;
   if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
-    return llvm::cast<HIRFloatType>(existing);
+    return static_cast<HIRFloatType *>(existing);
 
   auto *newType = new (typeAllocator) HIRFloatType(width);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRDecimalType *HIRModule::getDecimalType(unsigned int precision,
+                                          unsigned int scale) {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Decimal));
+  ID.AddInteger(precision);
+  ID.AddInteger(scale);
+
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return static_cast<HIRDecimalType *>(existing);
+
+  auto *newType = new (typeAllocator) HIRDecimalType(precision, scale);
   uniqueTypes.InsertNode(newType, insertPos);
   return newType;
 }
@@ -103,21 +119,108 @@ ArrayType *HIRModule::getArrayType(const HIRType *element, uint64_t size) {
   return newType;
 }
 
+SliceType *HIRModule::getSliceType(const HIRType *element) {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Slice));
+  ID.AddPointer(element);
+
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return static_cast<SliceType *>(existing);
+
+  auto *newType = new (typeAllocator) SliceType(element);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRPromiseType *HIRModule::getPromiseType(const HIRType *inner) {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Promise));
+  ID.AddPointer(inner);
+
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos)) {
+    return static_cast<HIRPromiseType *>(existing);
+  }
+
+  auto *newType = new (typeAllocator) HIRPromiseType(inner);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRViewType *HIRModule::getViewType(const HIRType *inner) {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::View));
+  ID.AddPointer(inner);
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return static_cast<HIRViewType *>(existing);
+  auto *newType = new (typeAllocator) HIRViewType(inner);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRMutType *HIRModule::getMutType(const HIRType *inner) {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Mut));
+  ID.AddPointer(inner);
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return static_cast<HIRMutType *>(existing);
+  auto *newType = new (typeAllocator) HIRMutType(inner);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRLockType *HIRModule::getLockType(const HIRType *inner) {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Lock));
+  ID.AddPointer(inner);
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return static_cast<HIRLockType *>(existing);
+  auto *newType = new (typeAllocator) HIRLockType(inner);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRConstType *HIRModule::getConstType(const HIRType *inner) {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Const));
+  ID.AddPointer(inner);
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return static_cast<HIRConstType *>(existing);
+  auto *newType = new (typeAllocator) HIRConstType(inner);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRVolatileType *HIRModule::getVolatileType(const HIRType *inner) {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Volatile));
+  ID.AddPointer(inner);
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return static_cast<HIRVolatileType *>(existing);
+  auto *newType = new (typeAllocator) HIRVolatileType(inner);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
 UnionType *HIRModule::getUnionType(std::string name,
-                                   std::vector<const HIRType *> fields) {
-  // Similar to StructType implementation
+                                   std::vector<const HIRType *> fields,
+                                   std::vector<std::string> fieldNames) {
   llvm::FoldingSetNodeID ID;
   ID.AddInteger(static_cast<int>(TypeKind::Union));
   ID.AddString(name);
-  for (const auto *f : fields)
-    ID.AddPointer(f);
 
   void *insertPos = nullptr;
   if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
     return llvm::cast<UnionType>(existing);
 
-  auto *newType =
-      new (typeAllocator) UnionType(std::move(name), std::move(fields));
+  auto *newType = new (typeAllocator)
+      UnionType(std::move(name), std::move(fields), std::move(fieldNames));
   uniqueTypes.InsertNode(newType, insertPos);
   return newType;
 }
@@ -135,28 +238,24 @@ PrimitiveType *HIRModule::getPrimitiveType(TypeKind kind) {
 }
 
 StructType *HIRModule::getStructType(std::string name,
-                                     std::vector<const HIRType *> fields) {
+                                     std::vector<const HIRType *> fields,
+                                     std::vector<std::string> fieldNames) {
   llvm::FoldingSetNodeID ID;
   ID.AddInteger(static_cast<int>(TypeKind::Struct));
   ID.AddString(name);
-
-  for (const auto *field : fields) {
-    // Enforce non-null fields to prevent hard-to-debug crashes later
-    assert(field && "Struct field type cannot be null");
-    ID.AddPointer(field);
-  }
 
   void *insertPos = nullptr;
   if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
     return llvm::cast<StructType>(existing);
 
-  auto *newType =
-      new (typeAllocator) StructType(std::move(name), std::move(fields));
+  auto *newType = new (typeAllocator)
+      StructType(std::move(name), std::move(fields), std::move(fieldNames));
   uniqueTypes.InsertNode(newType, insertPos);
   return newType;
 }
 
-PointerType *HIRModule::getPointerType(const HIRType *pointee, Ownership own) {
+PointerType *HIRModule::getPointerType(const HIRType *pointee, Ownership own,
+                                       BorrowState state) {
   // Enforce invariant
   assert(pointee && "Cannot create PointerType with null pointee");
 
@@ -164,18 +263,21 @@ PointerType *HIRModule::getPointerType(const HIRType *pointee, Ownership own) {
   ID.AddInteger(static_cast<int>(TypeKind::Pointer));
   ID.AddPointer(pointee);
   ID.AddInteger(static_cast<int>(own));
+  ID.AddInteger(static_cast<int>(state)); // [NEW] Hash the borrow state!
 
   void *insertPos = nullptr;
   if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
     return llvm::cast<PointerType>(existing);
 
-  auto *newType = new (typeAllocator) PointerType(pointee, own);
+  auto *newType =
+      new (typeAllocator) PointerType(pointee, own, state); // [NEW] Pass state
   uniqueTypes.InsertNode(newType, insertPos);
   return newType;
 }
 
 FunctionType *HIRModule::getFunctionType(const HIRType *ret,
-                                         std::vector<const HIRType *> params) {
+                                         std::vector<const HIRType *> params,
+                                         bool isVariadic, bool isInterrupt) {
   // Enforce invariant
   assert(ret && "Cannot create FunctionType with null return type");
 
@@ -187,11 +289,35 @@ FunctionType *HIRModule::getFunctionType(const HIRType *ret,
     ID.AddPointer(param);
   }
 
+  // Ensure the FFI flags are factored into the unique Type ID Hash!
+  ID.AddBoolean(isVariadic);
+  ID.AddBoolean(isInterrupt);
+
   void *insertPos = nullptr;
   if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
     return llvm::cast<FunctionType>(existing);
 
-  auto *newType = new (typeAllocator) FunctionType(ret, std::move(params));
+  // Pass the flags into the constructor
+  auto *newType = new (typeAllocator)
+      FunctionType(ret, std::move(params), isVariadic, isInterrupt);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRClosureType *HIRModule::getClosureType(const HIRType *ret,
+                                          std::vector<const HIRType *> params) {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Closure));
+  ID.AddPointer(ret);
+  for (const auto *p : params) {
+    ID.AddPointer(p);
+  }
+
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return static_cast<HIRClosureType *>(existing);
+
+  auto *newType = new (typeAllocator) HIRClosureType(ret, std::move(params));
   uniqueTypes.InsertNode(newType, insertPos);
   return newType;
 }
@@ -208,6 +334,22 @@ HIRNullableType *HIRModule::getNullableType(const HIRType *inner) {
     return static_cast<HIRNullableType *>(existing);
 
   auto *newType = new (typeAllocator) HIRNullableType(inner);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRWeakType *HIRModule::getWeakType(const HIRType *inner) {
+  assert(inner && "Cannot create a WeakType of null");
+
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Weak));
+  ID.AddPointer(inner);
+
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return static_cast<HIRWeakType *>(existing);
+
+  auto *newType = new (typeAllocator) HIRWeakType(inner);
   uniqueTypes.InsertNode(newType, insertPos);
   return newType;
 }
