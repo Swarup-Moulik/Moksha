@@ -481,9 +481,39 @@ bool Parser::isStartOfDeclaration() {
     // "Type<...> Name" -> Declaration
     if (nextTok.is(TokenKind::Less))
       return true;
+
     // "Type[] Name" -> Declaration
-    if (nextTok.is(TokenKind::LBracket))
-      return true;
+    if (nextTok.is(TokenKind::LBracket)) {
+      // Manual lookahead to disambiguate "Type[N] name" from "array[N] = val"
+      const char *ptr = nextTok.getSpelling().data();
+      while (*ptr != '\0') {
+        if (*ptr == '[') {
+          int depth = 0;
+          while (*ptr != '\0') {
+            if (*ptr == '[')
+              depth++;
+            else if (*ptr == ']')
+              depth--;
+            ptr++;
+            if (depth == 0)
+              break; // Reached the matching ']'
+          }
+        } else if (*ptr == ' ' || *ptr == '\t' || *ptr == '\r' ||
+                   *ptr == '\n') {
+          ptr++; // Skip whitespace
+        } else if (*ptr == '?') {
+          ptr++; // Skip nullable suffix e.g. Type[]?
+        } else if ((*ptr >= 'a' && *ptr <= 'z') ||
+                   (*ptr >= 'A' && *ptr <= 'Z') || *ptr == '_') {
+          return true; // Followed by a variable name -> It's a Declaration!
+        } else {
+          return false; // Followed by an operator (=, +, .) -> It's a
+                        // Statement!
+        }
+      }
+      return false;
+    }
+
     // "Type* Name" or "Type** Name" -> Declaration
     if (nextTok.is(TokenKind::Star) || nextTok.is(TokenKind::Power))
       return true;
@@ -1160,13 +1190,17 @@ DeclPtr Parser::parseClassDecl() {
         consume();
       } else {
         error("Expected parent class name");
+        return nullptr; // Break Cascade
       }
-    } while (consumeIf(TokenKind::Comma)); // Loop as long as there are commas!
+    } while (consumeIf(TokenKind::Comma));
 
-    expect(TokenKind::RParen); // Strictly require the closing parenthesis
+    if (!expect(TokenKind::RParen))
+      return nullptr; // Break Cascade
   }
 
-  expect(TokenKind::LBrace);
+  if (!expect(TokenKind::LBrace))
+    return nullptr; // Break Cascade
+
   std::vector<DeclPtr> members;
 
   while (curTok.isNot(TokenKind::RBrace) && curTok.isNot(TokenKind::Eof)) {
@@ -1406,7 +1440,8 @@ DeclPtr Parser::parseMacroDecl() {
   consume(); // eat 'macro'
 
   std::string name = curTok.getSpelling().str();
-  expect(TokenKind::Identifier);
+  if (!expect(TokenKind::Identifier))
+    return nullptr;
 
   bool isFunctionMacro = false;
   std::vector<std::string> params;
@@ -1418,10 +1453,14 @@ DeclPtr Parser::parseMacroDecl() {
         if (curTok.is(TokenKind::Identifier)) {
           params.push_back(curTok.getSpelling().str());
           consume();
+        } else {
+          error("Expected identifier in macro parameters");
+          return nullptr; // Break cascade
         }
       } while (consumeIf(TokenKind::Comma));
     }
-    expect(TokenKind::RParen);
+    if (!expect(TokenKind::RParen))
+      return nullptr;
   }
 
   std::vector<StmtPtr> body;
@@ -1433,9 +1472,12 @@ DeclPtr Parser::parseMacroDecl() {
       else
         synchronize();
     }
-    expect(TokenKind::RBrace);
+    if (!expect(TokenKind::RBrace))
+      return nullptr;
   } else {
     auto expr = parseExpression();
+    if (!expr)
+      return nullptr;
     body.push_back(std::make_unique<ExpressionStmt>(std::move(expr), loc));
   }
 
@@ -1961,22 +2003,33 @@ ExprPtr Parser::parseTernary() {
 
   if (consumeIf(TokenKind::Question)) {
     auto trueBranch = parseTernary();
-    expect(TokenKind::Colon);
+    if (!trueBranch)
+      return nullptr;
+    if (!expect(TokenKind::Colon))
+      return nullptr;
     auto falseBranch = parseTernary();
+    if (!falseBranch)
+      return nullptr;
+
+    SourceLocation loc = cond->getLoc();
     return std::make_unique<TernaryExpr>(std::move(cond), std::move(trueBranch),
-                                         std::move(falseBranch),
-                                         cond->getLoc());
+                                         std::move(falseBranch), loc);
   }
   return cond;
 }
 
 ExprPtr Parser::parseNullCoalescing() {
   auto left = parseShift();
-  while (consumeIf(TokenKind::QuestionQuestion)) {
+  while (curTok.is(TokenKind::QuestionQuestion)) {
+    if (!left)
+      return nullptr;
+    SourceLocation opLoc = curTok.location;
+    consume();
     auto right = parseShift();
-    left = std::make_unique<BinaryExpr>(std::move(left),
-                                        TokenKind::QuestionQuestion,
-                                        std::move(right), left->getLoc());
+    if (!right)
+      return nullptr; // Prevents constructing BinaryExpr with a null child!
+    left = std::make_unique<BinaryExpr>(
+        std::move(left), TokenKind::QuestionQuestion, std::move(right), opLoc);
   }
   return left;
 }
@@ -1989,6 +2042,8 @@ ExprPtr Parser::parseLogicalOr() {
     SourceLocation opLoc = curTok.location;
     consume();
     auto right = parseLogicalAnd();
+    if (!right)
+      return nullptr; // Prevents crash!
     left = std::make_unique<BinaryExpr>(std::move(left), TokenKind::PipePipe,
                                         std::move(right), opLoc);
   }
@@ -1997,12 +2052,14 @@ ExprPtr Parser::parseLogicalOr() {
 
 ExprPtr Parser::parseLogicalAnd() {
   auto left = parseBitwiseOr();
-  while (curTok.is(TokenKind::AmpAmp)) { //  Check kind
+  while (curTok.is(TokenKind::AmpAmp)) {
     if (!left)
       return nullptr;
     SourceLocation opLoc = curTok.location;
     consume();
     auto right = parseBitwiseOr();
+    if (!right)
+      return nullptr; // Prevents crash!
     left = std::make_unique<BinaryExpr>(std::move(left), TokenKind::AmpAmp,
                                         std::move(right), opLoc);
   }

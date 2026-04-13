@@ -1,47 +1,42 @@
 #include "moksha/Dialect/MokshaDialect.h"
 #include "moksha/Dialect/MokshaOps.h"
-#include "moksha/HIR/HIRType.h" // For hir::PointerType
 
-using namespace mlir;
-using namespace moksha;
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/DialectImplementation.h"
+#include "llvm/ADT/TypeSwitch.h"
 
-// --- [INSERT THIS BLOCK STARTING HERE] ---
-namespace moksha {
-namespace detail {
-
-// Define the storage for PointerType.
-// This allows the compiler to know how to allocate and destroy it.
-struct PointerTypeStorage : public mlir::TypeStorage {
-  using KeyTy = mlir::Type;
-
-  PointerTypeStorage(mlir::Type pointee) : pointee(pointee) {}
-
-  /// The comparison function for the uniquer.
-  bool operator==(const KeyTy &key) const { return key == pointee; }
-
-  /// The construction function.
-  static PointerTypeStorage *construct(mlir::TypeStorageAllocator &allocator,
-                                       const KeyTy &key) {
-    return new (allocator.allocate<PointerTypeStorage>())
-        PointerTypeStorage(key);
-  }
-
-  mlir::Type pointee;
-};
-
-} // namespace detail
-} // namespace moksha
-
+// Pull in the auto-generated Dialect construction logic
 #include "moksha/Dialect/MokshaDialect.cpp.inc"
 
-void MokshaDialect::initialize() {
-  addOperations<
-#define GET_OP_LIST
-#include "moksha/Dialect/MokshaOps.cpp.inc"
-      >();
+#define GET_TYPEDEF_CLASSES
+#include "moksha/Dialect/MokshaOpsTypes.cpp.inc"
 
+namespace moksha {
+namespace IR {
+
+void MokshaDialect::initialize() {
+  // 1. Register the custom types defined in MokshaTypes.td
   addTypes<
 #define GET_TYPEDEF_LIST
 #include "moksha/Dialect/MokshaOpsTypes.cpp.inc"
       >();
+
+  // 2. Register the operations defined in MokshaOps.td
+  addOperations<
+#define GET_OP_LIST
+#include "moksha/Dialect/MokshaOps.cpp.inc"
+      >();
 }
+
+// Since you enabled hasConstantMaterializer = 1 in MokshaDialect.td,
+// you must provide this function. It allows MLIR to "fold" constants.
+mlir::Operation *MokshaDialect::materializeConstant(mlir::OpBuilder &builder,
+                                                    mlir::Attribute value,
+                                                    mlir::Type type,
+                                                    mlir::Location loc) {
+  // Use the new ConstantOp we defined in TableGen
+  return builder.create<::moksha::IR::ConstantOp>(loc, type, value);
+}
+
+} // namespace IR
+} // namespace moksha

@@ -26,6 +26,7 @@ static llvm::StringRef scopeKindToString(ScopeKind kind) {
 
 void Scope::addSymbol(llvm::StringRef name, Symbol symbol) {
   auto result = symbols.insert({name, symbol});
+  (void)result;
   assert(result.second && "Symbol already exists in scope!");
 }
 

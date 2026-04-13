@@ -9,9 +9,12 @@ project(moksha
   LANGUAGES CXX C
 )
 
+add_compile_options(-Wno-deprecated-declarations)
+
 # ============================================================
 # Global build settings
 # ============================================================
+add_link_options("-fuse-ld=lld")
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -83,6 +86,7 @@ else()
     -Wall
     -Wextra
     -Wpedantic
+    -Wno-deprecated-declarations
   )
 endif()
 

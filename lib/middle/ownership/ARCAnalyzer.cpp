@@ -55,7 +55,8 @@ private:
   // Analyzes the actual memory location rather than the loaded SSA instance.
   MIRValue *getUnderlyingObject(MIRValue *val) {
     while (auto *inst = llvm::dyn_cast<MIRInst>(val)) {
-      if (inst->getOpcode() == Opcode::BitCast) {
+      if (inst->getOpcode() == Opcode::BitCast ||
+          inst->getOpcode() == Opcode::AnyCast) {
         val = static_cast<CastInst *>(inst)->getValue();
         continue;
       } else if (inst->getOpcode() == Opcode::Load) {
@@ -157,10 +158,15 @@ private:
         className = className.substr(6);
 
       if (!className.empty()) {
-        std::string dropFuncName = className + ".destructor";
-        // If the module contains a drop function for this type, abort elision!
-        if (module && module->getFunction(dropFuncName)) {
-          return false;
+        std::string dropPrefix = className + ".destructor";
+        // If the module contains ANY drop function for this type, abort
+        // elision!
+        if (module) {
+          for (auto &funcPtr : module->getFunctions()) {
+            if (funcPtr->getName().find(dropPrefix) == 0) {
+              return false; // Found a destructor, DO NOT elide!
+            }
+          }
         }
       }
     }

@@ -51,6 +51,7 @@ public:
   ReturnInst *createRetVoid(SourceLocation loc = {});
   SwitchInst *createSwitch(MIRValue *cond, MIRBlock *defaultBlock,
                            SourceLocation loc = {});
+  void addSwitchCase(SwitchInst *swInst, MIRValue *val, MIRBlock *dest);
 
   // ========================================================================
   // [Exceptions & Hardware]
@@ -197,6 +198,15 @@ public:
   CastInst *createBitCast(MIRValue *val, const hir::HIRType *destType,
                           const std::string &name = "",
                           SourceLocation loc = {});
+  CastInst *createAnyCast(MIRValue *val, const hir::HIRType *destType,
+                          const std::string &name = "",
+                          SourceLocation loc = {});
+  CastInst *createArrayToSlice(MIRValue *val, const hir::HIRType *destType,
+                               const std::string &name = "",
+                               SourceLocation loc = {});
+  CastInst *createSliceToArray(MIRValue *val, const hir::HIRType *destType,
+                               const std::string &name = "",
+                               SourceLocation loc = {});
   ARCInst *createRetain(MIRValue *obj, SourceLocation loc = {});
   ARCInst *createRelease(MIRValue *obj, SourceLocation loc = {});
   StoreWeakInst *createStoreWeak(MIRValue *val, MIRValue *ptr,

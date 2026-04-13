@@ -20,6 +20,20 @@ static void replaceAllUsesInFunction(MIRFunction *F, MIRValue *oldVal,
   }
 }
 
+// Traces a pointer through arithmetic and casts to find its base allocation
+static MIRValue *getBasePointer(MIRValue *val) {
+  while (val) {
+    if (auto *gep = llvm::dyn_cast<GetElementPtrInst>(val)) {
+      val = gep->getPointer();
+    } else if (auto *cast = llvm::dyn_cast<CastInst>(val)) {
+      val = cast->getValue();
+    } else {
+      break;
+    }
+  }
+  return val;
+}
+
 bool ConstantFoldingPass::runOnModule(MIRModule &M) {
   bool changed = false;
 
@@ -33,36 +47,26 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
     for (auto &block : func->getBlocks()) {
       for (auto &inst : block->getInstructions()) {
 
-        // Check Store Instructions
+        // 1. Scan for any potential mutation or escape of a global
         if (auto *store = llvm::dyn_cast<StoreInst>(inst.get())) {
-          // Direct mutation: Storing TO the global
-          if (auto *g =
-                  llvm::dyn_cast_or_null<MIRGlobal>(store->getPointer())) {
+          // Direct/Indirect mutation: Storing TO the global
+          if (auto *g = llvm::dyn_cast_or_null<MIRGlobal>(
+                  getBasePointer(store->getPointer()))) {
             mutatedGlobals.insert(g);
           }
-          // Indirect mutation: Storing the global's address INTO something else
-          if (auto *g = llvm::dyn_cast_or_null<MIRGlobal>(store->getValue())) {
+          // Escape: Storing the global's address INTO something else
+          if (auto *g = llvm::dyn_cast_or_null<MIRGlobal>(
+                  getBasePointer(store->getValue()))) {
             mutatedGlobals.insert(g);
           }
         }
-        // Indirect mutation: Passing the global to a function
+        // Escape: Passing the global to a function
         else if (auto *call = llvm::dyn_cast<CallInst>(inst.get())) {
           for (MIRValue *arg : call->getArgs()) {
-            if (auto *g = llvm::dyn_cast_or_null<MIRGlobal>(arg)) {
+            if (auto *g =
+                    llvm::dyn_cast_or_null<MIRGlobal>(getBasePointer(arg))) {
               mutatedGlobals.insert(g);
             }
-          }
-        }
-        // Indirect mutation: Casting the global to another pointer type
-        else if (auto *cast = llvm::dyn_cast<CastInst>(inst.get())) {
-          if (auto *g = llvm::dyn_cast_or_null<MIRGlobal>(cast->getValue())) {
-            mutatedGlobals.insert(g);
-          }
-        }
-        // Indirect mutation: Pointer arithmetic on the global
-        else if (auto *gep = llvm::dyn_cast<GetElementPtrInst>(inst.get())) {
-          if (auto *g = llvm::dyn_cast_or_null<MIRGlobal>(gep->getPointer())) {
-            mutatedGlobals.insert(g);
           }
         }
       }
@@ -74,6 +78,15 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
     MIRGlobal *g = globalPtr.get();
     if (g->getInitializer() && !g->isVolatile() &&
         mutatedGlobals.find(g) == mutatedGlobals.end()) {
+      // Prevent inlining of heap-allocated and aggregate globals
+      auto *initVal = g->getInitializer();
+      if (llvm::isa<ConstantMap>(initVal) ||
+          llvm::isa<ConstantSlice>(initVal) ||
+          llvm::isa<ConstantArray>(initVal) ||
+          llvm::isa<ConstantStruct>(initVal) ||
+          llvm::isa<ConstantString>(initVal)) {
+        continue;
+      }
       for (auto &func : M.getFunctions()) {
         if (func->isDeclaration())
           continue;
@@ -154,12 +167,24 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
           }
         }
 
-        // Fold Compare Instructions (e.g., icmp ne null, null)
+        // Fold Compare Instructions (e.g., icmp ne null, null OR icmp sgt 10,
+        // 20)
         if (auto *icmp = llvm::dyn_cast<CompareInst>(inst)) {
-          // If comparing the exact same SSA value, or two nulls
-          if (icmp->getLHS() == icmp->getRHS() ||
-              (llvm::isa<ConstantNull>(icmp->getLHS()) &&
-               llvm::isa<ConstantNull>(icmp->getRHS()))) {
+
+          // Strip away BitCasts so we can see the raw Constants underneath
+          auto unwrapCasts = [](MIRValue *val) -> MIRValue * {
+            while (auto *cast = llvm::dyn_cast_or_null<CastInst>(val)) {
+              val = cast->getValue();
+            }
+            return val;
+          };
+
+          MIRValue *lhs = unwrapCasts(icmp->getLHS());
+          MIRValue *rhs = unwrapCasts(icmp->getRHS());
+
+          // 1. Fold identical values or Nulls
+          if (lhs == rhs ||
+              (llvm::isa<ConstantNull>(lhs) && llvm::isa<ConstantNull>(rhs))) {
 
             if (icmp->getPredicate() == CompareInst::Predicate::EQ) {
               folded =
@@ -167,6 +192,184 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
             } else if (icmp->getPredicate() == CompareInst::Predicate::NE) {
               folded =
                   M.getOrInsertConstant<ConstantBool>(false, icmp->getType());
+            }
+          }
+          // 2. Fold Constant Integer Math
+          else if (auto *lInt = llvm::dyn_cast<ConstantInt>(lhs)) {
+            if (auto *rInt = llvm::dyn_cast<ConstantInt>(rhs)) {
+              int64_t lVal = lInt->getValue();
+              int64_t rVal = rInt->getValue();
+              bool result = false;
+
+              switch (icmp->getPredicate()) {
+              case CompareInst::Predicate::EQ:
+                result = (lVal == rVal);
+                break;
+              case CompareInst::Predicate::NE:
+                result = (lVal != rVal);
+                break;
+              case CompareInst::Predicate::LT:
+                result = (lVal < rVal);
+                break;
+              case CompareInst::Predicate::LE:
+                result = (lVal <= rVal);
+                break;
+              case CompareInst::Predicate::GT:
+                result = (lVal > rVal);
+                break;
+              case CompareInst::Predicate::GE:
+                result = (lVal >= rVal);
+                break;
+              default:
+                break;
+              }
+
+              folded =
+                  M.getOrInsertConstant<ConstantBool>(result, icmp->getType());
+            }
+          }
+        }
+
+        // --------------------------------------------------------------------
+        // Fold Floating-Point Comparisons
+        // --------------------------------------------------------------------
+        if (auto *fcmp = llvm::dyn_cast<FCmpInst>(inst)) {
+          auto unwrapCasts = [](MIRValue *val) -> MIRValue * {
+            while (auto *cast = llvm::dyn_cast_or_null<CastInst>(val)) {
+              val = cast->getValue();
+            }
+            return val;
+          };
+
+          MIRValue *lhs = unwrapCasts(fcmp->getLHS());
+          MIRValue *rhs = unwrapCasts(fcmp->getRHS());
+
+          if (auto *lFloat = llvm::dyn_cast<ConstantFloat>(lhs)) {
+            if (auto *rFloat = llvm::dyn_cast<ConstantFloat>(rhs)) {
+              double lVal = lFloat->getValue();
+              double rVal = rFloat->getValue();
+              bool result = false;
+
+              switch (fcmp->getPredicate()) {
+              case FCmpInst::Predicate::OEQ:
+              case FCmpInst::Predicate::UEQ:
+                result = (lVal == rVal);
+                break;
+              case FCmpInst::Predicate::ONE:
+              case FCmpInst::Predicate::UNE:
+                result = (lVal != rVal);
+                break;
+              case FCmpInst::Predicate::OLT:
+              case FCmpInst::Predicate::ULT:
+                result = (lVal < rVal);
+                break;
+              case FCmpInst::Predicate::OLE:
+              case FCmpInst::Predicate::ULE:
+                result = (lVal <= rVal);
+                break;
+              case FCmpInst::Predicate::OGT:
+              case FCmpInst::Predicate::UGT:
+                result = (lVal > rVal);
+                break;
+              case FCmpInst::Predicate::OGE:
+              case FCmpInst::Predicate::UGE:
+                result = (lVal >= rVal);
+                break;
+              }
+
+              folded =
+                  M.getOrInsertConstant<ConstantBool>(result, fcmp->getType());
+            }
+          }
+        }
+
+        // --------------------------------------------------------------------
+        // Fold Binary Math (Arithmetic)
+        // --------------------------------------------------------------------
+        if (auto *binOp = llvm::dyn_cast<BinaryInst>(inst)) {
+          auto unwrapCasts = [](MIRValue *val) -> MIRValue * {
+            while (auto *cast = llvm::dyn_cast_or_null<CastInst>(val)) {
+              val = cast->getValue();
+            }
+            return val;
+          };
+
+          MIRValue *lhs = unwrapCasts(binOp->getLHS());
+          MIRValue *rhs = unwrapCasts(binOp->getRHS());
+
+          // Integer Math
+          if (auto *lInt = llvm::dyn_cast<ConstantInt>(lhs)) {
+            if (auto *rInt = llvm::dyn_cast<ConstantInt>(rhs)) {
+              uint64_t lVal = lInt->getValue();
+              uint64_t rVal = rInt->getValue();
+              uint64_t result = 0;
+              bool valid = true;
+
+              switch (binOp->getOpcode()) {
+              case Opcode::Add:
+                result = lVal + rVal;
+                break;
+              case Opcode::Sub:
+                result = lVal - rVal;
+                break;
+              case Opcode::Mul:
+                result = lVal * rVal;
+                break;
+              case Opcode::Div:
+                if (rVal != 0)
+                  result = lVal / rVal;
+                else
+                  valid = false;
+                break;
+              case Opcode::Mod:
+                if (rVal != 0)
+                  result = lVal % rVal;
+                else
+                  valid = false;
+                break;
+              default:
+                valid = false;
+                break;
+              }
+              if (valid) {
+                folded = M.getOrInsertConstant<ConstantInt>(result,
+                                                            binOp->getType());
+              }
+            }
+          }
+          // Floating-Point Math
+          else if (auto *lFloat = llvm::dyn_cast<ConstantFloat>(lhs)) {
+            if (auto *rFloat = llvm::dyn_cast<ConstantFloat>(rhs)) {
+              double lVal = lFloat->getValue();
+              double rVal = rFloat->getValue();
+              double result = 0.0;
+              bool valid = true;
+
+              switch (binOp->getOpcode()) {
+              case Opcode::Add:
+              case Opcode::FAdd:
+                result = lVal + rVal;
+                break;
+              case Opcode::Sub:
+              case Opcode::FSub:
+                result = lVal - rVal;
+                break;
+              case Opcode::Mul:
+              case Opcode::FMul:
+                result = lVal * rVal;
+                break;
+              case Opcode::Div:
+              case Opcode::FDiv:
+                result = lVal / rVal;
+                break; // IEEE 754 natively handles x / 0.0
+              default:
+                valid = false;
+                break;
+              }
+              if (valid) {
+                folded = M.getOrInsertConstant<ConstantFloat>(result,
+                                                              binOp->getType());
+              }
             }
           }
         }

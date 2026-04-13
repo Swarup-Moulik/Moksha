@@ -79,6 +79,7 @@ static void printOperand(llvm::raw_ostream &os, const MIRValue *val) {
   case ValueKind::ConstantNull:
   case ValueKind::ConstantDecimal:
   case ValueKind::ConstantStruct:
+  case ValueKind::ConstantUnion:
   case ValueKind::ConstantBitCast:
   case ValueKind::ConstantSlice:
     val->dump(os);
@@ -170,12 +171,28 @@ static std::string getOpcodeName(Opcode op) {
     return "sext";
   case Opcode::Trunc:
     return "trunc";
+  case Opcode::PtrToInt:
+    return "ptrtoint";
+  case Opcode::IntToPtr:
+    return "inttoptr";
+  case Opcode::AnyCast:
+    return "anycast";
+  case Opcode::ArrayToSlice:
+    return "array_to_slice";
+  case Opcode::SliceToArray:
+    return "slice_to_array";
   case Opcode::Retain:
     return "retain";
   case Opcode::Release:
     return "release";
   case Opcode::Phi:
     return "phi";
+  case Opcode::StoreWeak:
+    return "store_weak";
+  case Opcode::LoadWeak:
+    return "load_weak";
+  case Opcode::Unreachable:
+    return "unreachable";
   case Opcode::Invoke:
     return "invoke";
   case Opcode::LandingPad:
@@ -342,6 +359,16 @@ void ConstantStruct::dump(llvm::raw_ostream &os) const {
     } else {
       os << "null";
     }
+  }
+  os << " }";
+}
+
+void ConstantUnion::dump(llvm::raw_ostream &os) const {
+  os << "union " << getType()->toString() << " { ";
+  if (activeField) {
+    activeField->dump(os);
+  } else {
+    os << "zeroinitializer";
   }
   os << " }";
 }
@@ -645,14 +672,19 @@ void ExtractValueInst::dump(llvm::raw_ostream &os) const {
 // [Others]
 // ============================================================================
 
-ARCInst::ARCInst(Opcode op, MIRValue *obj, SourceLocation loc)
-    : MIRInst(op, nullptr, "", loc), obj(obj) {}
+ARCInst::ARCInst(Opcode op, MIRValue *obj, MIRFunction *dropFunc,
+                 SourceLocation loc)
+    : MIRInst(op, nullptr, "", loc), opcode(op), object(obj),
+      dropFunc(dropFunc) {}
 
 void ARCInst::dump(llvm::raw_ostream &os) const {
-  os << getOpcodeName(opcode) << " ";
-  printType(os, obj->getType());
+  os << (opcode == Opcode::Retain ? "retain " : "release ");
+  printType(os, object->getType());
   os << " ";
-  printOperand(os, obj);
+  printOperand(os, object);
+  if (dropFunc) {
+    os << " [drop: @" << dropFunc->getName() << "]";
+  }
 }
 
 BinaryInst::BinaryInst(Opcode op, MIRValue *lhs, MIRValue *rhs,

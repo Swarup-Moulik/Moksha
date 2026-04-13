@@ -116,7 +116,7 @@ public:
   void visitFunctionType(const FunctionType *) override {}
   void visitNamedType(const NamedType *) override {}
   void visitNullableType(const NullableType *type) override {}
-  void visitAnyType(const AnyType *) override {}
+  void visitAnyType(const AnyType *) override;
   void visitMapType(const MapType *) override {}
   void visitReferenceType(const ReferenceType *) override {}
   void visitLockType(const LockType *type) override;
@@ -125,7 +125,7 @@ public:
   void visitConstType(const ConstType *type) override;
   void visitVolatileType(const VolatileType *type) override;
   void visitEnumType(const EnumType *) override {}
-  void visitNullType(const NullType *) override {}
+  void visitNullType(const NullType *) override;
   void visitDecimalType(const DecimalType *type) override;
   void visitClosureType(const ClosureType *type) override;
   void visitWeakType(const WeakType *type) override;

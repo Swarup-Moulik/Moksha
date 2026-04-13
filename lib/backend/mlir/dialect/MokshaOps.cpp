@@ -1,12 +1,45 @@
 #include "moksha/Dialect/MokshaOps.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpImplementation.h"
-#include "mlir/Interfaces/ControlFlowInterfaces.h" // [FIX] Added for BranchOpInterface
-#include "mlir/Interfaces/InferTypeOpInterface.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h" // [FIX] Added for MemoryEffects
-#include "moksha/Dialect/MokshaDialect.h"         // [FIX] Added dialect header
+#include "moksha/Dialect/MokshaDialect.h"
 
-// Generate the C++ code for operation definitions
+// 1. Generate the C++ definitions for the custom interfaces FIRST
+#define GET_OP_INTERFACE_DEFS
+#include "moksha/Dialect/MokshaInterfaces.cpp.inc"
+
+// 2. Generate the C++ classes for every Moksha operation
 #define GET_OP_CLASSES
 #include "moksha/Dialect/MokshaOps.cpp.inc"
+
+namespace moksha {
+namespace IR {
+
+// ============================================================================
+// Custom Logic for ARCOpInterface
+// ============================================================================
+
+// --- RetainOp Implementation ---
+
+::mlir::Value RetainOp::getARCManagedValue() { return getValue(); }
+
+bool RetainOp::isRetain() { return true; }
+
+bool RetainOp::isRelease() { return false; }
+
+// --- ReleaseOp Implementation ---
+
+::mlir::Value ReleaseOp::getARCManagedValue() { return getValue(); }
+
+bool ReleaseOp::isRetain() { return false; }
+
+bool ReleaseOp::isRelease() { return true; }
+
+// ============================================================================
+// ConstantOp Folding
+// ============================================================================
+
+::mlir::OpFoldResult ConstantOp::fold(FoldAdaptor adaptor) {
+  return getValue();
+}
+
+} // namespace IR
+} // namespace moksha

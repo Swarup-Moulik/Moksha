@@ -1,9 +1,8 @@
 #include "moksha/Sema/GenericResolver.h"
 #include "moksha/AST/Expr.h"
 #include "moksha/AST/Stmt.h"
-#include "moksha/AST/Type.h"
-#include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 
 namespace moksha {
 
@@ -17,24 +16,57 @@ std::optional<GenericError> GenericResolver::validateGenericArgs(
     return GenericError::ArityMismatch;
   }
 
-  // [FIX] Changed to index-based loop so 'i' is defined
-  for (size_t i = 0; i < args.size(); ++i) {
-    bool isAny = args[i].type->is<AnyType>();
-    if (!isAny) {
-      if (auto named = llvm::dyn_cast<const NamedType>(args[i].type.get())) {
-        if (named->getName() == "any")
-          isAny = true;
+  for (size_t i = 0; i < typeParams.size(); ++i) {
+    const Type *argType = args[i].type.get();
+
+    // 1. Forbid 'any' as a generic argument
+    const Type *currAnyCheck = argType;
+    while (currAnyCheck) {
+      if (currAnyCheck->getKind() == TypeKind::Any) {
+        return GenericError::AnyConstraintViolation;
+      }
+
+      // Unwrap pointers/borrows to ensure 'any' isn't hiding inside
+      if (currAnyCheck->getKind() == TypeKind::Pointer) {
+        currAnyCheck =
+            static_cast<const PointerType *>(currAnyCheck)->getPointee();
+      } else if (currAnyCheck->getKind() == TypeKind::Reference) {
+        currAnyCheck =
+            static_cast<const ReferenceType *>(currAnyCheck)->getInner();
+      } else if (currAnyCheck->getKind() == TypeKind::View) {
+        currAnyCheck = static_cast<const ViewType *>(currAnyCheck)->getInner();
+      } else if (currAnyCheck->getKind() == TypeKind::Mut) {
+        currAnyCheck = static_cast<const MutType *>(currAnyCheck)->getInner();
+      } else if (currAnyCheck->getKind() == TypeKind::Lock) {
+        currAnyCheck = static_cast<const LockType *>(currAnyCheck)->getInner();
+      } else {
+        break;
       }
     }
 
-    if (isAny) {
-      return GenericError::AnyConstraintViolation;
-    }
-
+    // 2. Validate `shared` constraints (Your existing code)
     if (typeParams[i].isShared) {
-      if (args[i].type->is<ViewType>() || args[i].type->is<MutType>() ||
-          args[i].type->is<PointerType>()) {
-        return GenericError::SharedConstraintViolation;
+      bool hasBorrow = false;
+      const Type *curr = argType;
+      while (curr) {
+        if (curr->getKind() == TypeKind::View ||
+            curr->getKind() == TypeKind::Mut) {
+          hasBorrow = true;
+          break;
+        }
+
+        // Unwrap pointers and references to check their inner types
+        if (curr->getKind() == TypeKind::Pointer) {
+          curr = static_cast<const PointerType *>(curr)->getPointee();
+        } else if (curr->getKind() == TypeKind::Reference) {
+          curr = static_cast<const ReferenceType *>(curr)->getInner();
+        } else {
+          break;
+        }
+      }
+
+      if (hasBorrow) {
+        return GenericError::AnyConstraintViolation;
       }
     }
   }
@@ -44,156 +76,120 @@ std::optional<GenericError> GenericResolver::validateGenericArgs(
 
 TypePtr GenericResolver::substituteType(
     const Type *type, const llvm::StringMap<const Type *> &substitutions) {
+
   if (!type)
     return nullptr;
 
-  SourceLocation loc = type->getLoc();
-
   switch (type->getKind()) {
-  case TypeKind::Primitive: {
-    auto *prim = llvm::cast<PrimitiveType>(type);
-    return std::make_unique<PrimitiveType>(prim->getScalar(), loc);
-  }
-
-  case TypeKind::Decimal: {
-    auto *dec = llvm::cast<DecimalType>(type);
-    return std::make_unique<DecimalType>(dec->getPrecision(), dec->getScale(),
-                                         loc);
-  }
-
   case TypeKind::Named: {
-    auto *named = llvm::cast<NamedType>(type);
-    llvm::StringRef name = named->getName();
+    auto *named = static_cast<const NamedType *>(type);
 
-    // 1. Substitute Generic Parameter (T -> int)
-    if (substitutions.count(name)) {
-      const Type *replacement = substitutions.lookup(name);
-      return substituteType(replacement, substitutions);
+    // 1. Base generic parameter (e.g., 'K' or 'V')
+    if (substitutions.count(named->getName()) &&
+        named->getGenericArgs().empty()) {
+      return substitutions.lookup(named->getName())->clone();
     }
 
-    // 2. Recurse into Generic Arguments (Box<T> -> Box<int>)
-    std::vector<NamedType::GenericArg> newArgs;
-    for (const auto &arg : named->getGenericArgs()) {
-      TypePtr newArgType = substituteType(arg.type.get(), substitutions);
-      newArgs.push_back({std::move(newArgType), arg.variance});
+    // 2. Nested generic structure (e.g., 'List<K>')
+    if (!named->getGenericArgs().empty()) {
+      std::vector<NamedType::GenericArg> newArgs;
+      for (const auto &arg : named->getGenericArgs()) {
+        newArgs.push_back(
+            {substituteType(arg.type.get(), substitutions), arg.variance});
+      }
+      return std::make_unique<NamedType>(named->getName(), std::move(newArgs),
+                                         named->getLoc(), named->isRefClass());
     }
-
-    return std::make_unique<NamedType>(named->getName(), std::move(newArgs),
-                                       loc);
+    return named->clone();
   }
-
-  case TypeKind::Weak: {
-    auto *w = llvm::cast<WeakType>(type);
-    return std::make_unique<WeakType>(
-        substituteType(w->getInner(), substitutions), loc);
-  }
-  case TypeKind::Null:
-    return std::make_unique<NullType>(loc);
-  case TypeKind::Any:
-    return std::make_unique<AnyType>(loc);
-
-  case TypeKind::Pointer: {
-    auto *ptr = llvm::cast<PointerType>(type);
-    return std::make_unique<PointerType>(
-        substituteType(ptr->getPointee(), substitutions), loc);
-  }
-
-  case TypeKind::Reference: {
-    auto *ref = llvm::cast<ReferenceType>(type);
-    return std::make_unique<ReferenceType>(
-        substituteType(ref->getInner(), substitutions), loc);
-  }
-
-  case TypeKind::Nullable: {
-    auto *null = llvm::cast<NullableType>(type);
-    return std::make_unique<NullableType>(
-        substituteType(null->getInner(), substitutions), loc);
-  }
-
   case TypeKind::Array: {
-    auto *arr = llvm::cast<ArrayType>(type);
+    auto *arr = static_cast<const ArrayType *>(type);
     return std::make_unique<ArrayType>(
         substituteType(arr->getElementType(), substitutions),
         arr->getSizeExpr() ? arr->getSizeExpr()->clone() : nullptr,
         arr->getLoc());
   }
-
   case TypeKind::Slice: {
-    auto *s = llvm::cast<SliceType>(type);
+    auto *slice = static_cast<const SliceType *>(type);
     return std::make_unique<SliceType>(
-        substituteType(s->getElementType(), substitutions), loc);
+        substituteType(slice->getElementType(), substitutions),
+        slice->getLoc());
   }
-
+  case TypeKind::Pointer: {
+    auto *ptr = static_cast<const PointerType *>(type);
+    return std::make_unique<PointerType>(
+        substituteType(ptr->getPointee(), substitutions), ptr->getLoc());
+  }
+  case TypeKind::Reference: {
+    auto *ref = static_cast<const ReferenceType *>(type);
+    return std::make_unique<ReferenceType>(
+        substituteType(ref->getInner(), substitutions), ref->getLoc());
+  }
   case TypeKind::Map: {
-    auto *map = llvm::cast<MapType>(type);
-    TypePtr newKey = substituteType(map->getKeyType(), substitutions);
-    TypePtr newVal = substituteType(map->getValueType(), substitutions);
-    return std::make_unique<MapType>(std::move(newKey), std::move(newVal), loc);
+    auto *map = static_cast<const MapType *>(type);
+    return std::make_unique<MapType>(
+        substituteType(map->getKeyType(), substitutions),
+        substituteType(map->getValueType(), substitutions), map->getLoc());
   }
-
   case TypeKind::Function: {
-    auto *func = llvm::cast<FunctionType>(type);
-    TypePtr newRet = substituteType(func->getReturnType(), substitutions);
-
+    auto *func = static_cast<const FunctionType *>(type);
     std::vector<TypePtr> newParams;
     for (const auto &p : func->getParamTypes()) {
       newParams.push_back(substituteType(p.get(), substitutions));
     }
-
-    // Pass func->isInterruptFunc() to the constructor
     return std::make_unique<FunctionType>(
-        std::move(newRet), std::move(newParams), func->isVariadicFunc(),
-        func->isInterruptFunc(), loc);
+        substituteType(func->getReturnType(), substitutions),
+        std::move(newParams), func->isVariadicFunc(), func->isInterruptFunc(),
+        func->getLoc());
   }
-
-  case TypeKind::Const: {
-    auto *c = llvm::cast<ConstType>(type);
-    return std::make_unique<ConstType>(
-        substituteType(c->getInner(), substitutions), loc);
-  }
-  case TypeKind::Volatile: {
-    auto *v = llvm::cast<VolatileType>(type);
-    return std::make_unique<VolatileType>(
-        substituteType(v->getInner(), substitutions), loc);
-  }
-
-  case TypeKind::Mut: {
-    auto *m = llvm::cast<MutType>(type);
-    return std::make_unique<MutType>(
-        substituteType(m->getInner(), substitutions), loc);
-  }
-  case TypeKind::View: {
-    auto *v = llvm::cast<ViewType>(type);
-    return std::make_unique<ViewType>(
-        substituteType(v->getInner(), substitutions), loc);
-  }
-  case TypeKind::Lock: {
-    auto *l = llvm::cast<LockType>(type);
-    return std::make_unique<LockType>(
-        substituteType(l->getInner(), substitutions), loc);
-  }
-
   case TypeKind::Closure: {
-    auto *clos = llvm::cast<ClosureType>(type);
-    TypePtr newRet = substituteType(clos->getReturnType(), substitutions);
-
+    auto *cls = static_cast<const ClosureType *>(type);
     std::vector<TypePtr> newParams;
-    for (const auto &p : clos->getParamTypes()) {
+    for (const auto &p : cls->getParamTypes()) {
       newParams.push_back(substituteType(p.get(), substitutions));
     }
-
-    return std::make_unique<ClosureType>(std::move(newRet),
-                                         std::move(newParams), loc);
+    return std::make_unique<ClosureType>(
+        substituteType(cls->getReturnType(), substitutions),
+        std::move(newParams), cls->getLoc());
   }
-
-  case TypeKind::Enum: {
-    auto *e = llvm::cast<EnumType>(type);
-    return std::make_unique<EnumType>(e->getName(), std::vector<std::string>{},
-                                      loc);
+  case TypeKind::Nullable: {
+    auto *nullb = static_cast<const NullableType *>(type);
+    return std::make_unique<NullableType>(
+        substituteType(nullb->getInner(), substitutions), nullb->getLoc());
   }
-
+  case TypeKind::Mut: {
+    auto *mt = static_cast<const MutType *>(type);
+    return std::make_unique<MutType>(
+        substituteType(mt->getInner(), substitutions), mt->getLoc());
+  }
+  case TypeKind::View: {
+    auto *vw = static_cast<const ViewType *>(type);
+    return std::make_unique<ViewType>(
+        substituteType(vw->getInner(), substitutions), vw->getLoc());
+  }
+  case TypeKind::Lock: {
+    auto *lck = static_cast<const LockType *>(type);
+    return std::make_unique<LockType>(
+        substituteType(lck->getInner(), substitutions), lck->getLoc());
+  }
+  case TypeKind::Const: {
+    auto *cst = static_cast<const ConstType *>(type);
+    return std::make_unique<ConstType>(
+        substituteType(cst->getInner(), substitutions), cst->getLoc());
+  }
+  case TypeKind::Volatile: {
+    auto *vol = static_cast<const VolatileType *>(type);
+    return std::make_unique<VolatileType>(
+        substituteType(vol->getInner(), substitutions), vol->getLoc());
+  }
+  case TypeKind::Weak: {
+    auto *wk = static_cast<const WeakType *>(type);
+    return std::make_unique<WeakType>(
+        substituteType(wk->getInner(), substitutions), wk->getLoc());
+  }
   default:
-    llvm_unreachable("Unhandled TypeKind in substituteType");
+    // Primitives, Any, Null, Decimal, Enum etc.
+    return type->clone();
   }
 }
 
@@ -210,6 +206,97 @@ GenericResolver::ConcreteSignature GenericResolver::resolveFunctionSignature(
   }
 
   return sig;
+}
+
+std::string
+GenericResolver::getMangledName(llvm::StringRef baseName,
+                                const std::vector<const Type *> &typeArgs) {
+
+  std::string mangled = baseName.str();
+
+  for (const auto *arg : typeArgs) {
+    mangled += "_";
+    std::string argStr = arg->toString();
+
+    // Sanitize type names for LLVM backend compatibility (e.g., turn "[]" into
+    // array)
+    for (char &c : argStr) {
+      if (c == '<' || c == '>' || c == ',' || c == ' ' || c == '*' ||
+          c == '&' || c == '[' || c == ']') {
+        c = '_';
+      }
+    }
+
+    // Collapse consecutive underscores
+    auto new_end =
+        std::unique(argStr.begin(), argStr.end(),
+                    [](char a, char b) { return a == '_' && b == '_'; });
+    argStr.erase(new_end, argStr.end());
+
+    // Trim trailing underscore
+    if (!argStr.empty() && argStr.back() == '_') {
+      argStr.pop_back();
+    }
+
+    mangled += argStr;
+  }
+
+  return mangled;
+}
+
+const ClassDecl *
+GenericResolver::instantiateClass(const GenericDecl *genericTemplate,
+                                  const std::vector<const Type *> &typeArgs) {
+
+  auto *innerClass = llvm::dyn_cast<ClassDecl>(genericTemplate->getInnerDecl());
+  if (!innerClass)
+    return nullptr;
+
+  std::string mangledName = getMangledName(innerClass->getName(), typeArgs);
+
+  if (instantiatedClasses.count(mangledName)) {
+    return instantiatedClasses[mangledName];
+  }
+
+  llvm::StringMap<const Type *> substitutions;
+  const auto &params = genericTemplate->getTypeParams();
+  for (size_t i = 0; i < params.size() && i < typeArgs.size(); ++i) {
+    substitutions[params[i].name] = typeArgs[i];
+  }
+
+  std::unique_ptr<Decl> clonedDecl = innerClass->clone();
+  std::unique_ptr<ClassDecl> concreteClass(
+      static_cast<ClassDecl *>(clonedDecl.release()));
+  auto *mutClass = const_cast<ClassDecl *>(concreteClass.get());
+
+  mutClass->setName(mangledName);
+
+  auto &mutMembers = const_cast<std::vector<DeclPtr> &>(mutClass->getMembers());
+  for (auto &member : mutMembers) {
+    if (auto *varDecl = llvm::dyn_cast<VariableDecl>(member.get())) {
+      TypePtr newType = substituteType(varDecl->getType(), substitutions);
+      auto *mutVar = const_cast<VariableDecl *>(varDecl);
+      mutVar->setType(std::move(newType));
+    } else if (auto *funcDecl = llvm::dyn_cast<FunctionDecl>(member.get())) {
+      // [FIX] Substitute method return types and parameters!
+      auto *mutFunc = const_cast<FunctionDecl *>(funcDecl);
+      mutFunc->setReturnType(
+          substituteType(funcDecl->getReturnType(), substitutions));
+
+      // Cast away constness to mutate the function parameters
+      auto &mutParams =
+          const_cast<std::vector<FunctionDecl::Param> &>(mutFunc->getParams());
+      for (auto &p : mutParams) {
+        p.type = substituteType(p.type.get(), substitutions);
+      }
+    }
+  }
+
+  const ClassDecl *registeredDecl = mutClass;
+  context.registerInstantiatedClass(std::move(concreteClass));
+  instantiatedClasses[mangledName] = registeredDecl;
+
+  return registeredDecl;
 }
 
 } // namespace moksha

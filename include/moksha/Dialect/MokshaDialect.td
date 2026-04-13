@@ -1,3 +1,4 @@
+// include/moksha/Dialect/MokshaDialect.td
 #ifndef MOKSHA_DIALECT
 #define MOKSHA_DIALECT
 
@@ -10,15 +11,20 @@ def Moksha_Dialect : Dialect {
         The Moksha dialect serves as the bridge between ownership-resolved MIR
         and final LLVM lowering. It provides managed types and ARC operations.
     }];
-    let cppNamespace = "::moksha";
+    let cppNamespace = "moksha::IR";
 
-    // Enables TableGen to generate boilerplate for printing and parsing types.
+    // Generate boilerplate for types and attributes
     let useDefaultTypePrinterParser = 1;
+
+    // Enable custom materialization of constants (needed for `DecimalLiteral`)
+    let hasConstantMaterializer = 1;
+    let usePropertiesForAttributes = 0;
 }
 
 // Base class for Moksha Types.
 class Moksha_Type<string name, string typeMnemonic> : TypeDef<Moksha_Dialect, name> {
     let mnemonic = typeMnemonic;
+    let genStorageClass = 1;
 }
 
 // Base class for Moksha Operations.

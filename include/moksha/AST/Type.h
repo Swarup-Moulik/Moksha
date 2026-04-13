@@ -433,6 +433,7 @@ public:
   static bool classof(const Type *T) { return T->getKind() == TypeKind::Named; }
   bool isRefClass() const override { return isRefClassFlag; }
   void setRefClass(bool isRef) { isRefClassFlag = isRef; }
+  void setName(std::string newName) { name = std::move(newName); }
 
 private:
   std::string name;

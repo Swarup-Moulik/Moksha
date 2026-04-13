@@ -46,7 +46,10 @@ enum class TypeKind {
   Mut,
   Lock,
   Const,
-  Volatile
+  Volatile,
+  Null,
+  Any,
+  Map
 };
 
 // Explicit ownership semantics for HIR
@@ -194,8 +197,8 @@ public:
   void Profile(llvm::FoldingSetNodeID &ID) const override {
     ID.AddInteger(static_cast<int>(kind));
     ID.AddPointer(pointee);
-    ID.AddInteger(static_cast<int>(
-        borrowState)); // [NEW] Ensure Mut and View are hashed uniquely!
+    ID.AddInteger(static_cast<int>(borrowState));
+    ID.AddInteger(static_cast<int>(ownership));
   }
 
   static bool classof(const HIRType *T) {
@@ -244,47 +247,55 @@ class StructType : public HIRType {
   std::string name;
   std::vector<const HIRType *> fields;
   std::vector<std::string> fieldNames;
+  std::vector<const HIRType *> parentTypes;
+  std::vector<FieldInfo> fieldInfos;
   bool isPackedFlag;
   bool hasVTableFlag = false;
+  bool isRefClassFlag = false;
 
 public:
   StructType(std::string name, std::vector<const HIRType *> fields,
-             std::vector<std::string> fieldNames = {}, bool isPacked = false)
+             std::vector<std::string> fieldNames = {}, bool isPacked = false,
+             bool isRefClass = false)
       : HIRType(TypeKind::Struct, Ownership::None), name(std::move(name)),
         fields(std::move(fields)), fieldNames(std::move(fieldNames)),
-        isPackedFlag(isPacked) {}
-
+        isPackedFlag(isPacked), isRefClassFlag(isRefClass) {}
   bool isPacked() const { return isPackedFlag; }
   void setPacked(bool packed) { isPackedFlag = packed; }
   bool hasVTable() const { return hasVTableFlag; }
   void setHasVTable(bool v) { hasVTableFlag = v; }
+  bool isRefClass() const { return isRefClassFlag; }
   void setFields(std::vector<const HIRType *> newFields,
                  std::vector<std::string> newNames) {
     fields = std::move(newFields);
     fieldNames = std::move(newNames);
   }
-
+  void setParentTypes(std::vector<const HIRType *> parents) {
+    parentTypes = std::move(parents);
+  }
+  llvm::ArrayRef<const HIRType *> getParentTypes() const { return parentTypes; }
   llvm::ArrayRef<const HIRType *> getFields() const { return fields; }
   llvm::StringRef getName() const { return name; }
-
   int getFieldIndex(const std::string &searchName) const {
     for (size_t i = 0; i < fieldNames.size(); ++i) {
       if (fieldNames[i] == searchName) {
         return static_cast<int>(i);
       }
     }
-    return -1; // Field not found
+    return -1;
   }
-
   std::string toString() const override;
-
   void Profile(llvm::FoldingSetNodeID &ID) const override {
     ID.AddInteger(static_cast<int>(kind));
     ID.AddString(name);
+    ID.AddBoolean(isRefClassFlag);
   }
-
   static bool classof(const HIRType *T) {
     return T->getKind() == TypeKind::Struct;
+  }
+  const std::vector<FieldInfo> &getFieldInfos() const { return fieldInfos; }
+  void setFieldInfos(std::vector<FieldInfo> infos) {
+    fieldInfos = std::move(infos);
   }
 };
 
@@ -415,6 +426,7 @@ public:
     ID.AddInteger(static_cast<int>(getKind()));
     ID.AddPointer(inner);
     ID.AddInteger(static_cast<int>(borrowState));
+    ID.AddInteger(static_cast<int>(ownership));
   }
 
   static bool classof(const HIRType *T) {
@@ -632,6 +644,63 @@ public:
   }
   static bool classof(const HIRType *T) {
     return T->getKind() == TypeKind::Volatile;
+  }
+};
+
+class HIRNullType : public HIRType {
+public:
+  HIRNullType() : HIRType(TypeKind::Null, Ownership::None) {}
+
+  std::string toString() const override { return "null"; }
+
+  void Profile(llvm::FoldingSetNodeID &ID) const override {
+    ID.AddInteger(static_cast<int>(kind));
+  }
+
+  static bool classof(const HIRType *T) {
+    return T->getKind() == TypeKind::Null;
+  }
+};
+
+class HIRAnyType : public HIRType {
+public:
+  HIRAnyType() : HIRType(TypeKind::Any, Ownership::None) {}
+
+  std::string toString() const override { return "any"; }
+
+  void Profile(llvm::FoldingSetNodeID &ID) const override {
+    ID.AddInteger(static_cast<int>(kind));
+  }
+
+  static bool classof(const HIRType *T) {
+    return T->getKind() == TypeKind::Any;
+  }
+};
+
+class HIRMapType : public HIRType {
+  const HIRType *keyType;
+  const HIRType *valueType;
+
+public:
+  HIRMapType(const HIRType *key, const HIRType *value)
+      : HIRType(TypeKind::Map, Ownership::None), keyType(key),
+        valueType(value) {}
+
+  const HIRType *getKeyType() const { return keyType; }
+  const HIRType *getValueType() const { return valueType; }
+
+  std::string toString() const override {
+    return "table<" + keyType->toString() + ", " + valueType->toString() + ">";
+  }
+
+  void Profile(llvm::FoldingSetNodeID &ID) const override {
+    ID.AddInteger(static_cast<int>(kind));
+    ID.AddPointer(keyType);
+    ID.AddPointer(valueType);
+  }
+
+  static bool classof(const HIRType *T) {
+    return T->getKind() == TypeKind::Map;
   }
 };
 

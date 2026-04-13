@@ -16,6 +16,8 @@ add_mlir_dialect_library(MokshaMLIR
   MLIRFuncDialect
   MLIRControlFlowDialect
   MLIRPass
+  MLIRTransforms
+  MLIRRewrite
 )
 
 # --- ADD THIS BLOCK ---

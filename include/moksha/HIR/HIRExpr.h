@@ -2,7 +2,6 @@
 
 #include "moksha/AST/Expr.h"
 #include "moksha/HIR/HIRParam.h"
-#include "moksha/HIR/HIRStmt.h"
 #include "moksha/HIR/HIRType.h"
 #include "moksha/Support/SourceLocation.h"
 #include "llvm/Support/raw_ostream.h"
@@ -54,6 +53,7 @@ enum class CastOp {
   IntToFloat,
   FloatToInt,
   Truncate,
+  AnyCast,
   SignExtend,
   ZeroExtend,
   PointerCast,
@@ -628,10 +628,9 @@ class HIRLambdaExpr : public HIRExpr {
 public:
   HIRLambdaExpr(std::vector<HIRLambdaParam> params,
                 std::vector<HIRCapture> captures, std::unique_ptr<HIRStmt> body,
-                const HIRType *type, CaptureMode mode, SourceLocation loc)
-      : HIRExpr(Kind::Lambda, type, ValueCategory::RValue, loc),
-        params(std::move(params)), captures(std::move(captures)),
-        body(std::move(body)), captureMode(mode) {}
+                const HIRType *type, CaptureMode mode, SourceLocation loc);
+
+  ~HIRLambdaExpr() override;
 
   const std::vector<HIRLambdaParam> &getParams() const { return params; }
   const std::vector<HIRCapture> &getCaptures() const { return captures; }

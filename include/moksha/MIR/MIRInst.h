@@ -5,7 +5,7 @@
 #include "moksha/MIR/MIRValue.h"
 #include "moksha/Support/SourceLocation.h"
 #include "llvm/Support/raw_ostream.h"
-#include <algorithm> // for std::find
+#include <algorithm>
 #include <cstdint>
 #include <iosfwd>
 #include <memory>
@@ -31,7 +31,7 @@ protected:
 public:
   static bool classof(const MIRValue *v) {
     return v->getKind() >= ValueKind::ConstantInt &&
-           v->getKind() <= ValueKind::ConstantBitCast;
+           v->getKind() <= ValueKind::ConstantSliceToArray;
   }
 };
 
@@ -151,13 +151,13 @@ private:
 };
 
 class ConstantSlice : public MIRConstant {
-  std::vector<MIRConstant *> elements;
+  std::vector<MIRValue *> elements;
 
 public:
-  ConstantSlice(const hir::HIRType *t, std::vector<MIRConstant *> elems)
+  ConstantSlice(const hir::HIRType *t, std::vector<MIRValue *> elems)
       : MIRConstant(ValueKind::ConstantSlice, t), elements(std::move(elems)) {}
 
-  llvm::ArrayRef<MIRConstant *> getElements() const { return elements; }
+  llvm::ArrayRef<MIRValue *> getElements() const { return elements; }
 
   void dump(llvm::raw_ostream &os) const override;
 
@@ -198,6 +198,23 @@ public:
 
 private:
   std::vector<MIRValue *> fields;
+};
+
+class ConstantUnion : public MIRConstant {
+public:
+  ConstantUnion(const hir::HIRType *t, MIRConstant *activeField)
+      : MIRConstant(ValueKind::ConstantUnion, t), activeField(activeField) {}
+
+  MIRConstant *getActiveField() const { return activeField; }
+
+  void dump(llvm::raw_ostream &os) const override;
+
+  static bool classof(const MIRValue *v) {
+    return v->getKind() == ValueKind::ConstantUnion;
+  }
+
+private:
+  MIRConstant *activeField;
 };
 
 class ConstantBitCast : public MIRConstant {
@@ -272,6 +289,11 @@ enum class Opcode {
   ZExt,
   SExt,
   Trunc,
+  PtrToInt,
+  IntToPtr,
+  AnyCast,
+  ArrayToSlice,
+  SliceToArray,
   Retain,
   Release,
   StoreWeak,
@@ -307,6 +329,9 @@ public:
   static bool classof(const MIRValue *v) {
     return v->getKind() == ValueKind::Instruction;
   }
+
+  // Polymorphic clone and operand replacement
+  virtual std::unique_ptr<MIRInst> clone() const = 0;
   virtual void replaceOperand(MIRValue *oldVal, MIRValue *newVal) {}
 
 protected:
@@ -340,6 +365,10 @@ public:
   MIRBlock *getTarget() const { return target; }
   void dump(llvm::raw_ostream &os) const override;
   void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override;
+  void setTarget(MIRBlock *b) { target = b; }
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<BranchInst>(target, loc);
+  }
 
 private:
   MIRBlock *target;
@@ -356,6 +385,11 @@ public:
   MIRBlock *getFalseBlock() const { return falseBlock; }
   void dump(llvm::raw_ostream &os) const override;
   void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override;
+  void setTrueBlock(MIRBlock *b) { trueBlock = b; }
+  void setFalseBlock(MIRBlock *b) { falseBlock = b; }
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<CondBranchInst>(cond, trueBlock, falseBlock, loc);
+  }
 
 private:
   MIRValue *cond;
@@ -376,6 +410,16 @@ public:
   }
   void dump(llvm::raw_ostream &os) const override;
   void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override;
+  void setDefaultBlock(MIRBlock *b) { defaultBlock = b; }
+  std::vector<std::pair<MIRValue *, MIRBlock *>> &getCasesMut() {
+    return cases;
+  }
+  std::unique_ptr<MIRInst> clone() const override {
+    auto cloned = std::make_unique<SwitchInst>(cond, defaultBlock, loc);
+    for (const auto &c : cases)
+      cloned->addCase(c.first, c.second);
+    return cloned;
+  }
 
 private:
   MIRValue *cond;
@@ -395,6 +439,10 @@ public:
       val = newVal;
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<ReturnInst>(val, loc);
+  }
+
 private:
   MIRValue *val;
 };
@@ -407,6 +455,10 @@ public:
       : MIRInst(Opcode::Unreachable, nullptr, "", loc) {}
 
   void dump(llvm::raw_ostream &os) const override;
+
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<UnreachableInst>(loc);
+  }
 };
 
 // ============================================================================
@@ -422,6 +474,11 @@ public:
   const hir::HIRType *getAllocatedType() const { return allocatedType; }
   unsigned getAlignment() const { return alignment; }
   void dump(llvm::raw_ostream &os) const override;
+
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<AllocaInst>(getType(), allocatedType, getName(),
+                                        loc, alignment);
+  }
 
 private:
   const hir::HIRType *allocatedType;
@@ -442,6 +499,12 @@ public:
   void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override {
     if (ptr == oldVal)
       ptr = newVal;
+  }
+
+  std::unique_ptr<MIRInst> clone() const override {
+    auto cloned = std::make_unique<LoadInst>(ptr, getName(), loc, alignment);
+    cloned->setVolatile(isVolatileFlag);
+    return cloned;
   }
 
 private:
@@ -469,6 +532,12 @@ public:
       ptr = newVal;
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    auto cloned = std::make_unique<StoreInst>(val, ptr, loc, alignment);
+    cloned->setVolatile(isVolatileFlag);
+    return cloned;
+  }
+
 private:
   MIRValue *val;
   MIRValue *ptr;
@@ -486,6 +555,10 @@ public:
 
   MIRValue *getPointer() const { return ptr; }
   const std::vector<MIRValue *> &getIndices() const { return indices; }
+  void setPointer(MIRValue *newPtr) { ptr = newPtr; }
+  void setIndices(std::vector<MIRValue *> newIdx) {
+    indices = std::move(newIdx);
+  }
   void dump(llvm::raw_ostream &os) const override;
   void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override {
     if (ptr == oldVal)
@@ -494,6 +567,12 @@ public:
       if (idx == oldVal)
         idx = newVal;
     }
+  }
+
+  std::unique_ptr<MIRInst> clone() const override {
+    std::vector<MIRValue *> idxs = indices;
+    return std::make_unique<GetElementPtrInst>(
+        ptr, std::move(idxs), ptr->getType(), getType(), getName(), loc);
   }
 
 private:
@@ -518,6 +597,10 @@ public:
       val = newVal;
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<InsertValueInst>(agg, val, index, getName(), loc);
+  }
+
 private:
   MIRValue *agg;
   MIRValue *val;
@@ -538,6 +621,11 @@ public:
       agg = newVal;
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<ExtractValueInst>(agg, index, getType(), getName(),
+                                              loc);
+  }
+
 private:
   MIRValue *agg;
   uint32_t index;
@@ -556,17 +644,28 @@ public:
     return op == Opcode::Retain || op == Opcode::Release;
   }
 
-  ARCInst(Opcode op, MIRValue *obj, SourceLocation loc);
-  MIRValue *getObject() const { return obj; }
+  ARCInst(Opcode op, MIRValue *obj, MIRFunction *dropFunc = nullptr,
+          SourceLocation loc = {});
+
+  Opcode getOpcode() const { return opcode; }
+  MIRValue *getObject() const { return object; }
+
+  MIRFunction *getDropFunc() const { return dropFunc; }
+
   void dump(llvm::raw_ostream &os) const override;
   void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override {
-    if (obj == oldVal) {
-      obj = newVal;
-    }
+    if (object == oldVal)
+      object = newVal;
+  }
+
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<ARCInst>(opcode, object, dropFunc, loc);
   }
 
 private:
-  MIRValue *obj;
+  Opcode opcode;
+  MIRValue *object;
+  MIRFunction *dropFunc;
 };
 
 class StoreWeakInst : public MIRInst {
@@ -584,6 +683,10 @@ public:
       val = newVal;
     if (ptr == oldVal)
       ptr = newVal;
+  }
+
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<StoreWeakInst>(val, ptr, loc);
   }
 
 private:
@@ -604,6 +707,10 @@ public:
   void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override {
     if (ptr == oldVal)
       ptr = newVal;
+  }
+
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<LoadWeakInst>(ptr, getType(), getName(), loc);
   }
 
 private:
@@ -631,6 +738,10 @@ public:
       rhs = newVal;
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<BinaryInst>(getOpcode(), lhs, rhs, getName(), loc);
+  }
+
 private:
   MIRValue *lhs;
   MIRValue *rhs;
@@ -642,10 +753,11 @@ public:
     if (v->getKind() != ValueKind::Instruction)
       return false;
     auto op = static_cast<const MIRInst *>(v)->getOpcode();
-    // Update this list to match all the cast opcodes in your enum!
     return op == Opcode::BitCast || op == Opcode::IntToFloat ||
            op == Opcode::FloatToInt || op == Opcode::Trunc ||
-           op == Opcode::SExt || op == Opcode::ZExt;
+           op == Opcode::SExt || op == Opcode::ZExt || op == Opcode::PtrToInt ||
+           op == Opcode::IntToPtr || op == Opcode::AnyCast ||
+           op == Opcode::ArrayToSlice || op == Opcode::SliceToArray;
   }
 
   CastInst(Opcode op, MIRValue *value, const hir::HIRType *destType,
@@ -657,6 +769,11 @@ public:
       value = newVal;
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<CastInst>(getOpcode(), value, getType(), getName(),
+                                      loc);
+  }
+
 private:
   MIRValue *value;
 };
@@ -665,18 +782,7 @@ class CompareInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(ICmp)
 
-  enum class Predicate {
-    EQ,
-    NE,
-    LT,
-    LE,
-    GT,
-    GE, // Signed
-    ULT,
-    ULE,
-    UGT,
-    UGE // Unsigned
-  };
+  enum class Predicate { EQ, NE, LT, LE, GT, GE, ULT, ULE, UGT, UGE };
   CompareInst(Predicate pred, MIRValue *lhs, MIRValue *rhs,
               const hir::HIRType *resType, std::string name,
               SourceLocation loc);
@@ -691,6 +797,11 @@ public:
       rhs = newVal;
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<CompareInst>(pred, lhs, rhs, getType(), getName(),
+                                         loc);
+  }
+
 private:
   Predicate pred;
   MIRValue *lhs;
@@ -703,18 +814,18 @@ public:
 
   // Standard LLVM floating-point predicates
   enum class Predicate {
-    OEQ, // Ordered and Equal
-    ONE, // Ordered and Not Equal
-    OLT, // Ordered and Less Than
-    OLE, // Ordered and Less Than or Equal
-    OGT, // Ordered and Greater Than
-    OGE, // Ordered and Greater Than or Equal
-    UEQ, // Unordered or Equal
-    UNE, // Unordered or Not Equal
-    ULT, // Unordered or Less Than
-    ULE, // Unordered or Less Than or Equal
-    UGT, // Unordered or Greater Than
-    UGE  // Unordered or Greater Than or Equal
+    OEQ,
+    ONE,
+    OLT,
+    OLE,
+    OGT,
+    OGE,
+    UEQ,
+    UNE,
+    ULT,
+    ULE,
+    UGT,
+    UGE
   };
 
   FCmpInst(Predicate pred, MIRValue *lhs, MIRValue *rhs,
@@ -729,6 +840,11 @@ public:
       lhs = newVal;
     if (rhs == oldVal)
       rhs = newVal;
+  }
+
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<FCmpInst>(pred, lhs, rhs, getType(), getName(),
+                                      loc);
   }
 
 private:
@@ -759,6 +875,13 @@ public:
     }
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    auto cloned = std::make_unique<PhiInst>(getType(), getName(), loc);
+    for (const auto &inc : incoming)
+      cloned->addIncoming(inc.first, inc.second);
+    return cloned;
+  }
+
 private:
   std::vector<std::pair<MIRValue *, MIRBlock *>> incoming;
 };
@@ -767,7 +890,6 @@ class CallInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(Call)
 
-  // UPDATE: Used std::vector&& for move semantics (Performance)
   CallInst(MIRValue *callee, std::vector<MIRValue *> &&args,
            const hir::HIRType *retType, std::string name, bool isVarArg,
            SourceLocation loc);
@@ -785,6 +907,12 @@ public:
     }
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    std::vector<MIRValue *> argsCopy = args;
+    return std::make_unique<CallInst>(callee, std::move(argsCopy), getType(),
+                                      getName(), isVarArg, loc);
+  }
+
 private:
   MIRValue *callee;
   std::vector<MIRValue *> args;
@@ -795,7 +923,6 @@ private:
 // [Exceptions & Stack Unwinding]
 // ============================================================================
 
-// An InvokeInst is a function call that might throw an exception.
 class InvokeInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(Invoke)
@@ -810,6 +937,13 @@ public:
   MIRBlock *getUnwindDest() const { return unwindDest; }
   void dump(llvm::raw_ostream &os) const override;
   void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override;
+  void setNormalDest(MIRBlock *b) { normalDest = b; }
+  void setUnwindDest(MIRBlock *b) { unwindDest = b; }
+  std::unique_ptr<MIRInst> clone() const override {
+    std::vector<MIRValue *> argsCopy = args;
+    return std::make_unique<InvokeInst>(callee, std::move(argsCopy), normalDest,
+                                        unwindDest, getType(), getName(), loc);
+  }
 
 private:
   MIRValue *callee;
@@ -818,8 +952,6 @@ private:
   MIRBlock *unwindDest;
 };
 
-/// Placed at the very top of an 'unwindDest' block. Catches the exception
-/// payload.
 class LandingPadInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(LandingPad)
@@ -827,10 +959,12 @@ public:
   explicit LandingPadInst(const hir::HIRType *catchType, std::string name,
                           SourceLocation loc);
   void dump(llvm::raw_ostream &os) const override;
+
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<LandingPadInst>(getType(), getName(), loc);
+  }
 };
 
-/// If a catch block decides not to handle an exception, ResumeInst continues
-/// the unwinding.
 class ResumeInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(Resume)
@@ -843,12 +977,14 @@ public:
       exception = newVal;
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<ResumeInst>(exception, loc);
+  }
+
 private:
   MIRValue *exception;
 };
 
-/// High-level representation of throwing an exception (lowers to ABI-specific
-/// __cxa_throw).
 class ThrowInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(Throw)
@@ -857,8 +993,12 @@ public:
 
   MIRValue *getException() const { return exception; }
   MIRBlock *getUnwindDest() const { return unwindDest; }
+  void setUnwindDest(MIRBlock *newDest) { unwindDest = newDest; }
   void dump(llvm::raw_ostream &os) const override;
   void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override;
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<ThrowInst>(exception, unwindDest, loc);
+  }
 
 private:
   MIRValue *exception;
@@ -869,7 +1009,6 @@ private:
 // [Inline Assembly]
 // ============================================================================
 
-/// Passes raw assembly strings directly to the backend.
 class InlineAsmInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(InlineAsm)
@@ -887,6 +1026,12 @@ public:
       if (arg == oldVal)
         arg = newVal;
     }
+  }
+
+  std::unique_ptr<MIRInst> clone() const override {
+    std::vector<MIRValue *> argsCopy = args;
+    return std::make_unique<InlineAsmInst>(asmString, constraints,
+                                           std::move(argsCopy), getType(), loc);
   }
 
 private:
@@ -921,6 +1066,11 @@ public:
     }
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<MakeClosureInst>(funcPtr, captures, getType(),
+                                             getName(), loc);
+  }
+
 private:
   MIRValue *funcPtr;
   std::vector<MIRValue *> captures;
@@ -944,6 +1094,11 @@ public:
       closure = newVal;
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<SpawnInst>(closure, threadKind, getType(),
+                                       getName(), loc);
+  }
+
 private:
   MIRValue *closure;
   hir::ThreadKind threadKind;
@@ -964,6 +1119,10 @@ public:
       promise = newVal;
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<AwaitInst>(promise, getType(), getName(), loc);
+  }
+
 private:
   MIRValue *promise;
 };
@@ -979,6 +1138,10 @@ public:
   void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override {
     if (pointer == oldVal)
       pointer = newVal;
+  }
+
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<AtomicLoadInst>(pointer, order, loc);
   }
 
 private:
@@ -1001,6 +1164,10 @@ public:
       value = newVal;
     if (pointer == oldVal)
       pointer = newVal;
+  }
+
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<AtomicStoreInst>(value, pointer, order, loc);
   }
 
 private:
@@ -1027,6 +1194,10 @@ public:
       value = newVal;
   }
 
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<AtomicRMWInst>(op, pointer, value, order, loc);
+  }
+
 private:
   AtomicOp op;
   MIRValue *pointer;
@@ -1044,6 +1215,8 @@ public:
   MIRValue *getPointer() const { return pointer; }
   MIRValue *getExpected() const { return expected; }
   MIRValue *getDesired() const { return desired; }
+  MemoryOrder getSuccessOrder() const { return successOrder; }
+  MemoryOrder getFailureOrder() const { return failureOrder; }
   void dump(llvm::raw_ostream &os) const override;
   void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override {
     if (pointer == oldVal)
@@ -1052,6 +1225,11 @@ public:
       expected = newVal;
     if (desired == oldVal)
       desired = newVal;
+  }
+
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<AtomicCmpXchgInst>(pointer, expected, desired,
+                                               successOrder, failureOrder, loc);
   }
 
 private:
@@ -1069,6 +1247,10 @@ public:
   FenceInst(MemoryOrder order, SourceLocation loc);
   MemoryOrder getOrder() const { return order; }
   void dump(llvm::raw_ostream &os) const override;
+
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<FenceInst>(order, loc);
+  }
 
 private:
   MemoryOrder order;

@@ -221,8 +221,40 @@ bool checkDefiniteReturn(const Stmt *stmt, DiagnosticEngine &Diags) {
     return false;
   }
 }
-
 } // namespace
+
+void TypeChecker::processPendingInstantiations() {
+  int instantiationDepth = 0;
+  const int MAX_INSTANTIATION_DEPTH = 64; // Standard compiler limit
+
+  while (!pendingInstantiations.empty()) {
+    // 1. Check for runaway recursive generics
+    if (instantiationDepth++ > MAX_INSTANTIATION_DEPTH) {
+      SourceLocation loc = pendingInstantiations.front()->getLoc();
+      Diags.report(loc, DiagID::err_type_mismatch)
+          << "Recursion Depth Exceeded";
+      hasError = true;
+      pendingInstantiations.clear();
+      break;
+    }
+
+    // 2. Cascade Breaker: Stop instantiating if previous errors (like infinite
+    // size) triggered
+    if (hasError) {
+      pendingInstantiations.clear();
+      break;
+    }
+
+    auto queue = pendingInstantiations;
+    pendingInstantiations.clear();
+
+    for (const ClassDecl *concreteClass : queue) {
+      // Type check the freshly generated class to infer types on its internal
+      // expressions
+      concreteClass->accept(*this);
+    }
+  }
+}
 
 TypeChecker::TypeChecker(ASTContext &ctx, SymbolTable &sym,
                          DiagnosticEngine &diags)
@@ -237,6 +269,7 @@ TypeChecker::TypeChecker(ASTContext &ctx, SymbolTable &sym,
 void TypeChecker::check(Decl *decl) {
   if (decl)
     decl->accept(*this);
+  processPendingInstantiations();
 }
 
 void TypeChecker::check(Stmt *stmt) {
@@ -249,6 +282,27 @@ void TypeChecker::check(Stmt *stmt) {
 bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
   if (!expected || !actual)
     return false;
+
+  // Resolve type aliases before checking compatibility
+  auto resolveAlias = [&](const Type *t) -> const Type * {
+    while (auto named = llvm::dyn_cast_or_null<const NamedType>(t)) {
+      if (context.lookupClass(named->getName()))
+        break;
+      Symbol *sym = symbols.lookup(named->getName());
+      if (sym && sym->kind == SymbolKind::Type && sym->type) {
+        if (auto inner = llvm::dyn_cast<const NamedType>(sym->type)) {
+          if (inner->getName() == named->getName())
+            break;
+        }
+        t = sym->type;
+      } else
+        break;
+    }
+    return t;
+  };
+
+  expected = resolveAlias(expected);
+  actual = resolveAlias(actual);
 
   // Exact match
   if (expected->isEquivalent(*actual))
@@ -498,8 +552,26 @@ bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
 }
 
 bool TypeChecker::isCastAllowed(const Type *src, const Type *dst) {
-  src = unwrapConcurrency(src);
-  dst = unwrapConcurrency(dst);
+  // Resolve type aliases before checking casts
+  auto resolveAlias = [&](const Type *t) -> const Type * {
+    while (auto named = llvm::dyn_cast_or_null<const NamedType>(t)) {
+      if (context.lookupClass(named->getName()))
+        break;
+      Symbol *sym = symbols.lookup(named->getName());
+      if (sym && sym->kind == SymbolKind::Type && sym->type) {
+        if (auto inner = llvm::dyn_cast<const NamedType>(sym->type)) {
+          if (inner->getName() == named->getName())
+            break;
+        }
+        t = sym->type;
+      } else
+        break;
+    }
+    return t;
+  };
+
+  src = resolveAlias(unwrapConcurrency(src));
+  dst = resolveAlias(unwrapConcurrency(dst));
 
   if (src->is<AnyType>() || dst->is<AnyType>()) {
     return true;
@@ -538,6 +610,28 @@ bool TypeChecker::isCastAllowed(const Type *src, const Type *dst) {
 const Type *TypeChecker::getCommonSuperType(const Type *t1, const Type *t2) {
   if (!t1 || !t2)
     return context.getAnyType();
+
+  // Resolve type aliases
+  auto resolveAlias = [&](const Type *t) -> const Type * {
+    while (auto named = llvm::dyn_cast_or_null<const NamedType>(t)) {
+      if (context.lookupClass(named->getName()))
+        break;
+      Symbol *sym = symbols.lookup(named->getName());
+      if (sym && sym->kind == SymbolKind::Type && sym->type) {
+        if (auto inner = llvm::dyn_cast<const NamedType>(sym->type)) {
+          if (inner->getName() == named->getName())
+            break;
+        }
+        t = sym->type;
+      } else
+        break;
+    }
+    return t;
+  };
+
+  t1 = resolveAlias(t1);
+  t2 = resolveAlias(t2);
+
   if (isCompatible(t1, t2))
     return t1;
   if (isCompatible(t2, t1))
@@ -1080,21 +1174,6 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
       }
     }
 
-    const Type *expectedRhsType = lhsType;
-
-    // Unwrap reference and pointer types to expect the underlying value type
-    if (auto refTy = llvm::dyn_cast<const ReferenceType>(lhsType)) {
-      expectedRhsType = refTy->getInner();
-    } else if (auto ptrTy = llvm::dyn_cast<const PointerType>(lhsType)) {
-      expectedRhsType = ptrTy->getPointee();
-    }
-
-    // Now compare the RHS against the unwrapped type, NOT the reference type
-    if (rhsType != expectedRhsType) {
-      // Generate your implicit cast or throw a type mismatch error here using
-      // expectedRhsType
-    }
-
     // 2. Memory Access Mutations (e.g., *p = 10, arr[0] = 5, obj.x = 2)
     const Expr *target = expr->getLHS();
     while (true) {
@@ -1360,6 +1439,7 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
     if (!isCompatible(lhsType, rhsType) && !isCompatible(rhsType, lhsType)) {
       Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
           << "Comparison between incompatible types";
+      hasError = true;
     }
     lastComputedType = context.getBoolType();
   } else if (isLogic) {
@@ -1416,13 +1496,20 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
             << lhsType->toString();
       }
       hasError = true;
-    } else if (!lhsType->isEquivalent(*rhsType)) {
-      auto *mutExpr = const_cast<BinaryExpr *>(expr);
-      auto cast = std::make_unique<CastExpr>(
-          lhsType->clone(), std::move(mutExpr->getRHSMut()), expr->getLoc());
-      cast->setType(lhsType);
-      mutExpr->getRHSMut() = std::move(cast);
+    } else {
+      const Type *targetLhs = unwrapConcurrency(lhsType);
+      const Type *targetRhs = unwrapConcurrency(rhsType);
+
+      if (!targetLhs->isEquivalent(*targetRhs)) {
+        auto *mutExpr = const_cast<BinaryExpr *>(expr);
+        auto cast = std::make_unique<CastExpr>(targetLhs->clone(),
+                                               std::move(mutExpr->getRHSMut()),
+                                               expr->getLoc());
+        cast->setType(targetLhs);
+        mutExpr->getRHSMut() = std::move(cast);
+      }
     }
+
     // String Literal to Char Array Bounds Checking
     if (auto arrLHS = llvm::dyn_cast<const ArrayType>(lhsType)) {
       if (isCharType(arrLHS->getElementType()) && rhsType->isString()) {
@@ -2208,12 +2295,17 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
         }
 
         for (size_t i = 0; i < mutExpr->getArgs().size(); ++i) {
-          if (i < pTypes.size() && !argTypes[i]->isEquivalent(*pTypes[i])) {
-            auto cast = std::make_unique<CastExpr>(
-                pTypes[i]->clone(), std::move(mutExpr->getArgsMut()[i]),
-                expr->getLoc());
-            cast->setType(pTypes[i]);
-            mutExpr->getArgsMut()[i] = std::move(cast);
+          if (i < pTypes.size()) {
+            const Type *targetPType = unwrapConcurrency(pTypes[i]);
+            const Type *targetArgType = unwrapConcurrency(argTypes[i]);
+
+            if (!targetArgType->isEquivalent(*targetPType)) {
+              auto cast = std::make_unique<CastExpr>(
+                  targetPType->clone(), std::move(mutExpr->getArgsMut()[i]),
+                  expr->getLoc());
+              cast->setType(targetPType);
+              mutExpr->getArgsMut()[i] = std::move(cast);
+            }
           }
         }
 
@@ -2313,12 +2405,17 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
         Diags.report(expr->getArgs()[i]->getLoc(), DiagID::err_type_mismatch)
             << "Argument type mismatch";
         hasError = true;
-      } else if (!argTypes[i]->isEquivalent(*(*params)[i].get())) {
-        auto cast = std::make_unique<CastExpr>(
-            (*params)[i]->clone(), std::move(mutExpr->getArgsMut()[i]),
-            expr->getLoc());
-        cast->setType((*params)[i].get());
-        mutExpr->getArgsMut()[i] = std::move(cast);
+      } else {
+        const Type *targetPType = unwrapConcurrency((*params)[i].get());
+        const Type *targetArgType = unwrapConcurrency(argTypes[i]);
+
+        if (!targetArgType->isEquivalent(*targetPType)) {
+          auto cast = std::make_unique<CastExpr>(
+              targetPType->clone(), std::move(mutExpr->getArgsMut()[i]),
+              expr->getLoc());
+          cast->setType(targetPType);
+          mutExpr->getArgsMut()[i] = std::move(cast);
+        }
       }
     }
     lastComputedType = retType;
@@ -2379,194 +2476,176 @@ void TypeChecker::visitIndexExpr(const IndexExpr *expr) {
 }
 
 void TypeChecker::visitMemberExpr(const MemberExpr *expr) {
-  expr->getObject()->accept(*this);
-  const Type *objType = lastComputedType;
+  // --- NEW: Handle Module Namespace Access ---
+  if (auto *idObj = llvm::dyn_cast<const IdentifierExpr>(expr->getObject())) {
+    Symbol *sym = symbols.lookup(idObj->getName());
+    if (sym && sym->kind == SymbolKind::Module) {
+      std::string fqName = idObj->getName() + "." + expr->getName();
+      Symbol *targetSym = symbols.lookup(fqName);
 
-  objType = unwrapConcurrency(objType);
-
-  // [FIX] Auto-dereference pointers for member access (e.g., ptr.drop())
-  if (auto ptrType = llvm::dyn_cast<const PointerType>(objType)) {
-    objType = ptrType->getPointee();
-  }
-
-  // Handle Namespace/Module access (e.g., io.open)
-  if (auto id = llvm::dyn_cast<const IdentifierExpr>(expr->getObject())) {
-    if (Symbol *sym = symbols.lookup(id->getName())) {
-      if (sym->kind == SymbolKind::Module) {
-        lastComputedType = context.getAnyType(); // Allow any access on modules
-        return;
+      if (!targetSym) {
+        // Fallback to the short name if aliased
+        targetSym = symbols.lookup(expr->getName());
       }
+
+      if (targetSym) {
+        lastComputedType = targetSym->type;
+      } else {
+        // Opaque C-FFI / intrinsic module member fallback
+        lastComputedType = context.getAnyType();
+      }
+
+      const_cast<MemberExpr *>(expr)->setType(lastComputedType);
+      return; // Successfully resolved the namespace access!
     }
   }
 
-  // Unwrap Nullable Types if using '?.'
-  bool isNullableAccess = false;
-  if (auto nullType = llvm::dyn_cast<const NullableType>(objType)) {
+  // 1. Typecheck the base object (e.g., deeplyNested.val)
+  expr->getObject()->accept(*this);
+
+  // Use lastComputedType directly. Do not rely on the AST node's type here,
+  // as lastComputedType holds dynamically inferred generics correctly.
+  const Type *objType = lastComputedType;
+  if (!objType)
+    return;
+
+  // 2. Peel off pointers, references, and concurrency wrappers
+  // so we can access fields on heap-allocated objects (e.g. `p->val` or
+  // `(*p).val`)
+  const Type *rawType = unwrapConcurrency(objType);
+
+  if (auto *nullTy = llvm::dyn_cast<NullableType>(rawType)) {
     if (!expr->isOptionalAccess()) {
       Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
-          << "Cannot access member of nullable type without '?.'";
+          << "Cannot access member on nullable type '" << objType->toString()
+          << "'. Use '?.' instead.";
       hasError = true;
+      lastComputedType = context.getAnyType();
+      return;
     }
-    objType = unwrapConcurrency(nullType->getInner());
-    isNullableAccess = true;
+    // Unwrap the nullable layer and any potential inner concurrency wrappers
+    rawType = nullTy->getInner();
+    rawType = unwrapConcurrency(rawType);
   }
 
-  if (objType->is<AnyType>()) {
-    lastComputedType = context.getAnyType();
-    return;
+  if (auto *ptrTy = llvm::dyn_cast<PointerType>(rawType)) {
+    rawType = ptrTy->getPointee();
+  } else if (auto *refTy = llvm::dyn_cast<ReferenceType>(rawType)) {
+    rawType = refTy->getInner();
   }
 
-  const Type *resultType = context.getAnyType();
+  // 3. Now verify the base object is actually a Struct/Class
+  if (auto *namedObj = llvm::dyn_cast<NamedType>(rawType)) {
 
-  // Handle Class/Struct member lookup
-  if (auto namedType = llvm::dyn_cast<const NamedType>(objType)) {
-    const ClassDecl *cls = context.lookupClass(namedType->getName());
-    if (cls) {
-      llvm::StringMap<const Type *> substitutions;
-      if (!namedType->getGenericArgs().empty()) {
-        Symbol *sym = symbols.lookup(namedType->getName());
-        if (sym && sym->decl && sym->decl->getKind() == StmtKind::GenericDecl) {
-          auto gd = static_cast<const GenericDecl *>(sym->decl);
-          const auto &typeParams = gd->getTypeParams();
-          const auto &genArgs = namedType->getGenericArgs();
-          size_t limit = std::min(typeParams.size(), genArgs.size());
-          for (size_t i = 0; i < limit; ++i) {
-            substitutions[typeParams[i].name] = genArgs[i].type.get();
-          }
-        }
-      }
-
-      std::vector<const ClassDecl *> queue = {cls};
-      size_t head = 0;
-      bool found = false;
-
-      while (head < queue.size()) {
-        const ClassDecl *current = queue[head++];
-        // Hardware Layout Engine State
-        uint32_t containerIndex = 0;
-        uint32_t currentBitOffset = 0;
-        const uint32_t CONTAINER_BITS = 64; // Assuming 64-bit backing integer
-
-        for (const auto &member : current->getMembers()) {
-          if (auto varDecl = llvm::dyn_cast<const VariableDecl>(member.get())) {
-
-            // --- Layout Calculation ---
-            bool isBf = varDecl->isBitfield();
-            uint32_t width = isBf ? varDecl->getBitWidth() : 0;
-
-            if (!isBf) {
-              // Flush any pending bitfields to the next container
-              if (currentBitOffset > 0) {
-                containerIndex++;
-                currentBitOffset = 0;
-              }
-
-              if (varDecl->getName() == expr->getName()) {
-                // INJECT LAYOUT INFO: index, isBf=false, width=0, offset=0
-                const_cast<MemberExpr *>(expr)->setLayoutInfo(containerIndex,
-                                                              false, 0, 0);
-
-                if (!checkVisibility(varDecl, current, expr->getLoc())) {
-                  hasError = true;
-                }
-                auto subType =
-                    resolver.substituteType(varDecl->getType(), substitutions);
-                resultType = subType.get();
-                parkedTypes.push_back(std::move(subType));
-                found = true;
-                break;
-              }
-              containerIndex++; // Normal fields consume a whole physical index
-            } else {
-              // Handle Bitfield layout packing
-              if (currentBitOffset + width > CONTAINER_BITS) {
-                containerIndex++;
-                currentBitOffset = 0;
-              }
-
-              if (varDecl->getName() == expr->getName()) {
-                // INJECT LAYOUT INFO: index, isBf=true, width, offset
-                const_cast<MemberExpr *>(expr)->setLayoutInfo(
-                    containerIndex, true, width, currentBitOffset);
-
-                if (!checkVisibility(varDecl, current, expr->getLoc())) {
-                  hasError = true;
-                }
-                auto subType =
-                    resolver.substituteType(varDecl->getType(), substitutions);
-                resultType = subType.get();
-                parkedTypes.push_back(std::move(subType));
-                found = true;
-                break;
-              }
-              currentBitOffset += width;
-            }
-          } else if (auto fnDecl =
-                         llvm::dyn_cast<const FunctionDecl>(member.get())) {
-            if (fnDecl->getName() == expr->getName()) {
-
-              // Safe default for methods (methods don't use memory layout)
-              const_cast<MemberExpr *>(expr)->setLayoutInfo(0, false, 0, 0);
-
-              if (!checkVisibility(fnDecl, current, expr->getLoc())) {
-                hasError = true;
-              }
-              std::vector<const Type *> pTypes;
-              for (auto &p : fnDecl->getParams()) {
-                auto subParam =
-                    resolver.substituteType(p.type.get(), substitutions);
-                pTypes.push_back(subParam.get());
-                parkedTypes.push_back(std::move(subParam));
-              }
-              auto subRet = resolver.substituteType(fnDecl->getReturnType(),
-                                                    substitutions);
-              const Type *retType = subRet.get();
-              parkedTypes.push_back(std::move(subRet));
-
-              resultType = context.createFunctionType(pTypes, retType);
-              found = true;
-              break;
-            }
-          }
-        }
-        if (found)
-          break;
-
-        for (const auto &pName : current->getParentNames()) {
-          if (auto pCls = context.lookupClass(pName))
-            queue.push_back(pCls);
-        }
-      }
-
-      if (!found) {
-        Diags.report(expr->getLoc(), DiagID::err_no_member)
-            << expr->getName() << namedType->getName();
-        resultType = context.getAnyType();
-      }
+    // Resolve the mangled name if this is a generic instance
+    std::string lookupName = namedObj->getName();
+    if (!namedObj->getGenericArgs().empty()) {
+      std::vector<const Type *> rawArgs;
+      for (auto &arg : namedObj->getGenericArgs())
+        rawArgs.push_back(arg.type.get());
+      lookupName = resolver.getMangledName(lookupName, rawArgs);
     }
-  } else {
-    // Primitive methods
-    if (objType->isString() && expr->getName() == "length") {
-      resultType = context.getI32Type();
-    } else if (objType->is<ArrayType>() || objType->is<SliceType>()) {
-      // Combined Array and Slice check!
-      if (expr->getName() == "length" || expr->getName() == "size")
-        resultType = context.getI32Type();
-    } else {
+
+    // 3. Look up the instantiated CONCRETE class
+    const ClassDecl *classDecl = context.lookupClass(lookupName);
+    if (!classDecl) {
+      Symbol *sym = symbols.lookup(lookupName);
+      if (sym && sym->decl && sym->decl->getKind() == StmtKind::EnumDecl) {
+        auto *enumDecl = static_cast<const EnumDecl *>(sym->decl);
+        uint32_t index = 0;
+        bool found = false;
+
+        for (const auto &enumCase : enumDecl->getCases()) {
+          if (enumCase.name == expr->getName()) {
+            auto *mutExpr = const_cast<MemberExpr *>(expr);
+            mutExpr->setType(objType); // The type is the Enum itself
+            mutExpr->setLayoutInfo(index);
+            lastComputedType = objType;
+            found = true;
+            break;
+          }
+          index++;
+        }
+
+        if (!found) {
+          Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
+              << "Enum member '" << expr->getName() << "' not found in '"
+              << lookupName << "'";
+          hasError = true;
+          lastComputedType = context.getAnyType();
+        }
+        return;
+      }
+
       Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
-          << "Accessing member of non-aggregate type";
-      resultType = context.getAnyType();
+          << "Cannot resolve member access on incomplete type: " << lookupName;
+      hasError = true;
+      return;
     }
-  }
 
-  if (isNullableAccess && resultType && !resultType->is<AnyType>() &&
-      !resultType->is<NullableType>()) {
-    lastComputedType = context.createNullableType(resultType);
+    // Find the member's physical layout index, searching parent classes if
+    // necessary
+    bool found = false;
+    std::vector<const ClassDecl *> queue = {classDecl};
+    size_t head = 0;
+
+    while (head < queue.size() && !found) {
+      const ClassDecl *current = queue[head++];
+
+      for (const auto &member : current->getMembers()) {
+        if (auto *varDecl = llvm::dyn_cast<VariableDecl>(member.get())) {
+          if (varDecl->getName() == expr->getName()) {
+
+            // --- NEW: Enforce Access Modifiers ---
+            if (!checkVisibility(varDecl, current, expr->getLoc())) {
+              hasError = true;
+              lastComputedType = context.getAnyType();
+              return; // Stop processing, error already reported
+            }
+
+            // Apply the concrete type to the AST node
+            auto *mutExpr = const_cast<MemberExpr *>(expr);
+            mutExpr->setType(varDecl->getType());
+
+            // Pull the actual physical layout data from the defining class
+            mutExpr->setLayoutInfo(
+                varDecl->getPhysicalIndex(), varDecl->isBitfield(),
+                varDecl->getBitWidth(), varDecl->getBitOffset());
+
+            // Update the global tracker!
+            lastComputedType = varDecl->getType();
+
+            found = true;
+            break;
+          }
+        }
+      }
+
+      // If not found in this class, queue up its parents for the next iteration
+      if (!found) {
+        for (const auto &pName : current->getParentNames()) {
+          if (auto pCls = context.lookupClass(pName)) {
+            queue.push_back(pCls);
+          }
+        }
+      }
+    }
+
+    if (!found) {
+      Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
+          << "Member '" << expr->getName() << "' not found in '" << lookupName
+          << "'";
+      hasError = true;
+      lastComputedType = context.getAnyType();
+    }
   } else {
-    lastComputedType = resultType;
+    // It's not a class or struct (e.g. trying to do `5.key`)
+    Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
+        << "Cannot access member '" << expr->getName()
+        << "' on non-object type '" << objType->toString() << "'";
+    hasError = true;
+    lastComputedType = context.getAnyType();
   }
-
-  const_cast<MemberExpr *>(expr)->setType(lastComputedType);
 }
 
 void TypeChecker::visitCastExpr(const CastExpr *expr) {
@@ -2607,70 +2686,34 @@ void TypeChecker::visitTernaryExpr(const TernaryExpr *expr) {
 }
 
 void TypeChecker::visitNewExpr(const NewExpr *expr) {
+  // This call triggers visitNamedType, which mangles the type in-place!
   if (expr->getType())
     expr->getType()->accept(*this);
 
-  const Type *type = expr->getType();
+  const Type *type = expr->getType(); // Now holds the mangled NamedType
 
   auto setAndReturn = [&]() {
     const_cast<NewExpr *>(expr)->setType(lastComputedType);
   };
 
   if (auto named = llvm::dyn_cast<const NamedType>(type)) {
+    // named->getName() is now the concrete mangled name (e.g., Map_i32_string)
     const ClassDecl *cls = context.lookupClass(named->getName());
+
     if (!cls) {
-      Symbol *sym = symbols.lookup(named->getName());
-
-      // Handle new Box<T>() where Box is a GenericDecl
-      if (sym && sym->decl && sym->decl->getKind() == StmtKind::GenericDecl) {
-        auto gd = static_cast<const GenericDecl *>(sym->decl);
-        cls = llvm::dyn_cast<const ClassDecl>(gd->getInnerDecl());
-      }
-      // ADD THIS to handle standard imported classes!
-      else if (sym && sym->decl &&
-               sym->decl->getKind() == StmtKind::ClassDecl) {
-        cls = static_cast<const ClassDecl *>(sym->decl);
-      }
-
-      // Existing fallback for standard opaque imports
-      if (!cls && sym &&
-          (sym->kind == SymbolKind::Type ||
-           (sym->decl && sym->decl->getKind() == StmtKind::ImportDecl))) {
-        lastComputedType = expr->getType();
-        return;
-      }
-
-      if (!cls) {
-        Diags.report(expr->getLoc(), DiagID::err_unknown_type)
-            << named->getName();
-        lastComputedType = context.getAnyType();
-        return;
-      }
+      Diags.report(expr->getLoc(), DiagID::err_unknown_type)
+          << named->getName();
+      lastComputedType = context.getAnyType();
+      return;
     }
 
-    // Capture Generic Substitutions (e.g., mapping T = string)
-    llvm::StringMap<const Type *> substitutions;
-    if (!named->getGenericArgs().empty()) {
-      Symbol *sym = symbols.lookup(named->getName());
-      if (sym && sym->decl && sym->decl->getKind() == StmtKind::GenericDecl) {
-        auto gd = static_cast<const GenericDecl *>(sym->decl);
-        const auto &typeParams = gd->getTypeParams();
-        const auto &genArgs = named->getGenericArgs();
-        size_t limit = std::min(typeParams.size(), genArgs.size());
-        for (size_t i = 0; i < limit; ++i) {
-          substitutions[typeParams[i].name] = genArgs[i].type.get();
-        }
-      }
-    }
-
-    // Check for constructor
+    // Check for constructor on the CONCRETE class
     const FunctionDecl *ctor = nullptr;
     const ClassDecl *current = cls;
     while (current && !ctor) {
       for (const auto &member : current->getMembers()) {
         if (auto fn = llvm::dyn_cast<const FunctionDecl>(member.get())) {
           if (fn->getName() == "constructor") {
-            // Check visibility of the constructor itself!
             if (checkVisibility(fn, current, expr->getLoc())) {
               ctor = fn;
             }
@@ -2687,21 +2730,28 @@ void TypeChecker::visitNewExpr(const NewExpr *expr) {
       if (expr->getArgs().size() != ctor->getParams().size()) {
         Diags.report(expr->getLoc(), DiagID::err_argument_count_mismatch);
       } else {
-        auto sig = resolver.resolveFunctionSignature(ctor, substitutions);
+        // Constructor is already monomorphized, no substitutions needed!
+        auto sig = resolver.resolveFunctionSignature(ctor, {});
         auto *mutExpr = const_cast<NewExpr *>(expr);
+
         for (size_t i = 0; i < expr->getArgs().size(); ++i) {
           expr->getArgs()[i]->accept(*this);
           if (!isCompatible(sig.paramTypes[i].get(), lastComputedType)) {
             Diags.report(expr->getArgs()[i]->getLoc(),
                          DiagID::err_type_mismatch)
                 << "Constructor argument mismatch";
-          } else if (!lastComputedType->isEquivalent(
-                         *sig.paramTypes[i].get())) {
-            auto cast = std::make_unique<CastExpr>(
-                sig.paramTypes[i]->clone(), std::move(mutExpr->getArgsMut()[i]),
-                expr->getLoc());
-            cast->setType(sig.paramTypes[i].get());
-            mutExpr->getArgsMut()[i] = std::move(cast);
+          } else {
+            const Type *targetPType =
+                unwrapConcurrency(sig.paramTypes[i].get());
+            const Type *targetArgType = unwrapConcurrency(lastComputedType);
+
+            if (!targetArgType->isEquivalent(*targetPType)) {
+              auto cast = std::make_unique<CastExpr>(
+                  targetPType->clone(), std::move(mutExpr->getArgsMut()[i]),
+                  expr->getLoc());
+              cast->setType(targetPType);
+              mutExpr->getArgsMut()[i] = std::move(cast);
+            }
           }
         }
       }
@@ -2717,12 +2767,10 @@ void TypeChecker::visitNewExpr(const NewExpr *expr) {
     clonedNamed->setRefClass(isRef);
     const Type *allocatedType = context.saveType(std::move(clonedType));
 
-    // 3. Branch the resulting AST expression type!
+    // 3. Branch the resulting AST expression type
     if (isRef) {
-      // Ref Class: 'new' returns a heap pointer (*User)
       lastComputedType = context.createPointerType(allocatedType);
     } else {
-      // Value Class: 'new' evaluates to the stack value directly (User)
       lastComputedType = allocatedType;
     }
 
@@ -2902,13 +2950,25 @@ void TypeChecker::visitVariableDecl(const VariableDecl *decl) {
   }
 
   if (auto namedTy = llvm::dyn_cast<const NamedType>(varType)) {
-    if (const Symbol *sym = symbols.lookup(namedTy->getName())) {
-      if (sym->kind == SymbolKind::Class && sym->decl) {
-        if (auto classDecl = llvm::dyn_cast<const ClassDecl>(sym->decl)) {
-          if (classDecl->isReferenceType()) {
-            const_cast<VariableDecl *>(decl)->setShared(true);
-          }
+    const ClassDecl *classDecl = context.lookupClass(namedTy->getName());
+    if (!classDecl) {
+      if (const Symbol *sym = symbols.lookup(namedTy->getName())) {
+        if (sym->kind == SymbolKind::Class && sym->decl) {
+          classDecl = llvm::dyn_cast<const ClassDecl>(sym->decl);
         }
+      }
+    }
+
+    if (classDecl) {
+      if (classDecl->isReferenceType()) {
+        const_cast<VariableDecl *>(decl)->setShared(true);
+      }
+      auto *mutDecl = const_cast<VariableDecl *>(decl);
+      if (mutDecl->getAlignment() == 0 && classDecl->getAlignment() > 0) {
+        mutDecl->setAlignment(classDecl->getAlignment());
+      }
+      if (mutDecl->getSection().empty() && !classDecl->getSection().empty()) {
+        mutDecl->setSection(classDecl->getSection());
       }
     }
   }
@@ -3696,6 +3756,9 @@ void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
     // Call accept on the original AST node to preserve AST traversal
     d->accept(*this);
   }
+
+  // --- Pass 3: Process Generic Instantiations ---
+  processPendingInstantiations();
 }
 
 void TypeChecker::visitClassDecl(const ClassDecl *decl) {
@@ -3821,6 +3884,67 @@ void TypeChecker::visitClassDecl(const ClassDecl *decl) {
     }
   }
 
+  // Comprehensive Struct/Union Safety Checks
+  std::set<std::string> seenFields;
+
+  for (const auto &member : decl->getMembers()) {
+    if (auto *field = llvm::dyn_cast<VariableDecl>(member.get())) {
+      const Type *fieldType = field->getType();
+
+      // 1. Check for duplicate field names
+      if (!seenFields.insert(field->getName()).second) {
+        Diags.report(field->getLoc(), DiagID::err_symbol_redefinition)
+            << "Duplicate field name '" << field->getName() << "' in "
+            << (decl->getAggregateKind() == AggregateKind::Union ? "union '"
+                                                                 : "struct '")
+            << decl->getName() << "'";
+        hasError = true;
+      }
+
+      // 2. Prevent 'void' fields
+      if (fieldType->is<PrimitiveType>() &&
+          static_cast<const PrimitiveType *>(fieldType)->getScalar() ==
+              PrimitiveType::Scalar::Void) {
+        Diags.report(field->getLoc(), DiagID::err_type_mismatch)
+            << "Field '" << field->getName() << "' cannot have type 'void'.";
+        hasError = true;
+      }
+
+      // 3. Catch Cyclic Dependencies (Infinite Size Structs)
+      if (decl->getAggregateKind() != AggregateKind::Class &&
+          fieldType->is<NamedType>()) {
+        auto *named = static_cast<const NamedType *>(fieldType);
+        if (named->getName() == decl->getName()) {
+          Diags.report(field->getLoc(), DiagID::err_type_mismatch)
+              << "Struct/Union '" << decl->getName()
+              << "' cannot contain itself by value. "
+              << "Use a pointer ('" << decl->getName() << "*') instead.";
+          hasError = true;
+        }
+      }
+    }
+  }
+
+  // 4. Unions cannot contain ARC-managed types (ref class)
+  if (decl->getAggregateKind() == AggregateKind::Union) {
+    for (const auto &member : decl->getMembers()) {
+      if (auto *field = llvm::dyn_cast<VariableDecl>(member.get())) {
+        if (auto *named = llvm::dyn_cast<NamedType>(field->getType())) {
+          const ClassDecl *targetClass = context.lookupClass(named->getName());
+          // FIXED: Use getAggregateKind() == AggregateKind::Class
+          if (targetClass &&
+              targetClass->getAggregateKind() == AggregateKind::Class) {
+            Diags.report(field->getLoc(), DiagID::err_type_mismatch)
+                << "Union '" << decl->getName()
+                << "' cannot contain ARC-managed field '" << field->getName()
+                << "'. Unions must be trivially destructible under NLL.";
+            hasError = true;
+          }
+        }
+      }
+    }
+  }
+
   const_cast<ClassDecl *>(decl)->setHasVTable(classHasVTable);
 
   const ClassDecl *prevClass = currentClassDecl;
@@ -3856,6 +3980,69 @@ void TypeChecker::visitClassDecl(const ClassDecl *decl) {
   // TYPE-CHECKING PASS: Visit members to check their bodies and initializers
   for (const auto &member : decl->getMembers()) {
     member->accept(*this);
+  }
+
+  // --- NEW: Physical Layout and Bitfield Packing Pass ---
+  uint32_t currentPhysicalIndex = 0;
+  uint32_t currentBitOffset = 0;
+
+  for (const auto &member : decl->getMembers()) {
+    if (auto *varDecl = llvm::dyn_cast<VariableDecl>(member.get())) {
+      // Determine the storage size based on the primitive type
+      uint32_t storageSize = 64; // Default safe fallback
+      if (auto *prim = llvm::dyn_cast<PrimitiveType>(varDecl->getType())) {
+        switch (prim->getScalar()) {
+        case PrimitiveType::Scalar::U8:
+        case PrimitiveType::Scalar::I8:
+          storageSize = 8;
+          break;
+        case PrimitiveType::Scalar::U16:
+        case PrimitiveType::Scalar::I16:
+          storageSize = 16;
+          break;
+        case PrimitiveType::Scalar::U32:
+        case PrimitiveType::Scalar::I32:
+          storageSize = 32;
+          break;
+        case PrimitiveType::Scalar::U64:
+        case PrimitiveType::Scalar::I64:
+          storageSize = 64;
+          break;
+        default:
+          break;
+        }
+      }
+
+      // We use const_cast here because the AST visitor passes const pointers,
+      // but Semantic Analysis is responsible for decorating the AST with layout
+      // info.
+      auto *mutVarDecl = const_cast<VariableDecl *>(varDecl);
+
+      if (mutVarDecl->isBitfield()) {
+        // If this bitfield doesn't fit in the current integer, move to the next
+        // physical slot
+        if (currentBitOffset > 0 &&
+            (currentBitOffset + mutVarDecl->getBitWidth() > storageSize)) {
+          currentPhysicalIndex++;
+          currentBitOffset = 0;
+        }
+
+        mutVarDecl->setPhysicalIndex(currentPhysicalIndex);
+        mutVarDecl->setBitOffset(currentBitOffset);
+
+        // Advance the bit offset for the next member
+        currentBitOffset += mutVarDecl->getBitWidth();
+      } else {
+        // If it's NOT a bitfield, we must flush any pending bitfield storage
+        if (currentBitOffset > 0) {
+          currentPhysicalIndex++;
+          currentBitOffset = 0;
+        }
+        mutVarDecl->setPhysicalIndex(currentPhysicalIndex);
+        currentPhysicalIndex++; // Standard variables take up a full physical
+                                // slot
+      }
+    }
   }
 
   symbols.exitScope();
@@ -3983,61 +4170,79 @@ void TypeChecker::visitNullableType(const NullableType *t) {
   lastComputedType = t;
 }
 void TypeChecker::visitAnyType(const AnyType *t) { lastComputedType = t; }
-void TypeChecker::visitNamedType(const NamedType *t) {
-  // 1. Recurse into generic arguments to validate them
-  for (const auto &arg : t->getGenericArgs()) {
-    if (arg.type)
-      arg.type->accept(*this);
-  }
+void TypeChecker::visitNamedType(const NamedType *type) {
+  // 1. Handle Generic Instantiation FIRST
+  if (!type->getGenericArgs().empty()) {
+    Symbol *sym = symbols.lookup(type->getName());
 
-  // 2. Resolve the actual type and set lastComputedType
-  Symbol *sym = symbols.lookup(t->getName());
-  const ClassDecl *cls = context.lookupClass(t->getName());
+    if (!sym || !sym->decl || sym->decl->getKind() != StmtKind::GenericDecl) {
+      Diags.report(type->getLoc(), DiagID::err_type_mismatch)
+          << "Type '" << type->getName() << "' is not a generic template";
+      hasError = true;
+      lastComputedType = type;
+      return;
+    }
 
-  if (!sym && !cls) {
-    Diags.report(t->getLoc(), DiagID::err_unknown_type) << t->getName();
-    hasError = true;
-    lastComputedType = context.getAnyType();
-    return;
-  }
+    auto *genericDecl = static_cast<const GenericDecl *>(sym->decl);
 
-  // Set the type, but DO NOT early return. Fall through to validation!
-  if (sym && sym->decl && sym->decl->getKind() == StmtKind::GenericDecl) {
-    lastComputedType = t; // Preserve the generic arguments!
-  } else if (sym && sym->decl && sym->decl->getKind() == StmtKind::ImportDecl) {
-    lastComputedType = t; // Preserve generic arguments for opaque imports too!
-  } else if (sym && sym->type) {
-    lastComputedType = sym->type;
-  } else if (cls) {
-    lastComputedType = context.createNamedType(cls->getName());
-  }
+    auto error = resolver.validateGenericArgs(genericDecl->getTypeParams(),
+                                              type->getGenericArgs());
+    if (error) {
+      Diags.report(type->getLoc(), DiagID::err_type_mismatch)
+          << "Generic argument mismatch for '" << type->getName() << "'";
+      hasError = true;
+    } else {
+      std::vector<const Type *> concreteArgs;
+      for (auto &arg : type->getGenericArgs()) {
+        arg.type->accept(*this);
+        concreteArgs.push_back(lastComputedType);
+      }
 
-  // 3. Validate Constraints (e.g., no 'any' allowed, ownership constraints)
-  if (!t->getGenericArgs().empty() && sym) {
-    if (sym->decl && sym->decl->getKind() == StmtKind::GenericDecl) {
-      auto genericDecl = static_cast<const GenericDecl *>(sym->decl);
+      // --- [FIX] Check for existing instantiation to prevent duplicates! ---
+      std::string mangledName =
+          resolver.getMangledName(type->getName(), concreteArgs);
+      const ClassDecl *concreteClass = context.lookupClass(mangledName);
 
-      auto error = resolver.validateGenericArgs(genericDecl->getTypeParams(),
-                                                t->getGenericArgs());
+      if (!concreteClass) {
+        concreteClass = resolver.instantiateClass(genericDecl, concreteArgs);
+        if (concreteClass) {
+          pendingInstantiations.push_back(concreteClass);
 
-      if (error == GenericError::AnyConstraintViolation) {
-        Diags.report(t->getLoc(), DiagID::err_generic_constraint)
-            << "Cannot use 'any' as a generic argument in specialized type '"
-            << t->getName() << "'";
-        hasError = true;
-      } else if (error == GenericError::SharedConstraintViolation) {
-        Diags.report(t->getLoc(), DiagID::err_generic_constraint)
-            << "Type argument does not satisfy the 'shared' ownership "
-               "constraint for specialized type '"
-            << t->getName() << "'";
-        hasError = true;
-      } else if (error == GenericError::ArityMismatch) {
-        Diags.report(t->getLoc(), DiagID::err_generic_arity)
-            << "Wrong number of generic arguments for '" << t->getName() << "'";
-        hasError = true;
+          // Register it in the AST Context so subsequent lookups find it
+          // instantly
+          if (!context.lookupClass(concreteClass->getName())) {
+            context.registerClass(concreteClass);
+          }
+        }
+      }
+
+      if (concreteClass) {
+        auto *mutType = const_cast<NamedType *>(type);
+        mutType->setName(concreteClass->getName());
+
+        auto &mutableArgs = const_cast<std::vector<NamedType::GenericArg> &>(
+            mutType->getGenericArgs());
+        mutableArgs.clear();
       }
     }
   }
+
+  // 2. Lookup the base class to ensure it actually exists
+  const ClassDecl *classDecl = context.lookupClass(type->getName());
+
+  if (!classDecl) {
+    // [FIX] Check if this is a generic parameter (K, V, T) in the symbol table
+    Symbol *sym = symbols.lookup(type->getName());
+    if (sym && sym->kind == SymbolKind::Type) {
+      lastComputedType = type;
+      return; // It's perfectly valid, stop processing!
+    }
+
+    Diags.report(type->getLoc(), DiagID::err_unknown_type) << type->getName();
+    hasError = true;
+  }
+
+  lastComputedType = type;
 }
 void TypeChecker::visitLockType(const LockType *t) {
   t->getInner()->accept(*this);

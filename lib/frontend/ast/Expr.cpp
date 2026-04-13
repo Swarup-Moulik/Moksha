@@ -118,9 +118,9 @@ std::unique_ptr<Expr> CallExpr::clone() const {
 std::unique_ptr<Expr> MemberExpr::clone() const {
   auto cloned = std::make_unique<MemberExpr>(object->clone(), memberName,
                                              isOptionalAccess(), loc);
-  cloned->setType(getType());
-  cloned->setLayoutInfo(getMemberIndex(), isBitfield(), getBitWidth(),
-                        getBitOffset());
+  cloned->setLayoutInfo(this->getMemberIndex(), this->isBitfield(),
+                        this->getBitWidth(), this->getBitOffset());
+  cloned->setType(this->getType());
   cloned->setVirtualMethodInfo(isVirtualMethod(), getMemberIndex());
   return cloned;
 }

@@ -281,10 +281,10 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
             MIRValue *activeVal = valueStacks[alloca].empty()
                                       ? nullptr
                                       : valueStacks[alloca].back();
-            if (activeVal) {
-              // Replace all usages of this load with the active SSA value
-              replaceAllUsesInFunction(F, load, activeVal);
+            if (!activeVal) {
+              activeVal = M.getOrInsertConstant<ConstantUndef>(load->getType());
             }
+            replaceAllUsesInFunction(F, load, activeVal);
             toDelete.push_back(load);
           }
         }

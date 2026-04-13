@@ -8,7 +8,7 @@
 #include "moksha/MIR/MIRModule.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
-#include <algorithm> // for std::min
+#include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <stack>
@@ -222,6 +222,7 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
   case Opcode::Sub:
   case Opcode::Mul:
   case Opcode::Div:
+  case Opcode::Pow:
   case Opcode::Mod:
   case Opcode::FAdd:
   case Opcode::FSub:
@@ -274,7 +275,6 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
     }
 
     // Alloca returns a pointer
-    // [FIX] Use static helper and cast
     if (!isPointer(alloca->getType())) {
       logError("Alloca result must be a pointer", inst);
     } else {
@@ -314,13 +314,16 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
       auto *ptrTy = llvm::cast<hir::PointerType>(ptr->getType());
       expectedValTy = ptrTy->getPointee();
     } else {
-      // [FIX] Strictly enforce that stores target valid pointers!
       logError("Store destination must be a pointer", inst);
       break;
     }
 
-    // [FIX] Trust the AST if expectedValTy is null, and allow complex constants
     if (expectedValTy && expectedValTy != val->getType()) {
+      if (val->getType() &&
+          val->getType()->toString() == expectedValTy->toString()) {
+        break;
+      }
+
       bool isAllowed = false;
 
       // Allow if the instruction's type is completely missing (trust the AST)
@@ -505,7 +508,6 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
         return false;
 
       // 2. Verify Predecessor Relationship
-      // Logic: The terminator of 'incBlock' must target 'inst->getParent()'
       bool isPredecessor = false;
       if (!incBlock->getInstructions().empty()) {
         const MIRInst *term = incBlock->getInstructions().back().get();
@@ -553,7 +555,6 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
 
     if (ret->getReturnValue()) {
       // Check if function is void but returns value
-      // [FIX] Use static helper
       if (isVoid(funcRetType)) {
         logError("Void function cannot return a value", inst);
       } else {
@@ -563,7 +564,6 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
       }
     } else {
       // Check if function is non-void but returns void
-      // [FIX] Use static helper
       if (!isVoid(funcRetType)) {
         logError("Non-void function must return a value", inst);
       }
@@ -591,8 +591,7 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
   }
   case Opcode::LandingPad:
     // A LandingPad must be the very first non-phi instruction in an unwind
-    // block. (Strict enforcement is usually done in the backend, but basic pass
-    // here is fine).
+    // block.
     break;
   case Opcode::Resume:
   case Opcode::Throw: {
@@ -613,7 +612,44 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
     }
     break;
   }
+  case Opcode::StoreWeak: {
+    auto *st = static_cast<const StoreWeakInst *>(inst);
+    if (!st->getValue() || !st->getPointer()) {
+      logError("store_weak requires both a value and a pointer", inst);
+    }
+    break;
+  }
+  case Opcode::LoadWeak: {
+    auto *ld = static_cast<const LoadWeakInst *>(inst);
+    if (!ld->getPointer()) {
+      logError("load_weak requires a pointer", inst);
+    }
+    break;
+  }
+  case Opcode::Unreachable:
+    // No operands to verify
+    break;
+  case Opcode::AnyCast:
+  case Opcode::ArrayToSlice:
+  case Opcode::SliceToArray: {
+    break; // Trust the frontend type-checker for these casts
+  }
+  case Opcode::Spawn: {
+    const auto *spawn = static_cast<const SpawnInst *>(inst);
 
+    // Check using the specific getter your class provides
+    if (!spawn->getClosure()) {
+      logError("SpawnInst requires a closure operand", inst);
+      return false;
+    }
+
+    // The crucial PromiseType check
+    if (!llvm::isa<hir::HIRPromiseType>(spawn->getType())) {
+      logError("SpawnInst return type MUST be a PromiseType.", inst);
+      return false;
+    }
+    break;
+  }
   default:
     break;
   }
@@ -658,6 +694,10 @@ bool MIRVerifier::verifyType(const MIRValue *val, const hir::HIRType *expected,
     return false;
 
   if (val->getType() != expected) {
+    if (val->getType() && val->getType()->toString() == expected->toString()) {
+      return true;
+    }
+
     std::stringstream ss;
     ss << msg << " (Expected " << expected->toString() << ", got "
        << (val->getType() ? val->getType()->toString() : "null") << ")";

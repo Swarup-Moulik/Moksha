@@ -2,9 +2,9 @@
 
 #include "moksha/MIR/MIRBlock.h"
 #include "moksha/MIR/MIRFunction.h"
-#include "moksha/MIR/MIRGlobal.h" // [FIX] Added (renamed from MIRGLobal.h)
+#include "moksha/MIR/MIRGlobal.h"
 #include "moksha/MIR/MIRInst.h"
-#include "moksha/MIR/MIRModule.h" // [FIX] Added
+#include "moksha/MIR/MIRModule.h"
 
 #include <cassert>
 
@@ -78,6 +78,9 @@ public:
     case Opcode::Switch:
       visitSwitchInst(static_cast<SwitchInst *>(inst));
       break;
+    case Opcode::Unreachable: // [FIX] Added Unreachable
+      visitUnreachableInst(static_cast<UnreachableInst *>(inst));
+      break;
 
     // Memory
     case Opcode::Alloca:
@@ -99,6 +102,7 @@ public:
     case Opcode::Mul:
     case Opcode::Div:
     case Opcode::Mod:
+    case Opcode::Pow: // [FIX] Added Pow
     case Opcode::FAdd:
     case Opcode::FSub:
     case Opcode::FMul:
@@ -121,6 +125,14 @@ public:
     case Opcode::BitCast:
     case Opcode::IntToFloat:
     case Opcode::FloatToInt:
+    case Opcode::ZExt:
+    case Opcode::SExt:
+    case Opcode::Trunc:
+    case Opcode::PtrToInt:
+    case Opcode::IntToPtr:
+    case Opcode::AnyCast:
+    case Opcode::ArrayToSlice:
+    case Opcode::SliceToArray:
       visitCastInst(static_cast<CastInst *>(inst));
       break;
 
@@ -134,6 +146,12 @@ public:
     case Opcode::Retain:
     case Opcode::Release:
       visitARCInst(static_cast<ARCInst *>(inst));
+      break;
+    case Opcode::StoreWeak: // [FIX] Added Weak Ptr handling
+      visitStoreWeakInst(static_cast<StoreWeakInst *>(inst));
+      break;
+    case Opcode::LoadWeak: // [FIX] Added Weak Ptr handling
+      visitLoadWeakInst(static_cast<LoadWeakInst *>(inst));
       break;
     case Opcode::InsertValue:
       visitInsertValueInst(static_cast<InsertValueInst *>(inst));
@@ -202,6 +220,9 @@ public:
   }
   virtual void visitReturnInst(ReturnInst *inst) { visitInstruction(inst); }
   virtual void visitSwitchInst(SwitchInst *inst) { visitInstruction(inst); }
+  virtual void visitUnreachableInst(UnreachableInst *inst) {
+    visitInstruction(inst);
+  }
   virtual void visitAllocaInst(AllocaInst *inst) { visitInstruction(inst); }
   virtual void visitLoadInst(LoadInst *inst) { visitInstruction(inst); }
   virtual void visitStoreInst(StoreInst *inst) { visitInstruction(inst); }
@@ -214,6 +235,10 @@ public:
   virtual void visitCallInst(CallInst *inst) { visitInstruction(inst); }
   virtual void visitPhiInst(PhiInst *inst) { visitInstruction(inst); }
   virtual void visitARCInst(ARCInst *inst) { visitInstruction(inst); }
+  virtual void visitStoreWeakInst(StoreWeakInst *inst) {
+    visitInstruction(inst);
+  }
+  virtual void visitLoadWeakInst(LoadWeakInst *inst) { visitInstruction(inst); }
   virtual void visitInsertValueInst(InsertValueInst *inst) {
     visitInstruction(inst);
   }

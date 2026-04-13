@@ -50,8 +50,16 @@ public:
   resolveFunctionSignature(const FunctionDecl *funcDecl,
                            const llvm::StringMap<const Type *> &substitutions);
 
+  /// Generates a mangled name for a concrete instantiation
+  std::string getMangledName(llvm::StringRef baseName,
+                             const std::vector<const Type *> &typeArgs);
+
+  const ClassDecl *instantiateClass(const GenericDecl *genericTemplate,
+                                    const std::vector<const Type *> &typeArgs);
+
 private:
   ASTContext &context;
+  llvm::StringMap<const ClassDecl *> instantiatedClasses;
 };
 
 } // namespace moksha

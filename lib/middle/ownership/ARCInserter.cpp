@@ -26,6 +26,7 @@ public:
     for (auto &func : module->getFunctions()) {
       modified |= runOnFunction(func.get());
     }
+
     // Global Teardown (Module Destroy)
     if (MIRFunction *destroyFunc =
             module->getFunction("__moksha_module_destroy")) {
@@ -44,6 +45,7 @@ public:
 
         for (auto &globalPtr : module->getGlobalsMut()) {
           MIRGlobal *g = globalPtr.get();
+
           // Check if the global's underlying type requires ARC
           const hir::HIRType *valTy = nullptr;
           if (auto *ptrTy =
@@ -62,7 +64,8 @@ public:
 
             // 2. Release it
             auto releaseInst = std::make_unique<ARCInst>(
-                Opcode::Release, loadedVal, SourceLocation());
+                Opcode::Release, loadedVal, getDropFunc(loadedVal),
+                SourceLocation());
             releaseInst->setParent(entry);
 
             // Insert them before the return statement
@@ -84,6 +87,28 @@ private:
   MIRModule *module;
   DiagnosticEngine &diags;
 
+  MIRFunction *getDropFunc(MIRValue *val) {
+    if (!val)
+      return nullptr;
+    const hir::HIRType *valTy = val->getType();
+    if (auto *pTy = llvm::dyn_cast_or_null<hir::PointerType>(valTy)) {
+      valTy = pTy->getPointee();
+    }
+    if (valTy) {
+      std::string typeName = valTy->toString();
+      if (typeName.find("shared ") == 0)
+        typeName = typeName.substr(7);
+      if (typeName.find("struct ") == 0)
+        typeName = typeName.substr(7);
+      if (typeName.find("class ") == 0)
+        typeName = typeName.substr(6);
+
+      std::string dropName = typeName + ".destructor_ret_void";
+      return module->getFunction(dropName);
+    }
+    return nullptr;
+  }
+
   bool isRefCounted(const hir::HIRType *type) {
     if (auto *ptrType = llvm::dyn_cast<const hir::PointerType>(type)) {
       return ptrType->getOwnership() == hir::Ownership::Shared;
@@ -95,7 +120,8 @@ private:
 
   MIRValue *getUnderlyingObject(MIRValue *val) {
     while (auto *inst = llvm::dyn_cast<MIRInst>(val)) {
-      if (inst->getOpcode() == Opcode::BitCast) {
+      if (inst->getOpcode() == Opcode::BitCast ||
+          inst->getOpcode() == Opcode::AnyCast) {
         val = static_cast<CastInst *>(inst)->getValue();
         continue;
       } else if (inst->getOpcode() == Opcode::ExtractValue) {
@@ -111,41 +137,10 @@ private:
     return val;
   }
 
-  void insertDropIfAvailable(MIRValue *allocPtr, const hir::HIRType *valType,
-                             SourceLocation loc,
-                             std::vector<std::unique_ptr<MIRInst>> &newInsts) {
-    if (auto *ptrType = llvm::dyn_cast<const hir::PointerType>(valType)) {
-      if (const hir::HIRType *pointee = ptrType->getPointee()) {
-        std::string typeName = pointee->toString();
-        if (typeName.find("struct ") == 0)
-          typeName = typeName.substr(7);
-        if (typeName.find("class ") == 0)
-          typeName = typeName.substr(6);
-
-        std::string dropName = typeName + ".drop_ret_void";
-        if (MIRFunction *dropFunc = module->getFunction(dropName)) {
-          MIRValue *argVal = allocPtr;
-
-          if (!dropFunc->getRawArguments().empty()) {
-            const hir::HIRType *expectedTy =
-                dropFunc->getRawArguments()[0]->getType();
-            if (argVal->getType() != expectedTy) {
-              auto castInst = std::make_unique<CastInst>(
-                  Opcode::BitCast, argVal, expectedTy, "drop.cast", loc);
-              argVal = castInst.get();
-              newInsts.push_back(std::move(castInst));
-            }
-          }
-
-          std::vector<MIRValue *> args = {argVal};
-          newInsts.push_back(std::make_unique<CallInst>(
-              dropFunc, std::move(args), dropFunc->getType(), "", false, loc));
-        }
-      }
-    }
-  }
-
   bool runOnFunction(MIRFunction *func) {
+    if (func->isDeclaration())
+      return false;
+
     MIRBlock *entryBlock = func->getEntryBlock();
     bool functionModified = false;
 
@@ -162,37 +157,65 @@ private:
       std::vector<std::unique_ptr<MIRInst>> paramRetains;
       for (auto *arg : refCountedParams) {
         auto retain = std::make_unique<ARCInst>(
-            Opcode::Retain, arg,
+            Opcode::Retain, arg, nullptr,
             entryBlock->getInstructions().front()->getLoc());
         retain->setParent(entryBlock);
         paramRetains.push_back(std::move(retain));
         functionModified = true;
       }
+
       auto &entryInsts = entryBlock->getInstructionsMut();
-      entryInsts.insert(entryInsts.begin(),
-                        std::make_move_iterator(paramRetains.begin()),
+
+      auto insertIt = entryInsts.begin();
+      while (insertIt != entryInsts.end() &&
+             llvm::isa<AllocaInst>(insertIt->get())) {
+        ++insertIt;
+      }
+
+      entryInsts.insert(insertIt, std::make_move_iterator(paramRetains.begin()),
                         std::make_move_iterator(paramRetains.end()));
     }
 
-    if (func->isDeclaration())
-      return false;
-
     std::unordered_set<MIRValue *> initializedPointers;
 
-    for (auto &block : func->getBlocks()) {
-      auto &instructions = const_cast<std::vector<std::unique_ptr<MIRInst>> &>(
-          block->getInstructions());
+    for (auto &blockPtr : func->getBlocks()) {
+      MIRBlock *block = blockPtr.get();
+      // Need to swap out instructions array to safely mutate while iterating
+      auto &instructions = block->getInstructionsMut();
       std::vector<std::unique_ptr<MIRInst>> newInstructions;
 
       bool blockModified = false;
 
       for (auto &inst : instructions) {
 
-        // Insert Releases before Returning!
-        if (inst->getOpcode() == Opcode::Return && !refCountedParams.empty()) {
+        // Insert Releases before Returning, Throwing, or Resuming!
+        auto op = inst->getOpcode();
+        if ((op == Opcode::Return || op == Opcode::Throw ||
+             op == Opcode::Resume) &&
+            !refCountedParams.empty()) {
+
+          MIRValue *exitVal = nullptr;
+          if (op == Opcode::Return) {
+            exitVal = static_cast<ReturnInst *>(inst.get())->getReturnValue();
+          } else if (op == Opcode::Throw) {
+            exitVal = static_cast<ThrowInst *>(inst.get())->getException();
+          }
+
+          // Unwrap any bitcasts to find the true base pointer escaping the
+          // function
+          while (auto *cast = llvm::dyn_cast_or_null<CastInst>(exitVal)) {
+            exitVal = cast->getValue();
+          }
+
           for (auto *arg : refCountedParams) {
+            // Do NOT release the parameter if we are returning or throwing it!
+            // The +1 reference count safely transfers back to the
+            // caller/catcher.
+            if (arg == exitVal) {
+              continue;
+            }
             newInstructions.push_back(std::make_unique<ARCInst>(
-                Opcode::Release, arg, inst->getLoc()));
+                Opcode::Release, arg, getDropFunc(arg), inst->getLoc()));
           }
           blockModified = true;
         }
@@ -211,19 +234,18 @@ private:
             if (!llvm::isa<MIRArgument>(newValue)) {
               // A. Retain the new value
               newInstructions.push_back(std::make_unique<ARCInst>(
-                  Opcode::Retain, newValue, inst->getLoc()));
+                  Opcode::Retain, newValue, nullptr, inst->getLoc()));
             }
 
             // B. If the pointer was already initialized, release the old value
             if (initializedPointers.count(ptr)) {
-              insertDropIfAvailable(ptr, newValue->getType(), inst->getLoc(),
-                                    newInstructions);
               auto loadOld =
                   std::make_unique<LoadInst>(ptr, "old_val", inst->getLoc());
               MIRValue *oldValPtr = loadOld.get();
               newInstructions.push_back(std::move(loadOld));
               newInstructions.push_back(std::make_unique<ARCInst>(
-                  Opcode::Release, oldValPtr, inst->getLoc()));
+                  Opcode::Release, oldValPtr, getDropFunc(oldValPtr),
+                  inst->getLoc()));
             }
 
             // C. Push the actual store and mark as initialized
@@ -238,7 +260,7 @@ private:
       }
 
       for (auto &newInst : newInstructions) {
-        newInst->setParent(block.get());
+        newInst->setParent(block);
       }
       instructions = std::move(newInstructions);
 

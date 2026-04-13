@@ -27,6 +27,14 @@ public:
     return !hasMacro;
   }
 
+  void visitClass(hir::HIRClass &cls) override {
+    for (auto &method : cls.getMethods()) {
+      if (method) {
+        visitFunction(*method);
+      }
+    }
+  }
+
 private:
   DiagnosticEngine &diags;
   bool hasMacro = false;
@@ -35,21 +43,21 @@ private:
   // Bridges the gap between pointer-based AST navigation and the
   // reference-based Visitor interface.
   template <typename T> void dispatch(T *node) {
-      if (node && !hasMacro) {
-        // Check if this node IS a macro before we dispatch!
-        // Assuming your AST/HIR nodes have a way to identify macros, or
-        // if you are identifying them inside specific visit methods:
+    if (node && !hasMacro) {
+      // Check if this node IS a macro before we dispatch!
+      // Assuming your AST/HIR nodes have a way to identify macros, or
+      // if you are identifying them inside specific visit methods:
 
-        auto *nonConstNode = const_cast<std::remove_const_t<T> *>(node);
-        nonConstNode->accept(*this);
+      auto *nonConstNode = const_cast<std::remove_const_t<T> *>(node);
+      nonConstNode->accept(*this);
 
-        // If the visitor triggered the flag, report it at this node's location
-        // (Requires your HIR nodes to have a getLoc() method)
-        if (hasMacro) {
-           diags.report(node->getLoc(), DiagID::err_unexpanded_macro);
-        }
+      // If the visitor triggered the flag, report it at this node's location
+      // (Requires your HIR nodes to have a getLoc() method)
+      if (hasMacro) {
+        diags.report(node->getLoc(), DiagID::err_unexpanded_macro);
       }
     }
+  }
 
   // --- Structural Entry Points (NOT Overrides) ---
 

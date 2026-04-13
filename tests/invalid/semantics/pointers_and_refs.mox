@@ -1,25 +1,36 @@
-void takes_normal_ptr(*int view_ptr) {
-    int read_val = *view_ptr;
-}
+// --- Helper Functions ---
+    void takes_normal_ptr(*int view_ptr) {
+        int read_val = *view_ptr;
+    }
 
-void takes_mut_ptr(*mut int mut_ptr) {
-    *mut_ptr = 100;
-}
+    void takes_mut_ptr(*mut int mut_ptr) {
+        *mut_ptr = 100;
+    }
 
-void test_valid_pointers() {
-    int data = 42;
+    // ========================================================================
+    // [Test 1] Type Checker: Mutation Through Downgraded Pointer
+    // ========================================================================
+    void test_mutation_through_view() {
+        int data = 42;
+        *mut int p_mut = &data;
 
-    // 1. Mutable Pointer Usage (Scoped!)
-    {
-        *int p_mut = &data;
-        *p_mut = 50;
-
-        // Safe Capability Degradation works!
-        takes_normal_ptr(p_mut);
+        // Safe Capability Downgrade (Exclusive -> Shared)
         *int p_downgraded = p_mut;
-    } // <-- p_mut goes out of scope, releasing the mutable borrow on `data`!
 
-    // 2. Normal (View) Pointer Usage
-    *int p_normal = &data; // Now this is perfectly legal!
-    int x = *p_normal;
-}
+        // ERROR EXPECTED: Cannot mutate immutable type 'int'
+        *p_downgraded = 99;
+    }
+
+    // ========================================================================
+    // [Test 2] Type Checker: Illegal Capability Elevation
+    // ========================================================================
+    void test_illegal_elevation() {
+        int data = 42;
+        *mut int p_mut = &data;
+
+        // Safe Capability Downgrade
+        *int p_downgraded = p_mut;
+
+        // ERROR EXPECTED: Cannot pass read-only pointer to a mutable parameter
+        takes_mut_ptr(p_downgraded);
+    }

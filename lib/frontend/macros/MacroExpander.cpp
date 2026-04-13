@@ -226,7 +226,11 @@ std::vector<std::unique_ptr<Stmt>>
 ObjectMacro::expand(const std::vector<std::unique_ptr<Expr>> &args,
                     ASTContext &ctx) const {
   std::vector<std::unique_ptr<Stmt>> result;
-  MacroSubstituter substituter({}, args, ctx, true); // Hygiene ENABLED
+
+  // Create a local variable so it survives the scope
+  std::vector<MacroParam> emptyParams;
+  MacroSubstituter substituter(emptyParams, args, ctx, true);
+
   auto clonedExpr = substituter.cloneExpr(value.get());
   if (clonedExpr)
     result.push_back(
@@ -259,12 +263,17 @@ void MacroExpander::visitModuleDecl(const ModuleDecl *decl) {
       for (const auto &pName : md->getParams())
         mParams.push_back({pName, SourceLocation()});
       std::vector<std::unique_ptr<Stmt>> clonedBody;
-      MacroSubstituter substituter({}, {}, ctx,
-                                   false); // Hygiene DISABLED for collection
+
+      // Create local variables to prevent dangling references
+      std::vector<MacroParam> emptyParams;
+      std::vector<std::unique_ptr<Expr>> emptyArgs;
+      MacroSubstituter substituter(emptyParams, emptyArgs, ctx, false);
+
       for (const auto &s : md->getBody()) {
         if (auto cs = substituter.cloneStmt(s.get()))
           clonedBody.push_back(std::move(cs));
       }
+
       if (md->isFunctionMacro())
         macros.addMacro(std::make_unique<FunctionMacro>(
             md->getName(), std::move(mParams), std::move(clonedBody),

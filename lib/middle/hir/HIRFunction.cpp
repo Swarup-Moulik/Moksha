@@ -1,4 +1,5 @@
 #include "moksha/HIR/HIRFunction.h"
+#include "moksha/HIR/HIRExpr.h"
 #include "moksha/HIR/HIRParam.h"
 #include "moksha/HIR/HIRStmt.h"
 #include "moksha/HIR/HIRType.h"
@@ -51,6 +52,18 @@ void HIRFunction::accept(HIRVisitor &visitor) { visitor.visitFunction(*this); }
 void HIRFunction::accept(ConstHIRVisitor &visitor) const {
   visitor.visitFunction(*this);
 }
+
+// ============================================================================
+// [HIRParam Implementation]
+// ============================================================================
+HIRParam::HIRParam(std::string name, const HIRType *type, SourceLocation loc,
+                   std::unique_ptr<HIRExpr> defVal)
+    : name(std::move(name)), type(type), loc(loc),
+      defaultValue(std::move(defVal)) {}
+
+HIRParam::~HIRParam() = default;
+HIRParam::HIRParam(HIRParam &&) noexcept = default;
+HIRParam &HIRParam::operator=(HIRParam &&) noexcept = default;
 
 // [FIX] Updated to take ostream reference
 static void printIndent(llvm::raw_ostream &os, int indent) {
@@ -151,8 +164,11 @@ void HIRFunction::dump(llvm::raw_ostream &os, int indent) const {
 
 void HIRClass::dump(llvm::raw_ostream &os, int indent) const {
   printIndent(os, indent);
-  os << "Class: " << name;
-
+  if (isRefClass()) {
+    os << "RefClass: " << name;
+  } else {
+    os << "Class: " << name;
+  }
   if (isPacked()) {
     os << " [packed]";
   }

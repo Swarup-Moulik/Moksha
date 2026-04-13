@@ -179,6 +179,11 @@ public:
     bitfieldFlag = true;
     bitWidth = width;
   }
+  void setType(TypePtr newType) { type = std::move(newType); }
+  uint32_t getBitOffset() const { return bitOffset; }
+  void setBitOffset(uint32_t offset) { bitOffset = offset; }
+  uint32_t getPhysicalIndex() const { return physicalIndex; }
+  void setPhysicalIndex(uint32_t index) { physicalIndex = index; }
 
 private:
   TypePtr type;
@@ -194,6 +199,8 @@ private:
   bool bitfieldFlag = false;
   int bitWidth = -1;
   bool isThreadLocal = false;
+  uint32_t bitOffset = 0;
+  uint32_t physicalIndex = 0;
 };
 
 class FunctionDecl : public Decl {
@@ -264,6 +271,7 @@ public:
   void setOverride(bool o) { isOverride = o; }
   int getVTableIndex() const { return vtableIndex; }
   void setVTableIndex(int idx) { vtableIndex = idx; }
+  void setReturnType(TypePtr newType) { returnType = std::move(newType); }
 
 private:
   std::vector<Param> params;
@@ -324,6 +332,7 @@ public:
   void setSection(std::string s) { section = std::move(s); }
   bool hasVTable() const { return hasVTableFlag; }
   void setHasVTable(bool v) { hasVTableFlag = v; }
+  void setName(std::string newName) { name = std::move(newName); }
 
 private:
   std::vector<std::string> parentNames;

@@ -1,5 +1,7 @@
 #include "moksha/MIR/Passes/PassManager.h"
 #include "moksha/MIR/MIRModule.h"
+#include "llvm/Support/raw_ostream.h" // Added for llvm::outs()
+#include <typeinfo>
 
 namespace moksha {
 namespace mir {
@@ -16,7 +18,8 @@ void PassManager::run(MIRModule &module) {
   while (changed && iterationCount < MAX_ITERATIONS) {
     changed = false;
     for (auto &pass : passes) {
-      changed |= pass->runOnModule(module);
+      bool passChanged = pass->runOnModule(module);
+      changed |= passChanged;
     }
     iterationCount++;
   }

@@ -1,5 +1,5 @@
 ref class Mutex {
-    void drop() {}
+    destructor() {}
   }
 
   // Declare risky as an external or un-inlinable function

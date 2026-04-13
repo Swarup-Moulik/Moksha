@@ -1,4 +1,5 @@
 #include "moksha/MIR/Passes/SROAPass.h"
+#include "moksha/HIR/HIRModule.h"
 #include "moksha/HIR/HIRType.h"
 #include "moksha/MIR/MIRBlock.h"
 #include "moksha/MIR/MIRFunction.h"
@@ -156,9 +157,25 @@ bool SROAPass::runOnFunction(MIRFunction *F, MIRModule &M) {
 
       AllocaInst *replacement = newAllocas[fieldIdx];
 
-      // Replace all usages of the GEP result with the new scalar alloca pointer
-      replaceAllUsesInFunction(F, gep, replacement);
-      toDelete.push_back(gep);
+      // [FIX] Handle nested struct accesses (Deep GEPs)
+      if (gep->getIndices().size() == 2) {
+        replaceAllUsesInFunction(F, gep, replacement);
+        toDelete.push_back(gep);
+      } else {
+        // Rewrite the GEP to use the new base and shift the remaining indices
+        std::vector<MIRValue *> newIdx;
+        auto *i32Ty =
+            reinterpret_cast<hir::HIRModule *>(&M)->getIntType(32, true);
+
+        newIdx.push_back(
+            M.getOrInsertConstant<ConstantInt>(0, i32Ty)); // New Base 0
+        for (size_t i = 2; i < gep->getIndices().size(); ++i) {
+          newIdx.push_back(gep->getIndices()[i]);
+        }
+
+        gep->setPointer(replacement); // Change base to the shattered field
+        gep->setIndices(newIdx);      // Apply remaining path
+      }
     }
 
     toDelete.push_back(alloca);

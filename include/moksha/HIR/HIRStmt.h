@@ -1,6 +1,5 @@
 #pragma once
 
-#include "moksha/HIR/HIRExpr.h"
 #include "moksha/HIR/HIRStmt.h"
 #include "moksha/HIR/HIRType.h"
 #include "moksha/MIR/MIRValue.h"

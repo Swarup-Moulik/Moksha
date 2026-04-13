@@ -26,15 +26,18 @@ bool DeadCodeEliminationPass::runOnModule(MIRModule &M) {
     std::vector<MIRBlock *> worklist;
 
     MIRBlock *entry = func->getEntryBlock();
+    if (!entry)
+      continue;
     reachable.insert(entry);
     worklist.push_back(entry);
 
     while (!worklist.empty()) {
       MIRBlock *curr = worklist.back();
       worklist.pop_back();
-
+      if (!curr)
+        continue;
       for (MIRBlock *succ : curr->getSuccessors()) {
-        if (reachable.insert(succ).second) {
+        if (succ && reachable.insert(succ).second) {
           worklist.push_back(succ);
         }
       }
@@ -68,9 +71,11 @@ bool DeadCodeEliminationPass::runOnModule(MIRModule &M) {
       if (reachable.find(it->get()) == reachable.end()) {
         MIRBlock *deadBlock = it->get();
 
-        // Sever outgoing CFG edges to prevent dangling pointers in live blocks!
+        // Sever outgoing CFG edges ONLY for live blocks!
         for (MIRBlock *succ : deadBlock->getSuccessors()) {
-          succ->removePredecessor(deadBlock);
+          if (reachable.find(succ) != reachable.end()) {
+            succ->removePredecessor(deadBlock);
+          }
         }
 
         it = blocks.erase(it); // Now safe to pop the dead block
@@ -109,10 +114,13 @@ bool DeadCodeEliminationPass::runOnModule(MIRModule &M) {
           if (incoming.size() == 1) {
             MIRValue *resolvedVal = incoming.front().first;
 
-            // Swap all usages of this Phi for the single resolved value
-            replaceAllUsesLocally(func.get(), phi, resolvedVal);
+            // Break self-referential dead cycles to prevent use-after-free
+            if (resolvedVal == phi) {
+              resolvedVal =
+                  M.getOrInsertConstant<ConstantUndef>(phi->getType());
+            }
 
-            // Erase the redundant Phi
+            replaceAllUsesLocally(func.get(), phi, resolvedVal);
             it = insts.erase(it);
             changed = true;
             continue;
@@ -140,6 +148,8 @@ bool DeadCodeEliminationPass::runOnModule(MIRModule &M) {
 
   // Define what "Roots" the program has (instructions that DO things)
   auto hasSideEffects = [](MIRInst *i) -> bool {
+    if (!i)
+      return false;
     switch (i->getOpcode()) {
     case Opcode::Store:
     case Opcode::StoreWeak:
@@ -295,7 +305,11 @@ bool DeadCodeEliminationPass::runOnModule(MIRModule &M) {
                          func->getName() == "__moksha_module_destroy");
 
     for (auto &block : func->getBlocks()) {
+      if (!block)
+        continue;
       for (auto &inst : block->getInstructions()) {
+        if (!inst)
+          continue;
         if (isSystemRoot || hasSideEffects(inst.get())) {
           markAlive(inst.get());
         }

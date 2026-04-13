@@ -1,5 +1,6 @@
 #include "moksha/Backend/MLIR/Passes/CanonicalizeARC.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "moksha/Dialect/MokshaDialect.h"
@@ -11,45 +12,29 @@ namespace mlir {
 
 namespace {
 
-struct RemoveRedundantARCPair
-    : public ::mlir::OpRewritePattern<::moksha::ReleaseOp> {
-  using OpRewritePattern<::moksha::ReleaseOp>::OpRewritePattern;
+struct RemoveRedundantARCPairs
+    : public ::mlir::OpRewritePattern<::moksha::IR::ReleaseOp> {
+  using OpRewritePattern<::moksha::IR::ReleaseOp>::OpRewritePattern;
 
   ::mlir::LogicalResult
-  matchAndRewrite(::moksha::ReleaseOp releaseOp,
+  matchAndRewrite(::moksha::IR::ReleaseOp releaseOp,
                   ::mlir::PatternRewriter &rewriter) const override {
-    ::mlir::Value releasedValue = releaseOp.getOperand();
+    auto ptr = releaseOp.getValue();
+    ::mlir::Operation *prev = releaseOp->getPrevNode();
 
-    // [FIX] Use safe reverse iteration on the Block's instruction list
-    ::mlir::Block *block = releaseOp->getBlock();
-    auto &ops = block->getOperations();
-
-    // Create a reverse iterator starting *after* the releaseOp (going
-    // backwards)
-    auto it = ::mlir::Block::reverse_iterator(releaseOp);
-    auto end = ops.rend();
-
-    // Skip the release op itself
-    if (it != end)
-      ++it;
-
-    for (; it != end; ++it) {
-      ::mlir::Operation &prevOp = *it;
-
-      if (auto retainOp = ::llvm::dyn_cast<::moksha::RetainOp>(prevOp)) {
-        if (retainOp.getOperand() == releasedValue) {
+    while (prev) {
+      if (auto retainOp = ::mlir::dyn_cast<::moksha::IR::RetainOp>(prev)) {
+        if (retainOp.getValue() == ptr) {
           rewriter.eraseOp(releaseOp);
           rewriter.eraseOp(retainOp);
           return ::mlir::success();
         }
       }
-
-      if (prevOp.hasTrait<::mlir::OpTrait::IsTerminator>() ||
-          !prevOp.hasTrait<::mlir::OpTrait::ConstantLike>()) {
+      if (!prev->hasTrait<::mlir::OpTrait::AlwaysSpeculatableImplTrait>()) {
         break;
       }
+      prev = prev->getPrevNode();
     }
-
     return ::mlir::failure();
   }
 };
@@ -59,19 +44,16 @@ class CanonicalizeARCPass
                                  ::mlir::OperationPass<::mlir::ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CanonicalizeARCPass)
-
   ::llvm::StringRef getArgument() const final { return "canonicalize-arc"; }
   ::llvm::StringRef getDescription() const final {
     return "Canonicalize ARC operations";
   }
 
   void runOnOperation() override {
-    ::mlir::MLIRContext *context = &getContext();
-    ::mlir::RewritePatternSet patterns(context);
-    patterns.add<RemoveRedundantARCPair>(context);
-
-    if (::mlir::failed(::mlir::applyPatternsAndFoldGreedily(
-            getOperation(), std::move(patterns)))) {
+    ::mlir::RewritePatternSet patterns(&getContext());
+    patterns.add<RemoveRedundantARCPairs>(&getContext());
+    if (::mlir::failed(::mlir::applyPatternsGreedily(getOperation(),
+                                                     std::move(patterns)))) {
       signalPassFailure();
     }
   }

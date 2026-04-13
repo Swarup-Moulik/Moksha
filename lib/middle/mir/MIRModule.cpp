@@ -10,13 +10,13 @@ namespace mir {
 
 // The Scalable Registry
 static const std::unordered_map<std::string, IntrinsicID> IntrinsicTable = {
-    {"bswap16", IntrinsicID::Bswap},
-    {"bswap32", IntrinsicID::Bswap},
-    {"bswap64", IntrinsicID::Bswap},
-    {"clz", IntrinsicID::Ctlz},
-    {"cttz", IntrinsicID::Cttz},
-    {"ctpop", IntrinsicID::Ctpop},
-    {"trap", IntrinsicID::Trap},
+    {"llvm.bswap.i16", IntrinsicID::Bswap},
+    {"llvm.bswap.i32", IntrinsicID::Bswap},
+    {"llvm.bswap.i64", IntrinsicID::Bswap},
+    {"llvm.ctlz.i32", IntrinsicID::Ctlz},
+    {"llvm.cttz.i32", IntrinsicID::Cttz},
+    {"llvm.ctpop.i32", IntrinsicID::Ctpop},
+    {"llvm.trap", IntrinsicID::Trap},
     // --- Atomics Registry ---
     {"atomic_load", IntrinsicID::AtomicLoad},
     {"atomic_store", IntrinsicID::AtomicStore},

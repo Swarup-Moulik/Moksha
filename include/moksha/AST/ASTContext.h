@@ -77,11 +77,21 @@ public:
     return ownedTypes.back().get();
   }
 
+  // Store concrete classes generated from generic templates
+  void registerInstantiatedClass(std::unique_ptr<ClassDecl> decl);
+
+  // Retrieve a list of all dynamically generated classes
+  // so the Backend can lower them to HIR/MIR!
+  const std::vector<const ClassDecl *> &getInstantiatedClasses() const {
+    return instantiatedClassDecls;
+  }
+
 private:
   llvm::StringMap<const ClassDecl *> classMap;
   std::vector<TypePtr> ownedTypes;
   std::vector<std::unique_ptr<Decl>> builtinDecls;
-
+  std::vector<std::unique_ptr<ClassDecl>> ownedInstantiations;
+  std::vector<const ClassDecl *> instantiatedClassDecls;
   TypePtr VoidTy, BoolTy, CharTy, StringTy, AnyTy, NullTy;
   TypePtr I8Ty, I16Ty, I32Ty, I64Ty, ISizeTy;
   TypePtr U8Ty, U16Ty, U32Ty, U64Ty, USizeTy;

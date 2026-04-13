@@ -45,6 +45,46 @@ HIRType *HIRModule::getBoolType() {
   return newType;
 }
 
+HIRNullType *HIRModule::getNullType() {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Null));
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return static_cast<HIRNullType *>(existing);
+
+  auto *newType = new (typeAllocator) HIRNullType();
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRAnyType *HIRModule::getAnyType() {
+  llvm::FoldingSetNodeID ID;
+  ID.AddInteger(static_cast<int>(TypeKind::Any));
+  void *insertPos = nullptr;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
+    return static_cast<HIRAnyType *>(existing);
+
+  auto *newType = new (typeAllocator) HIRAnyType();
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
+HIRMapType *HIRModule::getMapType(const HIRType *key, const HIRType *value) {
+  llvm::FoldingSetNodeID id;
+  id.AddInteger(static_cast<int>(TypeKind::Map));
+  id.AddPointer(key);
+  id.AddPointer(value);
+
+  void *insertPos;
+  if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(id, insertPos)) {
+    return static_cast<HIRMapType *>(existing);
+  }
+
+  auto *newType = new (typeAllocator) HIRMapType(key, value);
+  uniqueTypes.InsertNode(newType, insertPos);
+  return newType;
+}
+
 HIRStringType *HIRModule::getStringType() {
   llvm::FoldingSetNodeID ID;
   ID.AddInteger(static_cast<int>(TypeKind::String));
@@ -239,17 +279,20 @@ PrimitiveType *HIRModule::getPrimitiveType(TypeKind kind) {
 
 StructType *HIRModule::getStructType(std::string name,
                                      std::vector<const HIRType *> fields,
-                                     std::vector<std::string> fieldNames) {
+                                     std::vector<std::string> fieldNames,
+                                     bool isPacked, bool isRefClass) {
   llvm::FoldingSetNodeID ID;
   ID.AddInteger(static_cast<int>(TypeKind::Struct));
   ID.AddString(name);
+  ID.AddBoolean(isRefClass);
 
   void *insertPos = nullptr;
   if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
-    return llvm::cast<StructType>(existing);
+    return static_cast<StructType *>(existing);
 
   auto *newType = new (typeAllocator)
-      StructType(std::move(name), std::move(fields), std::move(fieldNames));
+      StructType(std::move(name), std::move(fields), std::move(fieldNames),
+                 isPacked, isRefClass);
   uniqueTypes.InsertNode(newType, insertPos);
   return newType;
 }

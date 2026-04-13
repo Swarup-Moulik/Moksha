@@ -32,11 +32,13 @@ private:
   bool shouldInline(MIRFunction *callee);
 
   /// Performs the actual cloning of blocks and instructions into the caller.
-  void inlineCall(CallInst *call, MIRFunction *caller, MIRBlock *block,
-                  std::vector<std::unique_ptr<MIRInst>>::iterator &it);
+  bool inlineCall(MIRFunction *caller, MIRBlock *block,
+                  std::vector<std::unique_ptr<MIRInst>>::iterator &it,
+                  CallInst *call, MIRModule &M);
 
-  void inlineInvoke(InvokeInst *invoke, MIRFunction *caller, MIRBlock *block,
-                    std::vector<std::unique_ptr<MIRInst>>::iterator &it);
+  bool inlineInvoke(MIRFunction *caller, MIRBlock *block,
+                    std::vector<std::unique_ptr<MIRInst>>::iterator &it,
+                    InvokeInst *invoke, MIRModule &M);
 };
 
 } // namespace mir

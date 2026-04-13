@@ -373,6 +373,7 @@ public:
     virtualMethod = isVirtual;
     memberIndex = vtableIdx;
   }
+  void setType(const Type *t) { type = t; }
 
 private:
   ExprPtr object;

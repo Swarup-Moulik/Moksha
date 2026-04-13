@@ -26,6 +26,37 @@ static void replaceAllUsesInFunction(MIRFunction *F, MIRValue *oldVal,
 }
 
 // ============================================================================
+// [Helper] Replace Target Block in Terminators
+// ============================================================================
+static void replaceTargetBlock(MIRInst *term, MIRBlock *oldTarget,
+                               MIRBlock *newTarget) {
+  if (auto *br = llvm::dyn_cast<BranchInst>(term)) {
+    if (br->getTarget() == oldTarget)
+      br->setTarget(newTarget);
+  } else if (auto *condBr = llvm::dyn_cast<CondBranchInst>(term)) {
+    if (condBr->getTrueBlock() == oldTarget)
+      condBr->setTrueBlock(newTarget);
+    if (condBr->getFalseBlock() == oldTarget)
+      condBr->setFalseBlock(newTarget);
+  } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(term)) {
+    if (invoke->getNormalDest() == oldTarget)
+      invoke->setNormalDest(newTarget);
+    if (invoke->getUnwindDest() == oldTarget)
+      invoke->setUnwindDest(newTarget);
+  } else if (auto *throwInst = llvm::dyn_cast<ThrowInst>(term)) {
+    if (throwInst->getUnwindDest() == oldTarget)
+      throwInst->setUnwindDest(newTarget);
+  } else if (auto *switchInst = llvm::dyn_cast<SwitchInst>(term)) {
+    if (switchInst->getDefaultBlock() == oldTarget)
+      switchInst->setDefaultBlock(newTarget);
+    for (auto &casePair : switchInst->getCasesMut()) {
+      if (casePair.second == oldTarget)
+        casePair.second = newTarget;
+    }
+  }
+}
+
+// ============================================================================
 // [Pass Implementation]
 // ============================================================================
 
@@ -40,10 +71,78 @@ bool SimplifyCFGPass::runOnModule(MIRModule &M) {
 }
 
 bool SimplifyCFGPass::runOnFunction(MIRFunction *F) {
+  // ========================================================================
+  // 1. THE CFG HEALER (Must run FIRST!)
+  // ========================================================================
+  for (auto &blockPtr : F->getBlocks()) {
+    blockPtr->getSuccessors().clear();
+    blockPtr->getPredecessors().clear();
+  }
+
+  for (auto &blockPtr : F->getBlocks()) {
+    MIRBlock *b = blockPtr.get();
+    if (b->getInstructions().empty())
+      continue;
+
+    MIRInst *term = b->getInstructions().back().get();
+    if (auto *br = llvm::dyn_cast<BranchInst>(term)) {
+      b->addSuccessor(br->getTarget());
+      br->getTarget()->addPredecessor(b);
+    } else if (auto *condBr = llvm::dyn_cast<CondBranchInst>(term)) {
+      b->addSuccessor(condBr->getTrueBlock());
+      condBr->getTrueBlock()->addPredecessor(b);
+      b->addSuccessor(condBr->getFalseBlock());
+      condBr->getFalseBlock()->addPredecessor(b);
+    } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(term)) {
+      b->addSuccessor(invoke->getNormalDest());
+      invoke->getNormalDest()->addPredecessor(b);
+      if (invoke->getUnwindDest()) {
+        b->addSuccessor(invoke->getUnwindDest());
+        invoke->getUnwindDest()->addPredecessor(b);
+      }
+    } else if (auto *throwInst = llvm::dyn_cast<ThrowInst>(term)) {
+      if (throwInst->getUnwindDest()) {
+        b->addSuccessor(throwInst->getUnwindDest());
+        throwInst->getUnwindDest()->addPredecessor(b);
+      }
+    } else if (auto *switchInst = llvm::dyn_cast<SwitchInst>(term)) {
+      b->addSuccessor(switchInst->getDefaultBlock());
+      switchInst->getDefaultBlock()->addPredecessor(b);
+      for (auto &casePair : switchInst->getCases()) {
+        b->addSuccessor(casePair.second);
+        casePair.second->addPredecessor(b);
+      }
+    }
+
+    // [FIX] Restore Predecessor Edges from Phi Nodes!
+    for (auto &instPtr : b->getInstructions()) {
+      if (auto *phi = llvm::dyn_cast<PhiInst>(instPtr.get())) {
+        for (auto &[val, predBlock] : phi->getIncoming()) {
+          // Ensure the predecessor knows it flows into this block
+          if (std::find(predBlock->getSuccessors().begin(),
+                        predBlock->getSuccessors().end(),
+                        b) == predBlock->getSuccessors().end()) {
+            predBlock->addSuccessor(b);
+          }
+          // Ensure this block knows it receives flow from the predecessor
+          if (std::find(b->getPredecessors().begin(),
+                        b->getPredecessors().end(),
+                        predBlock) == b->getPredecessors().end()) {
+            b->addPredecessor(predBlock);
+          }
+        }
+      } else {
+        break; // Phis are always strictly at the top of the block
+      }
+    }
+  }
+
+  // ========================================================================
+  // 2. SIMPLIFICATION LOOP (Runs safely on a sanitized graph)
+  // ========================================================================
   bool changed = false;
   bool localChanged = true;
 
-  // Run the simplification loops until the control flow graph stabilizes
   while (localChanged) {
     localChanged = false;
     localChanged |= foldBranches(F);
@@ -52,9 +151,14 @@ bool SimplifyCFGPass::runOnFunction(MIRFunction *F) {
     changed |= localChanged;
   }
 
-  // Once stabilized, sweep out any orphaned/unreachable blocks
-  if (changed) {
-    removeDeadBlocks(F);
+  // ========================================================================
+  // 3. DEAD BLOCK SWEEP
+  // ========================================================================
+  size_t beforeSize = F->getBlocks().size();
+  removeDeadBlocks(F);
+
+  if (F->getBlocks().size() != beforeSize) {
+    changed = true;
   }
 
   return changed;
@@ -100,9 +204,6 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
     if (B == F->getEntryBlock())
       continue;
 
-    // [FIX] If the block is already dead (0 predecessors), ignore it!
-    // Otherwise, the pass will infinitely loop trying to bypass an orphaned
-    // block.
     if (B->getPredecessors().empty())
       continue;
 
@@ -125,7 +226,7 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
     for (MIRBlock *A : preds) {
       // 1. Rewrite A's terminator to point to C instead of B.
       auto *term = A->getInstructionsMut().back().get();
-      term->replaceOperand(B, C);
+      replaceTargetBlock(term, B, C);
 
       // 2. Update CFG Edges
       A->removeSuccessor(B);
@@ -135,6 +236,8 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
       // 3. Update Phi Nodes in C: Inherit values coming from B, but attribute
       // them to A
       for (auto &inst : C->getInstructionsMut()) {
+        if (!inst)
+          continue;
         if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
           MIRValue *valForB = nullptr;
           for (auto &[val, pred] : phi->getIncoming()) {
@@ -155,6 +258,8 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
     // Disconnect B from C
     C->removePredecessor(B);
     for (auto &inst : C->getInstructionsMut()) {
+      if (!inst)
+        continue;
       if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
         phi->removeIncoming(B);
       } else {
@@ -197,6 +302,8 @@ bool SimplifyCFGPass::mergeBlocks(MIRFunction *F) {
 
       // 2. Move instructions from B into A
       for (auto &inst : B->getInstructionsMut()) {
+        if (!inst)
+          continue;
         if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
           // Because B only has 1 predecessor (A), this Phi is purely redundant.
           // Extract the single incoming value, replace all uses, and drop the
@@ -227,6 +334,8 @@ bool SimplifyCFGPass::mergeBlocks(MIRFunction *F) {
 
         // 4. Update Phis in the successors to expect edges from A instead of B
         for (auto &inst : succ->getInstructionsMut()) {
+          if (!inst)
+            continue;
           if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
             MIRValue *valForB = nullptr;
             for (auto &[val, pred] : phi->getIncoming()) {
@@ -259,16 +368,43 @@ bool SimplifyCFGPass::mergeBlocks(MIRFunction *F) {
 // ----------------------------------------------------------------------------
 // Deletes blocks that have zero predecessors (except the Entry Block)
 void SimplifyCFGPass::removeDeadBlocks(MIRFunction *F) {
-  // NOTE: Requires `std::vector<std::unique_ptr<MIRBlock>>& getBlocksMut();`
-  // to be defined in `MIRFunction.h`.
   auto &blocks = F->getBlocksMut();
+  bool changed = true;
 
-  blocks.erase(std::remove_if(blocks.begin(), blocks.end(),
-                              [&](const std::unique_ptr<MIRBlock> &block) {
-                                return block.get() != F->getEntryBlock() &&
-                                       block->getPredecessors().empty();
-                              }),
-               blocks.end());
+  while (changed) {
+    changed = false;
+    for (auto it = blocks.begin(); it != blocks.end();) {
+      MIRBlock *block = it->get();
+
+      if (block != F->getEntryBlock() && block->getPredecessors().empty()) {
+
+        // 1. Sever outgoing CFG edges to prevent dangling pointers in live
+        // blocks!
+        for (MIRBlock *succ : block->getSuccessors()) {
+          succ->removePredecessor(block);
+
+          // 2. Remove incoming phi entries from this dead block
+          for (auto &inst : succ->getInstructionsMut()) {
+            if (!inst)
+              continue;
+            if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
+              phi->removeIncoming(block);
+            } else {
+              break; // Phis are always at the top
+            }
+          }
+        }
+
+        block->getSuccessors().clear();
+
+        // 3. Now it is safe to erase the block
+        it = blocks.erase(it);
+        changed = true; // Restart the sweep to catch cascading dead blocks
+      } else {
+        ++it;
+      }
+    }
+  }
 }
 
 } // namespace mir

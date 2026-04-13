@@ -17,6 +17,7 @@ namespace hir {
 class HIRFunction;
 class HIRStmt;
 class HIRClass;
+class HIRMapType;
 
 class HIRModule {
 public:
@@ -29,8 +30,8 @@ public:
   llvm::StringRef getName() const { return name; }
 
   // Function management
-  void addFunction(std::unique_ptr<HIRFunction> func); // Implemented in .cpp
-  llvm::ArrayRef<HIRFunction *> getFunctions() const;  // Implemented in .cpp
+  void addFunction(std::unique_ptr<HIRFunction> func);
+  llvm::ArrayRef<HIRFunction *> getFunctions() const;
   HIRFunction *getFunction(llvm::StringRef name) const;
 
   // Type Interning / Canonicalization
@@ -40,10 +41,12 @@ public:
   HIRIntType *getIntType(uint16_t width, bool isSigned,
                          bool isPtrWidth = false);
   HIRFloatType *getFloatType(uint16_t width);
-
+  HIRNullType *getNullType();
+  HIRAnyType *getAnyType();
   StructType *getStructType(std::string name,
                             std::vector<const HIRType *> fields,
-                            std::vector<std::string> fieldNames = {});
+                            std::vector<std::string> fieldNames = {},
+                            bool isPacked = false, bool isRefClass = false);
   UnionType *getUnionType(std::string name, std::vector<const HIRType *> fields,
                           std::vector<std::string> fieldNames = {});
   PointerType *getPointerType(const HIRType *pointee, Ownership own,
@@ -56,6 +59,7 @@ public:
                                  std::vector<const HIRType *> params);
   ArrayType *getArrayType(const HIRType *element, uint64_t size);
   SliceType *getSliceType(const HIRType *element);
+  HIRMapType *getMapType(const HIRType *key, const HIRType *value);
   HIRNullableType *getNullableType(const HIRType *inner);
   HIRWeakType *getWeakType(const HIRType *inner);
   HIRDecimalType *getDecimalType(unsigned int precision, unsigned int scale);

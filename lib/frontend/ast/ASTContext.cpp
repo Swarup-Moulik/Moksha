@@ -145,4 +145,9 @@ const Type *ASTContext::getSliceType(const Type *elementType) {
       std::make_unique<SliceType>(elementType->clone(), elementType->getLoc()));
 }
 
+void ASTContext::registerInstantiatedClass(std::unique_ptr<ClassDecl> decl) {
+  instantiatedClassDecls.push_back(decl.get());
+  ownedInstantiations.push_back(std::move(decl));
+}
+
 } // namespace moksha

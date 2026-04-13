@@ -27,7 +27,11 @@ enum class ValueKind {
   ConstantSlice,
   ConstantMap,
   ConstantStruct,
+  ConstantUnion,
   ConstantBitCast,
+  ConstantAnyCast,
+  ConstantArrayToSlice,
+  ConstantSliceToArray,
   BasicBlock,
   Function
 };

@@ -88,6 +88,25 @@ SwitchInst *MIRBuilder::createSwitch(MIRValue *cond, MIRBlock *defaultBlock,
   return insert(std::make_unique<SwitchInst>(cond, defaultBlock, loc));
 }
 
+void MIRBuilder::addSwitchCase(SwitchInst *swInst, MIRValue *val,
+                               MIRBlock *dest) {
+  if (!swInst || !dest)
+    return;
+
+  // Add the case to the instruction
+  swInst->addCase(val, dest);
+
+  // Wire the CFG edge dynamically
+  MIRBlock *parent = swInst->getParent();
+  if (!parent)
+    parent = currentBlock; // Fallback if instruction isn't inserted yet
+
+  if (parent) {
+    parent->addSuccessor(dest);
+    dest->addPredecessor(parent);
+  }
+}
+
 // ============================================================================
 // [Arithmetic & Logic]
 // ============================================================================
@@ -266,12 +285,37 @@ CastInst *MIRBuilder::createBitCast(MIRValue *val, const hir::HIRType *destType,
       std::make_unique<CastInst>(Opcode::BitCast, val, destType, name, loc));
 }
 
+CastInst *MIRBuilder::createAnyCast(MIRValue *val, const hir::HIRType *destType,
+                                    const std::string &name,
+                                    SourceLocation loc) {
+  return insert(
+      std::make_unique<CastInst>(Opcode::AnyCast, val, destType, name, loc));
+}
+
+CastInst *MIRBuilder::createArrayToSlice(MIRValue *val,
+                                         const hir::HIRType *destType,
+                                         const std::string &name,
+                                         SourceLocation loc) {
+  return insert(std::make_unique<CastInst>(Opcode::ArrayToSlice, val, destType,
+                                           name, loc));
+}
+
+CastInst *MIRBuilder::createSliceToArray(MIRValue *val,
+                                         const hir::HIRType *destType,
+                                         const std::string &name,
+                                         SourceLocation loc) {
+  return insert(std::make_unique<CastInst>(Opcode::SliceToArray, val, destType,
+                                           name, loc));
+}
+
 ARCInst *MIRBuilder::createRetain(MIRValue *obj, SourceLocation loc) {
-  return insert(std::make_unique<ARCInst>(Opcode::Retain, obj, loc));
+  // Explicitly pass nullptr for dropFunc
+  return insert(std::make_unique<ARCInst>(Opcode::Retain, obj, nullptr, loc));
 }
 
 ARCInst *MIRBuilder::createRelease(MIRValue *obj, SourceLocation loc) {
-  return insert(std::make_unique<ARCInst>(Opcode::Release, obj, loc));
+  // Explicitly pass nullptr for dropFunc
+  return insert(std::make_unique<ARCInst>(Opcode::Release, obj, nullptr, loc));
 }
 
 StoreWeakInst *MIRBuilder::createStoreWeak(MIRValue *val, MIRValue *ptr,
@@ -357,6 +401,7 @@ SpawnInst *MIRBuilder::createSpawn(MIRValue *closure,
                                    const hir::HIRType *handleType,
                                    const std::string &name,
                                    SourceLocation loc) {
+
   return insert(
       std::make_unique<SpawnInst>(closure, threadKind, handleType, name, loc));
 }

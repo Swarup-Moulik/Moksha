@@ -66,6 +66,13 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
       } else if (auto *ret = llvm::dyn_cast<ReturnInst>(inst)) {
         if (ret->getReturnValue())
           defUse[ret->getReturnValue()].push_back(inst);
+      } else if (auto *makeClosure = llvm::dyn_cast<MakeClosureInst>(inst)) {
+        defUse[makeClosure->getFunctionPointer()].push_back(inst);
+        for (auto *cap : makeClosure->getCaptures())
+          defUse[cap].push_back(inst);
+      } else if (auto *spawn = llvm::dyn_cast<SpawnInst>(inst)) {
+        if (spawn->getClosure())
+          defUse[spawn->getClosure()].push_back(inst);
       }
     }
   }
@@ -74,25 +81,70 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
   for (CallInst *alloc : allocations) {
     if (!doesEscape(alloc, defUse)) {
 
-      // Find the bitcast to get the actual target type (e.g., Arc<Cycle>)
-      CastInst *bitcast = nullptr;
+      // [FIX] Deep recursive trace for ARC uses
+      bool hasARCUses = false;
+      std::vector<MIRInst *> worklist;
+      std::unordered_set<MIRInst *> visited;
+
       for (auto *user : defUse[alloc]) {
-        if (auto *cast = llvm::dyn_cast<CastInst>(user)) {
-          bitcast = cast;
+        worklist.push_back(user);
+      }
+
+      while (!worklist.empty()) {
+        MIRInst *curr = worklist.back();
+        worklist.pop_back();
+
+        if (!visited.insert(curr).second)
+          continue;
+
+        if (llvm::isa<ARCInst>(curr)) {
+          hasARCUses = true;
           break;
+        }
+
+        // Trace through any instruction that aliases the memory
+        if (llvm::isa<CastInst>(curr) || llvm::isa<GetElementPtrInst>(curr) ||
+            llvm::isa<StoreInst>(curr) || llvm::isa<LoadInst>(curr)) {
+          for (auto *nextUser : defUse[curr]) {
+            worklist.push_back(nextUser);
+          }
         }
       }
 
-      if (!bitcast)
+      // DO NOT stack-promote memory managed by the ARC runtime!
+      if (hasARCUses)
         continue;
 
-      // Extract the underlying allocated type (e.g., Cycle)
-      const hir::HIRType *actualType = bitcast->getType();
+      std::vector<CastInst *> bitcasts;
+      for (auto *user : defUse[alloc]) {
+        if (auto *cast = llvm::dyn_cast<CastInst>(user)) {
+          bitcasts.push_back(cast);
+        }
+      }
+
+      if (bitcasts.empty())
+        continue;
+
+      // Use the first one to determine the type
+      const hir::HIRType *actualType = bitcasts[0]->getType();
       const hir::HIRType *pointeeType = nullptr;
+      bool isShared = false;
+
       if (auto *pTy = llvm::dyn_cast_or_null<hir::PointerType>(actualType)) {
         pointeeType = pTy->getPointee();
+        if (pTy->getOwnership() == hir::Ownership::Shared) {
+          isShared = true;
+        }
       } else {
         pointeeType = actualType;
+        if (actualType &&
+            actualType->toString().find("shared ") != std::string::npos) {
+          isShared = true;
+        }
+      }
+
+      if (isShared) {
+        continue;
       }
 
       // 3. Promote to Stack: Create an AllocaInst
@@ -110,23 +162,44 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
           entryBlock->getInstructionsMut().begin(), std::move(alloca));
 
       // Replace all uses of the old BitCast with the new stack Alloca
-      replaceAllUsesInFunction(F, bitcast, newAllocaPtr);
+      for (auto *bc : bitcasts) {
+        replaceAllUsesInFunction(F, bc, newAllocaPtr);
+      }
 
-      // Hard Erase the old BitCast
-      auto &castInsts = bitcast->getParent()->getInstructionsMut();
-      castInsts.erase(std::remove_if(castInsts.begin(), castInsts.end(),
-                                     [&](const std::unique_ptr<MIRInst> &i) {
-                                       return i.get() == bitcast;
-                                     }),
-                      castInsts.end());
+      // Redirect any remaining uses of the raw allocation
+      replaceAllUsesInFunction(F, alloc, newAllocaPtr);
+
+      for (auto *bitcast : bitcasts) {
+        replaceAllUsesInFunction(F, bitcast, newAllocaPtr);
+        auto &castInsts = bitcast->getParent()->getInstructionsMut();
+        castInsts.erase(std::remove_if(castInsts.begin(), castInsts.end(),
+                                       [&](const std::unique_ptr<MIRInst> &i) {
+                                         return i.get() == bitcast;
+                                       }),
+                        castInsts.end());
+      }
 
       std::vector<CallInst *> freeCalls; // Track ALL frees
-      if (defUse.count(bitcast)) {
-        for (auto *user : defUse[bitcast]) {
+      for (auto *bc : bitcasts) {
+        if (defUse.count(bc)) {
+          for (auto *user : defUse[bc]) {
+            if (auto *call = llvm::dyn_cast<CallInst>(user)) {
+              if (call->getCallee() &&
+                  call->getCallee()->getName() == "__moksha_free") {
+                freeCalls.push_back(call); // Don't break!
+              }
+            }
+          }
+        }
+      }
+
+      // Sweep frees directly on the raw alloc
+      if (defUse.count(alloc)) {
+        for (auto *user : defUse[alloc]) {
           if (auto *call = llvm::dyn_cast<CallInst>(user)) {
             if (call->getCallee() &&
                 call->getCallee()->getName() == "__moksha_free") {
-              freeCalls.push_back(call); // Don't break!
+              freeCalls.push_back(call);
             }
           }
         }
@@ -195,8 +268,10 @@ bool EscapeAnalysisPass::doesEscape(
         if (ext->getIndex() == 0) {
           worklist.push_back(ext);
         }
-      } else if (llvm::isa<MakeClosureInst>(user)) {
-        return true; // Capturing memory into a closure escapes it
+      } else if (auto *makeClosure = llvm::dyn_cast<MakeClosureInst>(user)) {
+        worklist.push_back(makeClosure); // Trace through the closure object
+      } else if (llvm::isa<SpawnInst>(user)) {
+        return true; // Spawning a thread escapes everything inside it
       }
       // LoadInst and ARCInst are safe; they don't leak the pointer identity
     }

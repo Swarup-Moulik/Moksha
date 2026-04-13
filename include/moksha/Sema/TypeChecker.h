@@ -63,6 +63,10 @@ private:
   bool checkVisibility(const Decl *memberDecl, const ClassDecl *ownerClass,
                        SourceLocation loc);
 
+  // A queue of newly instantiated classes that need to be type-checked
+  std::vector<const ClassDecl *> pendingInstantiations;
+  void processPendingInstantiations();
+
   // --- ASTVisitor Overrides ---
   void visitIntegerLiteral(const IntegerLiteral *expr) override;
   void visitFloatLiteral(const FloatLiteral *expr) override;

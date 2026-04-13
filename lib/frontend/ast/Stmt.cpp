@@ -67,6 +67,9 @@ std::unique_ptr<Decl> VariableDecl::clone() const {
   cloned->setUsed(isUsedVar());
   cloned->setBitWidth(getBitWidth());
   cloned->setThreadLocal(isThreadLocalVar());
+  cloned->setBitfield(this->getBitWidth());
+  cloned->setBitOffset(this->getBitOffset());
+  cloned->setPhysicalIndex(this->getPhysicalIndex());
   return cloned;
 }
 

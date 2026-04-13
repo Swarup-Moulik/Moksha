@@ -19,10 +19,17 @@ static MIRValue *LOCK_MARKER = reinterpret_cast<MIRValue *>(0x10C1C);
 static bool isPointerType(MIRValue *val) {
   if (!val || !val->getType())
     return false;
+
+  auto kind = val->getType()->getKind();
+  if (kind == hir::TypeKind::Any || kind == hir::TypeKind::Int ||
+      kind == hir::TypeKind::Float || kind == hir::TypeKind::Decimal ||
+      kind == hir::TypeKind::Bool) {
+    return false;
+  }
+
   if (val->getBorrowKind() != BorrowKind::None)
     return true;
 
-  auto kind = val->getType()->getKind();
   switch (kind) {
   case hir::TypeKind::Pointer:
   case hir::TypeKind::Reference:
@@ -47,6 +54,12 @@ static bool isMoveOnlyType(const hir::HIRType *type) {
   case hir::TypeKind::Promise:
   case hir::TypeKind::Closure:
     return true;
+  case hir::TypeKind::Any:
+  case hir::TypeKind::Int:
+  case hir::TypeKind::Float:
+  case hir::TypeKind::Decimal:
+  case hir::TypeKind::Bool:
+    return false;
   case hir::TypeKind::Pointer:
     if (auto *ptrTy = llvm::dyn_cast<hir::PointerType>(type)) {
       return ptrTy->getOwnership() == hir::Ownership::Owned;
@@ -359,9 +372,8 @@ void NLLBorrowChecker::computeDataflow(MIRFunction *func) {
         }
 
         if (!isClosureEnv) {
-          // [NEW FIX] Only create loans for actual pointer/alias types, not
-          // primitives!
-          if (isPointerType(store->getValue())) {
+          if (isPointerType(store->getValue()) ||
+              isMoveType(store->getValue())) {
             for (const Place &src : srcPlaces) {
               if (src.base) {
                 // 1. Register loan against the direct pointer
@@ -621,6 +633,12 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
           MIRValue *currPtr = q.front();
           q.pop();
 
+          // We must catch this before the pointer type filter skips struct
+          // environments!
+          if (llvm::isa<AllocaInst>(currPtr)) {
+            return true;
+          }
+
           if (!isPointerType(currPtr) && !isMoveType(currPtr))
             continue;
 
@@ -683,6 +701,46 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
       };
 
       if (auto *load = llvm::dyn_cast<LoadInst>(inst)) {
+        bool isImplicitDrop =
+            (load->getName().find("cleanup_val") != std::string::npos);
+
+        // Slow path: Scan forward to see if this load feeds into a
+        // Drop/Release/Free
+        if (!isImplicitDrop) {
+          auto &insts = blockPtr->getInstructions();
+          auto it = std::find_if(insts.begin(), insts.end(),
+                                 [&](const std::unique_ptr<MIRInst> &i) {
+                                   return i.get() == inst;
+                                 });
+
+          if (it != insts.end()) {
+            auto lookaheadIt = std::next(it);
+            while (lookaheadIt != insts.end()) {
+              MIRInst *nextInst = lookaheadIt->get();
+
+              if (llvm::isa<CastInst>(nextInst) ||
+                  llvm::isa<ExtractValueInst>(nextInst) ||
+                  llvm::isa<AllocaInst>(nextInst)) {
+                ++lookaheadIt;
+                continue;
+              }
+
+              if (nextInst->getOpcode() == Opcode::Release) {
+                isImplicitDrop = true;
+              } else if (auto *call = llvm::dyn_cast<CallInst>(nextInst)) {
+                if (call->getCallee()) {
+                  std::string calleeName = call->getCallee()->getName();
+                  if (calleeName.find("destructor") != std::string::npos ||
+                      calleeName.find("__moksha_free") != std::string::npos) {
+                    isImplicitDrop = true;
+                  }
+                }
+              }
+              break;
+            }
+          }
+        }
+
         for (auto &p : resolvePlace(load->getPointer())) {
           if (!p.base)
             continue;
@@ -691,6 +749,12 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
           for (const Loan &active : activeLoans) {
             if (active.pointer == nullptr &&
                 active.borrowedPlace.conflictsWith(p)) {
+
+              if (isImplicitDrop) {
+                reported = true;
+                break;
+              }
+
               diags.report(inst->getLoc(), DiagID::err_borrow_violation)
                   << "Use of moved value. The memory was previously moved or "
                      "dropped.";
@@ -797,7 +861,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
             break;
         }
 
-        if (isDestLongLived && isPointerType(store->getValue())) {
+        if (isDestLongLived && (isPointerType(store->getValue()) ||
+                                isMoveType(store->getValue()))) {
           for (const Place &srcPlace : srcPlaces) {
             if (srcPlace.base) {
               // 1. Check for standard Local Stack escapes
@@ -809,11 +874,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
                        "caller "
                        "argument.";
                 break;
-              }
-              // [FIX 2] Prevent Unsafe capabilities from leaking to the Safe
-              // global scope
-              else if (auto *global =
-                           llvm::dyn_cast<MIRGlobal>(srcPlace.base)) {
+              } else if (auto *global =
+                             llvm::dyn_cast<MIRGlobal>(srcPlace.base)) {
                 if (global->isConstant() &&
                     isExclusiveBorrow(store->getValue())) {
                   diags.report(inst->getLoc(), DiagID::err_borrow_violation)
@@ -827,9 +889,7 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
           }
         }
 
-        if (isPointerType(store->getValue())) {
-          // [FIX] Prevent duplicate alias errors by relying on
-          // MakeClosureInst's native capture checks
+        if (isPointerType(store->getValue()) || isMoveType(store->getValue())) {
           bool isStoreOfClosure = false;
           if (store->getValue() && store->getValue()->getType()) {
             std::string tyName = store->getValue()->getType()->toString();
@@ -1121,6 +1181,12 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
             while (!q.empty()) {
               MIRValue *currPtr = q.front();
               q.pop();
+
+              // We must catch this before the pointer type filter skips struct
+              // environments!
+              if (llvm::isa<AllocaInst>(currPtr)) {
+                return true;
+              }
 
               // Safe by-value copies of primitives do not capture stack memory!
               if (!isPointerType(currPtr) && !isMoveType(currPtr)) {

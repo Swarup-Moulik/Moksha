@@ -110,18 +110,20 @@ public:
   HIRClass(std::string name, std::vector<HIRGenericParam> typeParams,
            const HIRType *structType,
            std::vector<std::unique_ptr<HIRFunction>> methods,
-           bool isPacked = false, int align = 0, std::string section = "")
+           bool isPacked = false, int align = 0, std::string section = "",
+           bool isRefClass = false)
       : name(std::move(name)), typeParams(std::move(typeParams)),
         structType(structType), methods(std::move(methods)),
         isPackedFlag(isPacked), alignment(align),
-        sectionName(std::move(section)) {}
+        sectionName(std::move(section)), isRefClassFlag(isRefClass) {}
 
   HIRClass(std::string name, const HIRType *structType,
            std::vector<std::unique_ptr<HIRFunction>> methods,
-           bool isPacked = false, int align = 0, std::string section = "")
+           bool isPacked = false, int align = 0, std::string section = "",
+           bool isRefClass = false)
       : name(std::move(name)), structType(structType),
         methods(std::move(methods)), isPackedFlag(isPacked), alignment(align),
-        sectionName(std::move(section)) {}
+        sectionName(std::move(section)), isRefClassFlag(isRefClass) {}
 
   const std::string &getName() const { return name; }
   const std::vector<HIRGenericParam> &getTypeParams() const {
@@ -142,6 +144,9 @@ public:
   void setParentTypes(std::vector<const HIRType *> parents) {
     parentTypes = std::move(parents);
   }
+
+  bool isRefClass() const { return isRefClassFlag; }
+
   void dump(llvm::raw_ostream &os, int indent = 0) const;
 
 private:
@@ -154,6 +159,7 @@ private:
   std::string sectionName;
   bool hasVTableFlag = false;
   std::vector<const HIRType *> parentTypes;
+  bool isRefClassFlag = false;
 };
 
 } // namespace hir
