@@ -1,0 +1,22 @@
+println("--- [E2E] unicode_and_whitespace.mox ---")
+
+// 1. Unicode Identifiers
+int über_var = 100;
+string 漢字 = "Hanzi";
+float ∆_delta = 3.14;
+
+println(über_var);
+println(漢字);
+println(∆_delta);
+
+// 2. Weird Whitespace
+int	a =10; // Contains tab, vertical tab, and form feed
+println(a);
+
+// 3. Extremely Long Identifier (Stress Test)
+int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = 1;
+println(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);
+
+// 4. EOF without trailing newline
+int b = 2
+println(b) // No newline after this

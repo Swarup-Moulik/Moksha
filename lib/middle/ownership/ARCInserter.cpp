@@ -24,7 +24,7 @@ public:
   bool run() {
     bool modified = false;
     for (auto &func : module->getFunctions()) {
-      modified |= runOnFunction(func.get());
+      modified |= runOnFunction(func);
     }
 
     // Global Teardown (Module Destroy)
@@ -45,6 +45,10 @@ public:
 
         for (auto &globalPtr : module->getGlobalsMut()) {
           MIRGlobal *g = globalPtr.get();
+
+          if (g->isConstant()) {
+            continue;
+          }
 
           // Check if the global's underlying type requires ARC
           const hir::HIRType *valTy = nullptr;
@@ -91,6 +95,10 @@ private:
     if (!val)
       return nullptr;
     const hir::HIRType *valTy = val->getType();
+    if (auto *nullableTy =
+            llvm::dyn_cast_or_null<hir::HIRNullableType>(valTy)) {
+      valTy = nullableTy->getInner();
+    }
     if (auto *pTy = llvm::dyn_cast_or_null<hir::PointerType>(valTy)) {
       valTy = pTy->getPointee();
     }
@@ -110,6 +118,13 @@ private:
   }
 
   bool isRefCounted(const hir::HIRType *type) {
+    if (!type)
+      return false;
+
+    if (auto *nullableTy = llvm::dyn_cast<const hir::HIRNullableType>(type)) {
+      type = nullableTy->getInner();
+    }
+
     if (auto *ptrType = llvm::dyn_cast<const hir::PointerType>(type)) {
       return ptrType->getOwnership() == hir::Ownership::Shared;
     }
@@ -229,10 +244,27 @@ private:
             MIRValue *ptr = getUnderlyingObject(store->getPointer());
             blockModified = true;
 
+            // [FIX] Trace the value to see if it came straight from the
+            // allocator
+            bool isFreshAllocation = false;
+            MIRValue *traceVal = newValue;
+
+            // Pierce through bitcasts to find the source
+            while (auto *cast = llvm::dyn_cast<CastInst>(traceVal)) {
+              traceVal = cast->getValue();
+            }
+            // If the source is an allocator call, the ref_count is already 1!
+            if (auto *call = llvm::dyn_cast<CallInst>(traceVal)) {
+              if (call->getCallee() &&
+                  (call->getCallee()->getName() == "__moksha_alloc" ||
+                   call->getCallee()->getName() == "moksha_rt_array_alloc")) {
+                isFreshAllocation = true;
+              }
+            }
+
             // A. Do NOT emit a Retain if we are storing a function parameter
-            // into its local variable slot.
-            if (!llvm::isa<MIRArgument>(newValue)) {
-              // A. Retain the new value
+            // into its local variable slot OR if the object was just allocated.
+            if (!llvm::isa<MIRArgument>(newValue) && !isFreshAllocation) {
               newInstructions.push_back(std::make_unique<ARCInst>(
                   Opcode::Retain, newValue, nullptr, inst->getLoc()));
             }

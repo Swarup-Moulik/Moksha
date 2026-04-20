@@ -1,0 +1,13 @@
+from "cyclic_module_a" import { ClassA }
+
+public class ClassB {
+    public ClassA? aRef;
+
+    constructor() {
+        this.aRef = null;
+    }
+
+    public string getName() {
+        return "I am ClassB";
+    }
+}

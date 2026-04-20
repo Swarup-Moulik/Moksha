@@ -1,0 +1,29 @@
+println("--- [E2E] memory_qualifiers.mox ---")
+
+void test_qualifiers() {
+    // 1. Storage Declarations
+    int base_val = 100;
+    int mut_val = 200;
+    lock int shared_data = 300;
+
+    // 2. Pointers & References
+    *mut int mut_ptr = &mut_val;
+    &mut int mut_ref = mut_val;
+
+    // Read-only views allow multiple aliases, so these are fine in the same scope!
+    *view int view_ptr = &base_val;
+    &view int view_ref = base_val;
+
+    *lock int shared_ptr = &shared_data;
+    int safely_copied_val;
+
+    // 3. Lock Statement blocks
+    lock (shared_ptr) {
+        *shared_ptr = *shared_ptr + 1;
+        safely_copied_val = *shared_ptr;
+    }
+
+    println(safely_copied_val); // Expected: 301
+}
+
+test_qualifiers();

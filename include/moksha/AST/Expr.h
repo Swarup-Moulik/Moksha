@@ -312,6 +312,7 @@ public:
       : Expr(ExprKind::IdentifierExpr, loc), name(std::move(name)) {}
   void accept(ASTVisitor &v) const override;
   const std::string &getName() const { return name; }
+  void setName(std::string newName) { name = std::move(newName); }
   std::unique_ptr<Expr> clone() const override;
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::IdentifierExpr;
@@ -388,13 +389,18 @@ private:
 
 class IndexExpr : public Expr {
 public:
-  IndexExpr(ExprPtr array, ExprPtr index, SourceLocation loc)
+  IndexExpr(ExprPtr array, ExprPtr index, bool isOptional, SourceLocation loc)
       : Expr(ExprKind::IndexExpr, loc), array(std::move(array)),
-        index(std::move(index)) {}
+        index(std::move(index)), isOptional(isOptional) {}
+
   void accept(ASTVisitor &v) const override;
+
   const Expr *getArray() const { return array.get(); }
   const Expr *getIndex() const { return index.get(); }
+  bool isOptionalAccess() const { return isOptional; }
+
   std::unique_ptr<Expr> clone() const override;
+
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::IndexExpr;
   }
@@ -402,6 +408,7 @@ public:
 private:
   ExprPtr array;
   ExprPtr index;
+  bool isOptional;
 };
 
 // --- Advanced ---

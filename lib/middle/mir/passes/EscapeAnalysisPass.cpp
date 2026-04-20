@@ -25,7 +25,7 @@ static void replaceAllUsesInFunction(MIRFunction *F, MIRValue *oldVal,
 bool EscapeAnalysisPass::runOnModule(MIRModule &M) {
   bool changed = false;
   for (auto &func : M.getFunctions()) {
-    changed |= runOnFunction(func.get(), M);
+    changed |= runOnFunction(func, M);
   }
   return changed;
 }
@@ -256,6 +256,11 @@ bool EscapeAnalysisPass::doesEscape(
         // Passing the pointer to any external/un-inlined function escapes it
         if (call->getCallee() &&
             call->getCallee()->getName() != "__moksha_alloc") {
+          return true;
+        }
+      } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(user)) {
+        if (invoke->getCallee() &&
+            invoke->getCallee()->getName() != "__moksha_alloc") {
           return true;
         }
       } else if (llvm::isa<ReturnInst>(user)) {

@@ -1,0 +1,42 @@
+println("--- [E2E] destructor_stress.mox ---")
+
+generic <T>
+ref class Resource {
+    public T data;
+    constructor(T d) {
+        this.data = d;
+    }
+    destructor() {
+       println("Resource Destroyed");
+    }
+}
+
+ref class Base {
+    destructor() {
+        println("Base cleaned");
+    }
+}
+
+ref class Derived(Base) {
+    destructor() {
+        println("Derived cleaned");
+    }
+}
+
+void run_stress_test() {
+    Resource<int> res = new Resource<int>(10);
+
+    try {
+        Derived d = new Derived();
+        throw 1;
+        // AST must support unwinding `d` and `res` here
+    } catch (int e) {
+        println("Caught exception");
+    }
+}
+
+run_stress_test();
+// Expected: Derived cleaned
+// Expected: Base cleaned
+// Expected: Caught exception
+// Expected: Resource Destroyed

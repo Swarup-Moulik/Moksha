@@ -1,0 +1,30 @@
+println("--- [E2E] classes.mox ---")
+
+// Stack allocated value type
+class Vector2 {
+    public int x;
+    public int y;
+    constructor(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+// Heap allocated reference type
+ref class Player {
+    public string name;
+    constructor(string name) {
+        this.name = name;
+    }
+}
+
+Vector2 v = new Vector2(10, 20);
+println(v.x); // Expected: 10
+println(v.y); // Expected: 20
+
+Player p = new Player("Hero");
+println(p.name); // Expected: Hero
+
+// 'shared' keyword forces heap allocation for value types (ARC managed)
+shared Vector2 heapV = new Vector2(30, 40);
+println(heapV.x); // Expected: 30

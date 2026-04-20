@@ -1,0 +1,32 @@
+println("--- [E2E] layout_and_bitfields.mox ---")
+
+packed struct EthernetHeader {
+    char[6] dest_mac;
+    char[6] src_mac;
+    unsigned short eth_type;
+}
+
+struct PageTableEntry {
+    unsigned long present    : 1;
+    unsigned long writable   : 1;
+    unsigned long user       : 1;
+    unsigned long pwt        : 1;
+    unsigned long reserved   : 8;
+    unsigned long address    : 52;
+}
+
+align(4096) char[4096] kernel_stack;
+EthernetHeader eth_packet;
+PageTableEntry pte;
+
+void process_hardware() {
+    pte.present = 1;
+    pte.writable = 0;
+    pte.address = 0xFFFFF;
+
+    println(pte.present);  // Expected: 1
+    println(pte.writable); // Expected: 0
+    println(pte.address);  // Expected: 1048575 (0xFFFFF)
+}
+
+process_hardware();

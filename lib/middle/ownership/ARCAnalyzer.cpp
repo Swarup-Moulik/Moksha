@@ -26,7 +26,7 @@ public:
       return false;
     bool modified = false;
     for (auto &func : module->getFunctions()) {
-      modified |= runOnFunction(func.get());
+      modified |= runOnFunction(func);
     }
     return modified;
   }
@@ -59,9 +59,6 @@ private:
           inst->getOpcode() == Opcode::AnyCast) {
         val = static_cast<CastInst *>(inst)->getValue();
         continue;
-      } else if (inst->getOpcode() == Opcode::Load) {
-        val = static_cast<LoadInst *>(inst)->getPointer();
-        continue;
       } else if (inst->getOpcode() == Opcode::ExtractValue) {
         auto *ext = static_cast<ExtractValueInst *>(inst);
         if (ext->getIndex() == 0) {
@@ -90,7 +87,9 @@ private:
       // Optimization Safety Barrier
       if (inst->getOpcode() == Opcode::Call ||
           inst->getOpcode() == Opcode::Invoke ||
-          inst->getOpcode() == Opcode::InlineAsm) {
+          inst->getOpcode() == Opcode::InlineAsm ||
+          inst->getOpcode() == Opcode::Spawn ||
+          inst->getOpcode() == Opcode::Await) {
         activeRetains.clear();
         continue;
       }
@@ -146,6 +145,11 @@ private:
       std::string tyStr = directObj->getType()->toString();
       std::string className = "";
 
+      size_t qPos = tyStr.find('?');
+      if (qPos != std::string::npos) {
+        tyStr = tyStr.substr(0, qPos);
+      }
+
       if (!tyStr.empty() && tyStr[0] == '*') {
         className = tyStr.substr(1);
       } else if (tyStr.find("shared ") == 0) {
@@ -191,28 +195,9 @@ private:
       }
 
       // If this is the only retain left in the function for this object,
-      // DO NOT elide IF it is a true root allocation!
+      // DO NOT elide it!
       if (retainCount <= 1) {
-        bool isRoot = false;
-
-        // 1. Is it a direct allocation?
-        if (auto *call = llvm::dyn_cast<CallInst>(targetVal)) {
-          if (call->getCallee() &&
-              call->getCallee()->getName() == "__moksha_alloc") {
-            isRoot = true;
-          }
-        }
-        // 2. Is it a local stack variable or function argument?
-        else if (llvm::isa<MIRArgument>(targetVal) ||
-                 llvm::isa<AllocaInst>(targetVal)) {
-          isRoot = true;
-        }
-
-        // If it's a Phi node, Load, or something else, it's just an alias,
-        // so it doesn't need root protection.
-        if (isRoot) {
-          return false;
-        }
+        return false;
       }
     }
 
@@ -250,6 +235,10 @@ private:
         if (getUnderlyingObject(loadW->getPointer()) == targetVal) {
           return false;
         }
+      } else if (llvm::isa<CallInst>(inst) || llvm::isa<InvokeInst>(inst) ||
+                 llvm::isa<AwaitInst>(inst) || llvm::isa<SpawnInst>(inst)) {
+        // External functions or context switches might mutate the ref count!
+        return false;
       }
     }
 

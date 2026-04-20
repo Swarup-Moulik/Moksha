@@ -5,8 +5,10 @@
 #include "moksha/Sema/GenericResolver.h"
 #include "moksha/Sema/SymbolTable.h"
 #include "moksha/Support/Diagnostics.h"
+#include <functional>
 #include <map>
 #include <set>
+#include <unordered_set>
 #include <vector>
 
 namespace moksha {
@@ -21,6 +23,12 @@ class TypeChecker : public ASTVisitor {
 public:
   /// \brief Initialize the TypeChecker with necessary contexts.
   TypeChecker(ASTContext &ctx, SymbolTable &sym, DiagnosticEngine &diags);
+  std::function<ModuleDecl *(const std::string &)> loadModuleCallback;
+
+  // Allow the driver to seed the main module to prevent cyclic double-loads
+  void markModuleAsLoaded(const std::string &modName) {
+    loadedModules.insert(modName);
+  }
 
   void check(Decl *decl);
   void check(Stmt *stmt);
@@ -30,6 +38,7 @@ public:
 private:
   std::set<const Decl *> initializedVars;
   bool isLHSOfAssignment = false;
+  std::unordered_set<std::string> loadedModules;
 
   // --- Contexts ---
   ASTContext &context;
@@ -48,6 +57,7 @@ private:
   bool inStaticContext = false;
   bool inInterruptContext = false;
   bool inConstructorContext = false;
+  bool inAsyncContext = false;
   std::vector<TypePtr> parkedTypes; // Safely stores inferred generic types
   std::map<std::string, std::vector<std::string>> ambiguousImports;
   bool detectInfiniteSize(const Type *t, std::set<std::string> &visited);
@@ -65,6 +75,7 @@ private:
 
   // A queue of newly instantiated classes that need to be type-checked
   std::vector<const ClassDecl *> pendingInstantiations;
+  std::vector<const FunctionDecl *> pendingFuncInstantiations;
   void processPendingInstantiations();
 
   // --- ASTVisitor Overrides ---
@@ -147,6 +158,7 @@ private:
   void visitConstType(const ConstType *type) override;
   void visitWeakType(const WeakType *type) override;
   void visitDecimalType(const DecimalType *type) override;
+  void visitPromiseType(const PromiseType *type) override;
 };
 
 } // namespace moksha

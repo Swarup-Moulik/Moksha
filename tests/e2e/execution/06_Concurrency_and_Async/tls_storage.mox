@@ -1,0 +1,25 @@
+println("--- [E2E] tls_storage.mox ---")
+
+// Verifies TLS initialization duration and linking
+static thread_local int cpu_id = 0;
+static thread_local int[10] kernel_gs_base;
+
+void init_per_cpu(int id) {
+    cpu_id = id; // Verifies local assignment to TLS variable
+    kernel_gs_base[0] = id;
+
+    println(cpu_id);            // Expected: 42
+    println(kernel_gs_base[0]); // Expected: 42
+}
+
+void run_tls_test() {
+    init_per_cpu(42);
+
+    // Spawn a thread to prove the thread-local variables start fresh
+    new thread(() => {
+        println(cpu_id);            // Expected: 0
+        println(kernel_gs_base[0]); // Expected: 0
+    });
+}
+
+run_tls_test();

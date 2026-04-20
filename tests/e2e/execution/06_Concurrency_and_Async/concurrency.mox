@@ -1,0 +1,29 @@
+println("--- [E2E] concurrency.mox ---")
+
+weak async string fetchWeakData() {
+    return "Weak Data Fetched";
+}
+
+async string fetchStrongData() {
+    return "Strong Data Fetched";
+}
+
+async void run_async_tests() {
+    // Await usage
+    string data1 = await fetchWeakData();
+    string data2 = await fetchStrongData();
+
+    println(data1); // Expected: Weak Data Fetched
+    println(data2); // Expected: Strong Data Fetched
+}
+
+run_async_tests();
+
+// Thread creation
+new thread(() => {
+    println("Background strong thread running");
+});
+
+new weak thread(() => {
+    println("Background weak thread running");
+});

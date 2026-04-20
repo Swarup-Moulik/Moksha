@@ -145,15 +145,15 @@ def Moksha_CallOp : Moksha_Op<"call"> {
 // === Systems & Concurrency Operations ===
 
 // 1. Spawn (Thread/Async creation)
-def Moksha_SpawnOp : Moksha_Op<"spawn"> {
+def Moksha_SpawnOp : Moksha_Op<"spawn", [DeclareOpInterfaceMethods<Moksha_AsyncOpInterface>]> {
     let summary = "Spawns a closure on a new thread or async executor.";
-    let arguments = (ins Moksha_ClosureType:$closure);
-    let results = (outs Moksha_PromiseType:$promise);
-    let assemblyFormat = "$closure attr-dict `:` type($closure) `->` type($promise)";
+    let arguments = (ins Moksha_ClosureType:$closure, I32Attr:$threadKind);
+    let results = (outs Moksha_PointerType:$promise);
+    let assemblyFormat = "$closure `,` $threadKind attr-dict `:` type($closure) `->` type($promise)";
 }
 
 // 2. Await (Async suspension)
-def Moksha_AwaitOp : Moksha_Op<"await"> {
+def Moksha_AwaitOp : Moksha_Op<"await", [DeclareOpInterfaceMethods<Moksha_AsyncOpInterface>]> {
     let summary = "Suspends execution until the promise is resolved.";
     let arguments = (ins Moksha_PromiseType:$promise);
     let results = (outs AnyType:$result);

@@ -1,0 +1,18 @@
+println("--- [E2E] cast_and_pipe_stress.mox ---")
+
+int processInt(int x) { return x * 2; }
+any processAny(any x) { return x; }
+
+any dynamicVal = 42;
+
+// 1. Functional Cast + Pipe
+int res1 = int(dynamicVal) |> processInt();
+println(res1); // Expected: 84
+
+// 2. Piping directly into a functional cast
+int res2 = 10 |> processAny() |> int();
+println(res2); // Expected: 10
+
+// 3. Precedence collision solved by grouping parentheses
+int res3 = (int(dynamicVal) + 5) |> processInt();
+println(res3); // Expected: 94

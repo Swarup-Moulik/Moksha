@@ -10,10 +10,10 @@ class MIRFunction;
 
 class MIRArgument : public MIRValue {
 public:
-  // [FIX] 1. Use 'const hir::HIRType*'
-  // [FIX] 2. Swapped arguments to MIRValue base constructor
-  MIRArgument(MIRFunction *parent, const hir::HIRType *type, unsigned index)
-      : MIRValue(ValueKind::Argument, type), parent(parent), index(index) {}
+  MIRArgument(MIRFunction *parent, const hir::HIRType *type, unsigned index,
+              std::string name = "")
+      : MIRValue(ValueKind::Argument, type, std::move(name)), parent(parent),
+        index(index) {}
 
   MIRFunction *getParent() const { return parent; }
   unsigned getIndex() const { return index; }

@@ -1,0 +1,12 @@
+public int test_multiplier = 5;
+
+public int calculate_magic(int a, int b) {
+    return (a + b) * test_multiplier;
+}
+
+public class TestConfig {
+    public int version;
+    constructor(int v) {
+        this.version = v;
+    }
+}

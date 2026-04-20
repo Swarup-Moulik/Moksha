@@ -1,0 +1,30 @@
+println("--- [E2E] concurrency_edge_cases.mox ---")
+
+// 1. Thread-safe memory modifiers
+lock int globalCounter = 0;  // Upgraded to a 'lock' type
+int protectedValue = 10;
+
+void test_concurrency_edges() {
+    new thread(() => {
+        // 2. Explicit synchronization using the address-of operator (&)
+        lock (&globalCounter) {
+            globalCounter = globalCounter + 1;
+        }
+
+        // 3. Raw atomics on standard integers
+        atomic_add(&protectedValue, 1);
+        println("Thread 1 mutated globals safely");
+    });
+
+    new weak thread(() => {
+        // 4. Using the correct pointer-view syntax for read-only access
+        *view int safeRead = &protectedValue;
+
+        // Prove we can read it safely
+        println(*safeRead);
+
+        println("Weak thread read value securely");
+    });
+}
+
+test_concurrency_edges();

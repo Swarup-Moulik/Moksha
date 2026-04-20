@@ -1,0 +1,24 @@
+println("--- [E2E] mixed_operator_extreme.mox ---")
+
+ref class Node {
+    public int[] values;
+    public Node? next;
+    constructor() {
+        this.values = [1, 2, 3];
+        this.next = null;
+    }
+}
+
+Node? processNode(int val) { return new Node(); }
+
+Node root = new Node();
+bool flag = true;
+
+// Stress test: Nullable member access, pipeline, null coalescing, ternary
+// 1. root?.values?[0]      -> Extracts 1 (int?)
+// 2. ?? 0                  -> Safely unwraps it to 1 (int)
+// 3. |> processNode()      -> Pipes the int into the function, returning Node?
+// 4. ?.next != null        -> Safely checks if the next node exists
+int complexResult = (((root?.values?[0] ?? 0) |> processNode())?.next != null) ? 100 : 200;
+
+println(complexResult); // Expected: 200

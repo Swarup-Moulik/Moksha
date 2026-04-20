@@ -1,8 +1,0 @@
-// Verifies TLS initialization duration
-static thread_local int cpu_id = 0;
-static thread_local int[1024] kernel_gs_base;
-
-void init_per_cpu(int id) {
-    cpu_id = id; // Verifies local assignment to TLS variable
-    kernel_gs_base[0] = id;
-}

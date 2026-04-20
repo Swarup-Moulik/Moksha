@@ -154,22 +154,25 @@ void SymbolTable::addPrimitiveTypes(ASTContext &ctx) {
   addSymbol("f16", Symbol(SymbolKind::Type, "f16", ctx.getF16Type()));
   addSymbol("f32", Symbol(SymbolKind::Type, "f32", ctx.getF32Type()));
   addSymbol("f64", Symbol(SymbolKind::Type, "f64", ctx.getF64Type()));
-  addSymbol("float", Symbol(SymbolKind::Type, "float", ctx.getF32Type()));
-  addSymbol("double", Symbol(SymbolKind::Type, "double", ctx.getF64Type()));
 
   addSymbol("boolean", Symbol(SymbolKind::Type, "boolean", ctx.getBoolType()));
   addSymbol("void", Symbol(SymbolKind::Type, "void", ctx.getVoidType()));
   addSymbol("any", Symbol(SymbolKind::Type, "any", ctx.getAnyType()));
 
   // 2. Define Aliases for C-Style Syntax
+  addSymbol("char", Symbol(SymbolKind::Type, "char", ctx.getI8Type()));
+  addSymbol("short", Symbol(SymbolKind::Type, "short", ctx.getI16Type()));
   addSymbol("int", Symbol(SymbolKind::Type, "int", ctx.getI32Type()));
-  addSymbol("char", Symbol(SymbolKind::Type, "char", ctx.getCharType()));
+  addSymbol("long", Symbol(SymbolKind::Type, "long", ctx.getI64Type()));
 
   addSymbol("isize", Symbol(SymbolKind::Type, "isize", ctx.getISizeType()));
   addSymbol("usize", Symbol(SymbolKind::Type, "usize", ctx.getUSizeType()));
 
-  addSymbol("string", Symbol(SymbolKind::Type, "string", ctx.getStringType()));
-  addSymbol("bool", Symbol(SymbolKind::Type, "bool", ctx.getBoolType()));
+  // Floats
+  addSymbol("quarter", Symbol(SymbolKind::Type, "quarter", ctx.getF8Type()));
+  addSymbol("half", Symbol(SymbolKind::Type, "half", ctx.getF16Type()));
+  addSymbol("float", Symbol(SymbolKind::Type, "float", ctx.getF32Type()));
+  addSymbol("double", Symbol(SymbolKind::Type, "double", ctx.getF64Type()));
 }
 
 void SymbolTable::dump() const {

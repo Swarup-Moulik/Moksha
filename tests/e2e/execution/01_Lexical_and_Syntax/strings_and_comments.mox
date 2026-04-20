@@ -1,0 +1,33 @@
+println("--- [E2E] strings_and_comments.mox ---")
+
+// Standard escapes
+string basic = "Hello\nWorld\t\r\\\"";
+println(basic);
+
+// Native UTF-8 and Emojis (Direct inclusion)
+string direct_utf8 = "Hello, 世界! 🌍🚀";
+string mixed_content = "Value: 💯 \t Status: OK";
+println(direct_utf8);
+println(mixed_content);
+
+// Hex and Unicode escapes
+string hex_esc = "\x41\x42\x43";
+string uni_esc = "\u{1F600}"; // Grinning face emoji via escape
+println(hex_esc);
+println(uni_esc);
+
+// Raw strings (ignoring escapes)
+string raw_path = "C:\\dev\\moksha\\tests";
+string raw_mixed = "Raw path with 🦀 \n \t";
+println(raw_path);
+println(raw_mixed);
+
+/* Block comment
+   spanning multiple lines */
+
+/* Nested block comments
+  /* This tests that the lexer counts comment depth */
+  If depth isn't tracked, the first closing tag ends the comment prematurely.
+*/
+int after_comment = 1;
+println(after_comment);

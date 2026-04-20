@@ -317,6 +317,12 @@ void ASTPrinter::visitClosureType(const ClosureType *type) {
   print(type->getReturnType());
 }
 
+void ASTPrinter::visitPromiseType(const PromiseType *type) {
+  OS << "promise<";
+  print(type->getInner());
+  OS << ">";
+}
+
 // --- Expressions ---
 
 void ASTPrinter::visitIntegerLiteral(const IntegerLiteral *expr) {

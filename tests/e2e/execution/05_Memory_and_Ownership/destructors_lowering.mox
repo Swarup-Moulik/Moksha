@@ -1,0 +1,17 @@
+println("--- [E2E] destructors_lowering.mox ---")
+
+ref class File {
+    // Custom destructor hook
+    destructor() {
+        println("File closed via destructor");
+    }
+}
+
+void test_destructors() {
+    File f = new File();
+    println("File created");
+}
+
+test_destructors();
+// Expected: File created
+// Expected: File closed via destructor

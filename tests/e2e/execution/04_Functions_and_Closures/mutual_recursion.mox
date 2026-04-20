@@ -1,0 +1,25 @@
+println("--- [E2E] mutual_recursion.mox ---")
+
+ref class NodeA {
+    // Forward reference to NodeB
+    public NodeB? next;
+    public string name;
+    constructor() { this.next = null; this.name = "NodeA"; }
+}
+
+ref class NodeB {
+    // Backward reference to NodeA
+    public NodeA? prev;
+    public string name;
+    constructor() { this.prev = null; this.name = "NodeB"; }
+}
+
+NodeA a = new NodeA();
+NodeB b = new NodeB();
+
+// Linking mutually recursive types
+a.next = b;
+b.prev = a;
+
+println(a.next?.name ?? "null"); // Expected: NodeB
+println(b.prev?.name ?? "null"); // Expected: NodeA

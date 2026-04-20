@@ -1,0 +1,41 @@
+println("--- [E2E] safety_and_types.mox ---")
+
+// --- 1. Type Aliasing ---
+// Verifies 'using' alias registration in the Symbol Table
+using addr_t = usize;
+using status_t = int;
+
+// To make this safe for E2E execution without segfaulting,
+// we will mock the VGA buffer address using a local variable's memory address.
+unsigned int dummy_vga_buffer = 0_u32;
+*mut unsigned int mock_ptr = &dummy_vga_buffer;
+addr_t vga_buffer_addr = cast<usize>(mock_ptr);
+
+void kernel_init() {
+    // --- 2. Raw Pointers & Unsafe Blocks ---
+    *mut unsigned int ptr = cast<*mut unsigned int>(vga_buffer_addr);
+
+    unsafe {
+        *ptr = 0x0F41_u32; // Legal inside unsafe block because ptr is *mut
+    }
+
+    println(dummy_vga_buffer); // Expected: 3905 (which is 0x0F41 in decimal)
+
+    // --- 3. Mutability Model ---
+    // Verifies aliasing rules for lock, mut, and view
+    int counter = 0;
+
+    // Correctly apply view to a reference/pointer, not a value
+    *view int v = &counter;
+    println(*v); // Expected: 0
+
+    lock int static_val = 100;
+
+    // Proves lock variables can only be mutated inside a synchronized block
+    lock (&static_val) {
+        static_val = 200;
+    }
+    println(static_val); // Expected: 200
+}
+
+kernel_init();

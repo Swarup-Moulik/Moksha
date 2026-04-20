@@ -1,0 +1,14 @@
+println("--- [E2E] macro_type_interaction.mox ---")
+
+// Macros interacting with custom language operators
+macro pipeLog(val) {
+    val |> println();
+}
+
+void test_macro_pipes() {
+    // Expand macro into a pipe chain
+    "Testing macro pipe" |> pipeLog();
+    // Expected: Testing macro pipe
+}
+
+test_macro_pipes();

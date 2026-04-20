@@ -105,10 +105,9 @@ public:
 
   uint16_t getWidth() const { return width; }
   bool isSigned() const { return isSignedFlag; }
-
-  std::string toString() const override; // Logic moved to .cpp
-  void
-  Profile(llvm::FoldingSetNodeID &ID) const override; // Logic moved to .cpp
+  bool isSize() const { return isPtrWidth; }
+  std::string toString() const override;
+  void Profile(llvm::FoldingSetNodeID &ID) const override;
 
   static bool classof(const HIRType *T) {
     return T->getKind() == TypeKind::Int;
@@ -464,24 +463,15 @@ public:
 
 // Promise / Task Type for Async
 class HIRPromiseType : public HIRType {
-  const HIRType *inner;
+  const HIRType *innerType;
 
 public:
-  // Promises "own" their resolved value
-  explicit HIRPromiseType(const HIRType *inner)
-      : HIRType(TypeKind::Promise, Ownership::Owned), inner(inner) {}
+  HIRPromiseType(const HIRType *inner)
+      : HIRType(TypeKind::Promise, Ownership::None), innerType(inner) {}
 
-  const HIRType *getInner() const { return inner; }
-
-  std::string toString() const override {
-    return "Promise<" + (inner ? inner->toString() : "void") + ">";
-  }
-
-  void Profile(llvm::FoldingSetNodeID &ID) const override {
-    ID.AddInteger(static_cast<int>(getKind()));
-    ID.AddPointer(inner);
-  }
-
+  const HIRType *getInnerType() const { return innerType; }
+  std::string toString() const override;
+  void Profile(llvm::FoldingSetNodeID &ID) const override;
   static bool classof(const HIRType *T) {
     return T->getKind() == TypeKind::Promise;
   }

@@ -155,6 +155,8 @@ static std::string tokenKindToString(TokenKind kind) {
     return "'async'";
   case TokenKind::KwAwait:
     return "'await'";
+  case TokenKind::KwThread:
+    return "'thread'";
   case TokenKind::KwImport:
     return "'import'";
   case TokenKind::KwFrom:
@@ -2262,6 +2264,21 @@ ExprPtr Parser::parsePrefix() {
     }
   }
 
+  // Handle '**' being tokenized as Power instead of two Stars
+  if (curTok.is(TokenKind::Power)) {
+    SourceLocation loc = curTok.location;
+    consume();
+    auto operand = parsePrefix();
+    if (!operand)
+      return nullptr;
+
+    // Desugar '**' into two nested '*' (dereference) operations
+    auto inner = std::make_unique<UnaryExpr>(TokenKind::Star,
+                                             std::move(operand), false, loc);
+    return std::make_unique<UnaryExpr>(TokenKind::Star, std::move(inner), false,
+                                       loc);
+  }
+
   // Existing Unary Ops
   if (curTok.isAny(TokenKind::Bang, TokenKind::Minus, TokenKind::Tilde,
                    TokenKind::PlusPlus, TokenKind::MinusMinus,
@@ -2270,6 +2287,8 @@ ExprPtr Parser::parsePrefix() {
     SourceLocation loc = curTok.location;
     consume();
     auto operand = parsePrefix();
+    if (!operand)
+      return nullptr; // Safety check
     return std::make_unique<UnaryExpr>(op, std::move(operand), false, loc);
   }
   return parsePostfix();
@@ -2311,15 +2330,27 @@ ExprPtr Parser::parsePostfix() {
     else if (consumeIf(TokenKind::MinusMinus)) {
       left = std::make_unique<UnaryExpr>(TokenKind::MinusMinus, std::move(left),
                                          true, left->getLoc());
-    } else if (curTok.is(TokenKind::LBracket)) {
+    } else if (curTok.is(TokenKind::LBracket) ||
+               (curTok.is(TokenKind::Question) &&
+                nextTok.is(TokenKind::LBracket))) {
+
+      bool isOptional = false;
+      if (curTok.is(TokenKind::Question)) {
+        isOptional = true;
+        consume(); // Eat the '?'
+      }
+
       if (hasNewlineBeforeToken(curTok)) {
         break;
       }
-      consume();
+      consume(); // Eat the '['
+
       auto index = parseExpression();
       expect(TokenKind::RBracket);
+
+      // Pass the 'isOptional' flag to the AST node
       left = std::make_unique<IndexExpr>(std::move(left), std::move(index),
-                                         left->getLoc());
+                                         isOptional, left->getLoc());
     } else {
       break;
     }
@@ -2803,42 +2834,40 @@ ExprPtr Parser::parseNewExpr() {
   }
 
   // --- Case 1: Thread Creation ---
-  if (curTok.is(TokenKind::KwThread)) {
-    consume(); // Eat 'Thread'
-
+  if (consumeIf(TokenKind::KwThread)) {
     // Match the syntax: Thread(() => { ... })
     if (!expect(TokenKind::LParen))
       return nullptr;
 
-    auto expr =
-        parseExpression(); // This will correctly parse the lambda () => { ... }
-    if (!expr)
+    auto taskExpr = parseExpression();
+    if (!taskExpr)
       return nullptr;
 
-    // Verify it's actually a lambda
-    if (auto lambda = llvm::dyn_cast<LambdaExpr>(expr.get())) {
-      expr.release(); // Transfer ownership from the generic ExprPtr
-      std::unique_ptr<LambdaExpr> typedBody(lambda);
+    // Safely verify and cast the lambda expression
+    if (taskExpr->getKind() == ExprKind::LambdaExpr) {
+      auto lambda = std::unique_ptr<LambdaExpr>(
+          static_cast<LambdaExpr *>(taskExpr.release()));
 
       if (!expect(TokenKind::RParen))
         return nullptr;
 
-      return std::make_unique<ThreadExpr>(isWeak, std::move(typedBody), loc);
+      return std::make_unique<ThreadExpr>(isWeak, std::move(lambda), loc);
     } else {
-      error("Expected lambda expression inside Thread constructor");
+      error("Thread instantiation requires a closure/lambda expression.");
       return nullptr;
     }
   }
 
   // --- Case 2: Standard Object Creation ---
-  if (isWeak) {
-    error("'weak' can only be used with 'Thread'");
-  }
-
-  // Parse the type being instantiated
   TypePtr type = parseType();
   if (!type)
     return nullptr;
+
+  if (isWeak) {
+    // If the user explicitly asks for 'new weak Object()',
+    // wrap the AST type in a WeakType modifier!
+    type = std::make_unique<WeakType>(std::move(type), loc);
+  }
 
   expect(TokenKind::LParen);
   std::vector<ExprPtr> args;
@@ -3044,6 +3073,20 @@ TypePtr Parser::parseType() {
   }
 
   // --- Special Types ---
+  case TokenKind::KwPromise: {
+    consume(); // Eat 'promise'
+    if (consumeIf(TokenKind::Less)) {
+      TypePtr inner = parseType();
+      if (!inner)
+        return nullptr;
+      expectGreater(); // Handles standard '>' and '>>' hacks
+      type = std::make_unique<PromiseType>(std::move(inner), loc);
+    } else {
+      error("Expected '<' after promise");
+    }
+    break;
+  }
+
   case TokenKind::KwClosure:
     type = parseClosureType();
     break;

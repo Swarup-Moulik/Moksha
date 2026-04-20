@@ -1,0 +1,27 @@
+println("--- [E2E] generic_lifetime_constraints.mox ---")
+
+// A generic class that explicitly requires ARC-managed (shared) or owned types
+generic Container<shared T> {
+    T item;
+}
+
+class User {
+    string name;
+}
+
+void test_generics() {
+    Container<int> c1 = new Container<int>();
+    c1.item = 42;
+    println(c1.item); // Expected: 42
+
+    Container<string> c2 = new Container<string>();
+    c2.item = "Moksha ARC";
+    println(c2.item); // Expected: Moksha ARC
+
+    Container<User> c3 = new Container<User>();
+    c3.item = new User();
+    c3.item.name = "Alice";
+    println(c3.item.name); // Expected: Alice
+}
+
+test_generics();

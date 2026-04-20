@@ -1,0 +1,18 @@
+println("--- [E2E] nll_exception_paths.mox ---")
+
+void test_exception() {
+    int data = 42;
+    try {
+        *mut int m = &data;
+        throw 1;
+        // NLL MUST kill 'm' on the unwind edge!
+    } catch (int e) {
+        // SUCCESS: previous borrow was cleanly destroyed by the throw.
+        *mut int m2 = &data;
+        *m2 = 99;
+    }
+
+    println(data); // Expected: 99
+}
+
+test_exception();

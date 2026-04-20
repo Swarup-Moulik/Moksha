@@ -1,0 +1,25 @@
+println("--- [E2E] intrinsics.mox ---")
+
+macro GET_SIZE(obj) {
+    sizeof(obj)
+}
+
+void test_intrinsics() {
+    unsigned int data = 0x000000FF_u32;
+
+    // 1. Bit Manipulation Intrinsics
+    unsigned int reversed = bswap32(data);
+    int leading_zeros = clz(data);
+
+    println(reversed);      // Expected: 4278190080 (0xFF000000)
+    println(leading_zeros); // Expected: 24
+
+    // 2. SizeOf Expression (Evaluates to usize)
+    usize data_size = sizeof(data);
+    println(data_size);     // Expected: 4
+
+    // 3. Macro expansion of sizeof
+    println(GET_SIZE(data)); // Expected: 4
+}
+
+test_intrinsics();

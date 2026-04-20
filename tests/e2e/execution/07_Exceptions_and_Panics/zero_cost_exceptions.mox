@@ -1,0 +1,24 @@
+println("--- [E2E] zero_cost_exceptions.mox ---")
+
+void dangerous_func(bool boom) {
+    if (boom) throw 99;
+    println("Safe execution");
+}
+
+void test_lowering() {
+    try {
+        // Because this is inside a try block, the backend MUST lower
+        // this to an LLVM 'invoke' instruction with a normal/unwind destination.
+        dangerous_func(true);
+    } catch (int e) {
+        println(`Caught in invoke landing pad: ${e}`);
+    }
+
+    // Because this is outside a try block, the backend MUST lower
+    // this to a standard LLVM 'call' instruction.
+    dangerous_func(false);
+}
+
+test_lowering();
+// Expected: Caught in invoke landing pad: 99
+// Expected: Safe execution

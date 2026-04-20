@@ -1,0 +1,36 @@
+println("--- [E2E] arc_weak_refs.mox ---")
+
+ref class Node {
+    public string name;
+    public weak Node? parent; // Weak reference to prevent cycle
+    public Node? child;
+
+    constructor(string n) {
+        this.name = n;
+        this.parent = null;
+        this.child = null;
+    }
+
+    destructor() {
+        println(`Node ${this.name} destroyed`);
+    }
+}
+
+void test_weak_arc() {
+    Node p = new Node("Parent");
+    Node c = new Node("Child");
+
+    // The MIR lowerer must correctly emit weak variants of the ARC instructions
+    c.parent = p;
+    p.child = c;
+
+    println(p.child?.name ?? "null");  // Expected: Child
+
+    // When test_weak_arc returns, 'p' and 'c' go out of scope.
+    // 'c' has 1 strong ref (from p). 'p' has 0 strong refs (only a weak ref from c).
+    // Therefore, 'p' drops, triggering 'c' to drop, successfully resolving the cycle!
+}
+
+test_weak_arc();
+// Expected: Node Parent destroyed
+// Expected: Node Child destroyed

@@ -1,8 +1,0 @@
-ref class File {
-    // Custom destructor hook
-    destructor() {}
-}
-
-void test_destructors() {
-    File f = new File();
-}

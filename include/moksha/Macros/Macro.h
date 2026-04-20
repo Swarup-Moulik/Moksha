@@ -148,6 +148,7 @@ public:
   void visitWeakType(const WeakType *type) override {}
   void visitDecimalType(const DecimalType *) override {}
   void visitClosureType(const ClosureType *type) override;
+  void visitPromiseType(const PromiseType *type) override;
 
   void visitIntegerLiteral(const IntegerLiteral *) override {}
   void visitFloatLiteral(const FloatLiteral *) override {}
@@ -169,10 +170,10 @@ public:
   void visitLambdaExpr(const LambdaExpr *) override {}
   void visitNewExpr(const NewExpr *) override {}
   void visitTemplateStringExpr(const TemplateStringExpr *) override {}
-  void visitThreadExpr(const ThreadExpr *) override {}
+  void visitThreadExpr(const ThreadExpr *) override;
   void visitThisExpr(const ThisExpr *) override {}
   void visitSuperExpr(const SuperExpr *) override {}
-  void visitAwaitExpr(const AwaitExpr *) override {}
+  void visitAwaitExpr(const AwaitExpr *) override;
   void visitSizeOfExpr(const SizeOfExpr *) override {}
   void visitInputExpr(const InputExpr *expr) override;
 

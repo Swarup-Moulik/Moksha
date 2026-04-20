@@ -1,0 +1,28 @@
+println("--- [E2E] arc_exception_path.mox ---")
+
+ref class DbConnection {
+    destructor() { println("Database connection closed during unwind"); }
+}
+
+void risky_operation() {
+    println("Doing risky work...");
+    throw 99; // Mock throwing an exception
+}
+
+void test_unwind() {
+    DbConnection conn = new DbConnection();
+
+    try {
+        risky_operation(); // This will generate an 'invoke' instruction
+        println("This will not print");
+    } catch (int e) {
+        println(`Caught exception: ${e}`);
+    }
+
+    // The connection drops AFTER the catch block finishes
+}
+
+test_unwind();
+// Expected: Doing risky work...
+// Expected: Caught exception: 99
+// Expected: Database connection closed during unwind

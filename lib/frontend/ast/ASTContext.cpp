@@ -110,6 +110,11 @@ ASTContext::createClosureType(const std::vector<const Type *> &params,
       ret->clone(), std::move(clonedParams), ret->getLoc()));
 }
 
+const Type *ASTContext::createPromiseType(const Type *inner) {
+  return saveType(
+      std::make_unique<PromiseType>(inner->clone(), inner->getLoc()));
+}
+
 const Type *ASTContext::createWeakType(const Type *inner) {
   auto weakTy = std::make_unique<WeakType>(inner->clone(), inner->getLoc());
   return saveType(

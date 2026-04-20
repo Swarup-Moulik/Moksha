@@ -1,0 +1,11 @@
+println("--- [E2E] pipe.mox ---")
+
+int processNumber(int n) { return n * 2; }
+int mock_length(string s) { return 5; }
+
+// Test pipe with both identifiers and calls
+"hello" |> mock_length() |> println(); // Expected: 5
+
+// Test ternary alongside pipe
+int res = (true ? 100 : 200) |> processNumber();
+println(res); // Expected: 200

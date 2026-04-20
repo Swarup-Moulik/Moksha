@@ -1,0 +1,23 @@
+println("--- [E2E] definite_assignment.mox ---")
+
+void test_assignments() {
+    // Valid: Control flow guarantees assignment
+    int x;
+    if (true) {
+        x = 10;
+    } else {
+        x = 20;
+    }
+    println(x); // Expected: 10
+
+    // Valid: Loop assignment with guaranteed entry
+    int y;
+    do {
+        y = 5;
+        break;
+    } while (true);
+
+    println(y); // Expected: 5
+}
+
+test_assignments();

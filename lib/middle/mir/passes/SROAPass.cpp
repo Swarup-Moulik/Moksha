@@ -34,7 +34,7 @@ bool SROAPass::runOnModule(MIRModule &M) {
   bool changed = false;
   for (auto &func : M.getFunctions()) {
     if (!func->isDeclaration()) {
-      changed |= runOnFunction(func.get(), M);
+      changed |= runOnFunction(func, M);
     }
   }
   return changed;
@@ -50,7 +50,8 @@ bool SROAPass::runOnFunction(MIRFunction *F, MIRModule &M) {
   for (auto &blockPtr : F->getBlocks()) {
     for (auto &instPtr : blockPtr->getInstructions()) {
       if (auto *alloca = llvm::dyn_cast<AllocaInst>(instPtr.get())) {
-        if (alloca->getAllocatedType()->getKind() == hir::TypeKind::Struct) {
+        const hir::HIRType *allocTy = alloca->getAllocatedType();
+        if (allocTy && allocTy->getKind() == hir::TypeKind::Struct) {
           structAllocas.push_back(alloca);
         }
       }

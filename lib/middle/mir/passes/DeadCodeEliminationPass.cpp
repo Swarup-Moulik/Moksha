@@ -120,7 +120,7 @@ bool DeadCodeEliminationPass::runOnModule(MIRModule &M) {
                   M.getOrInsertConstant<ConstantUndef>(phi->getType());
             }
 
-            replaceAllUsesLocally(func.get(), phi, resolvedVal);
+            replaceAllUsesLocally(func, phi, resolvedVal);
             it = insts.erase(it);
             changed = true;
             continue;

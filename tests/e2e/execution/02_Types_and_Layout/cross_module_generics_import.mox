@@ -1,0 +1,11 @@
+println("--- [E2E] cross_module_generics_import.mox ---")
+
+from "cross_module_generics_export" import { Box }
+
+// The TypeChecker must be able to resolve `T` as `int`, verify the constructor,
+// and compute memory layout for a class defined in a completely different AST module.
+Box<int> intBox = new Box<int>(42);
+println(intBox.val); // Expected: 42
+
+Box<string> strBox = new Box<string>("Cross-module Success!");
+println(strBox.val); // Expected: Cross-module Success!

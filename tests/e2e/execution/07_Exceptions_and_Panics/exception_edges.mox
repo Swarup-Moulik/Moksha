@@ -1,0 +1,27 @@
+println("--- [E2E] exception_edges.mox ---")
+
+void risky_function(bool fail) {
+    if (fail) {
+        throw 404; // Throw an integer error code
+    }
+    println("Function completed successfully");
+}
+
+void test_exceptions() {
+    try {
+        risky_function(true);
+        println("This should not print");
+    } catch (int e) {
+        println(`Caught error code: ${e}`);
+    }
+
+    try {
+        risky_function(false);
+    } catch (int e) {
+        println("This should not print");
+    }
+}
+
+test_exceptions();
+// Expected: Caught error code: 404
+// Expected: Function completed successfully

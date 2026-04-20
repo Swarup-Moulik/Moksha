@@ -1,0 +1,50 @@
+println("--- [E2E] operators.mox ---")
+
+int a = 10
+int b = 20
+
+// Arithmetic
+println(a + b)
+println(a - b)
+println(a * b)
+println(a / b)
+println(a % b)
+println(a ** 2)
+
+// Bitwise
+println(a & b)
+println(a | b)
+println(a ^ b)
+println(a << 2)
+println(a >> 1)
+println(~a)
+
+// Comparison
+println(a == b)
+println(a != b)
+println(a < b)
+println(a >= b)
+
+// Logical
+bool logic = (a < b) && (b > 0) || !(a == 0)
+println(logic)
+
+// Assignments
+a += 5
+b *= 2
+a++
+b--
+
+println(a) // Expected: 16
+println(b) // Expected: 39
+
+// --- Floating Point Division by Zero ---
+float f1 = 10.0;
+float f2 = 0.0;
+println("Float div by zero:")
+println(f1 / f2); // Expected: inf (IEEE 754 standard)
+
+// --- Integer Division by Zero ---
+println("Integer div by zero (Warning: May trap hardware!):")
+int zero = 0;
+println(a / zero); // Will likely crash with SIGFPE unless caught by Moksha

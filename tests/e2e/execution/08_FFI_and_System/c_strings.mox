@@ -1,0 +1,29 @@
+println("--- [E2E] c_strings.mox ---")
+
+void test_valid_c_strings() {
+    // 1. 1D Array with String Literal (Exact fit)
+    char[6] str1 = "Hello";
+
+    // 2. 1D Array with String Literal (Loose fit - padded with nulls)
+    char[10] str2 = "Hi";
+
+    // 3. 1D Array with Char Array Literal
+    char[6] str3 = ['H', 'e', 'l', 'l', 'o', '\0'];
+
+    // 4. 2D Array with String Literals
+    char[2][10] arr1 = ["Hello ", "World !"];
+
+    // 5. Implicit String Decay and Printing
+    string decayed_str = str1;
+
+    // Testing native string printing for char[n] arrays
+    println(str1);        // Expected: Hello
+    println(decayed_str); // Expected: Hello
+    println(str3);        // Expected: Hello
+
+    // 6. Safe Reassignment
+    str2 = "Reassign";
+    println(str2);        // Expected: Reassign
+}
+
+test_valid_c_strings();

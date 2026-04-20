@@ -1,0 +1,43 @@
+println("--- [E2E] visibility.mox ---")
+
+// Base class defining different access levels
+ref class Base {
+    public int publicField = 1;
+    protected int protectedField = 2;
+    private int privateField = 3;
+
+    public void testInternal() {
+        // Legal: All members accessible inside their own class
+        println(this.publicField);    // Expected: 1
+        println(this.protectedField); // Expected: 2
+        println(this.privateField);   // Expected: 3
+    }
+}
+
+// Subclass testing inheritance access
+ref class Derived(Base) {
+    public void testInheritance() {
+        println(this.publicField);    // Expected: 1 (Legal: public)
+        println(this.protectedField); // Expected: 2 (Legal: protected is visible to children)
+
+        // ILLEGAL: private not visible to children. Left commented to ensure compilation.
+        // println(this.privateField);
+    }
+}
+
+void test_visibility_enforcement() {
+    // --- Top-level Execution (Implicit Main) ---
+    // This acts as the "external" context
+    Base b = new Base();
+    println(b.publicField);    // Expected: 1 (Legal: public)
+
+    // ILLEGAL: protected and private not visible to external caller.
+    // println(b.protectedField);
+    // println(b.privateField);
+
+    Derived d = new Derived();
+    d.testInheritance();
+    println(d.publicField);    // Expected: 1 (Legal: public inherited member)
+}
+
+test_visibility_enforcement();

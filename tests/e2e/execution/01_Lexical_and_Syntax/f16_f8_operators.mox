@@ -1,0 +1,81 @@
+println("--- [E2E] f16_f8_operators.mox ---")
+
+// =========================================================
+// 1. Half Precision (f16) Operators
+// =========================================================
+println("=== f16 Arithmetic ===")
+half h1 = 15.5
+half h2 = 2.0
+
+println("h1 + h2:")
+println(h1 + h2)  // Expected: 17.5
+
+println("h1 - h2:")
+println(h1 - h2)  // Expected: 13.5
+
+println("h1 * h2:")
+println(h1 * h2)  // Expected: 31
+
+println("h1 / h2:")
+println(h1 / h2)  // Expected: 7.75
+
+println("Unary -h1:")
+println(-h1)      // Expected: -15.5
+
+println("=== f16 Comparisons ===")
+println(h1 == h2) // Expected: false
+println(h1 != h2) // Expected: true
+println(h1 > h2)  // Expected: true
+println(h1 >= h2) // Expected: true
+println(h1 < h2)  // Expected: false
+println(h1 <= h2) // Expected: false
+
+// =========================================================
+// 2. Quarter Precision (f8 E5M2) Operators
+// =========================================================
+println("=== f8 Arithmetic ===")
+// E5M2 can precisely represent small whole numbers
+quarter q1 = 12.0
+quarter q2 = 3.0
+
+println("q1 + q2:")
+println(q1 + q2)  // Expected: 15
+
+println("q1 - q2:")
+println(q1 - q2)  // Expected: 9
+
+println("q1 * q2:")
+println(q1 * q2)  // Expected: 36
+
+println("q1 / q2:")
+println(q1 / q2)  // Expected: 4
+
+println("Unary -q1:")
+println(-q1)      // Expected: -12
+
+println("=== f8 Comparisons ===")
+println(q1 == q2) // Expected: false
+println(q1 != q2) // Expected: true
+println(q1 > q2)  // Expected: true
+println(q1 >= q2) // Expected: true
+println(q1 < q2)  // Expected: false
+println(q1 <= q2) // Expected: false
+
+// =========================================================
+// 3. Edge Cases & Div By Zero
+// =========================================================
+println("=== Edge Cases ===")
+half h_zero = 0.0
+quarter q_zero = 0.0
+
+println("f16 Infinity (15.5 / 0.0):")
+println(h1 / h_zero) // Expected: inf
+
+println("f8 Infinity (12.0 / 0.0):")
+println(q1 / q_zero) // Expected: inf
+
+println("f16 NaN (0.0 / 0.0):")
+println(h_zero / h_zero) // Expected: nan
+
+println("f8 NaN (0.0 / 0.0):")
+println(q_zero / q_zero) // Expected: nan

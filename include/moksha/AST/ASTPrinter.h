@@ -46,6 +46,7 @@ public:
   void visitWeakType(const WeakType *type) override;
   void visitDecimalType(const DecimalType *type) override;
   void visitClosureType(const ClosureType *type) override;
+  void visitPromiseType(const PromiseType *type) override;
 
   // Expressions
   void visitIntegerLiteral(const IntegerLiteral *expr) override;

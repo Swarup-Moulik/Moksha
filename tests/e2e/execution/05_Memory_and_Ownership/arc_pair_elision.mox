@@ -1,0 +1,26 @@
+println("--- [E2E] arc_pair_elision.mox ---")
+
+ref class CycleState {
+    public int id;
+    constructor(int id) { this.id = id; }
+}
+
+void test_elision_and_phi(bool cond) {
+    CycleState c1 = new CycleState(1);
+    CycleState c2 = new CycleState(2);
+
+    {
+        // ARCInserter WILL add retain(copy) and release(copy) here
+        // ARCAnalyzer WILL delete them because no side-effects happen!
+        CycleState copy = c1;
+    }
+
+    // The naive inserter will retain the result of the Phi node.
+    // The analyzer must see it's never escaped and elide it.
+    CycleState result = cond ? c1 : c2;
+
+    println(result.id);
+}
+
+test_elision_and_phi(true);  // Expected: 1
+test_elision_and_phi(false); // Expected: 2

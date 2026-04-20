@@ -1,21 +1,5 @@
-# Safely handle MSYS2/Dynamic LLVM vs Standard Static LLVM
-if(LLVM_LINK_LLVM_DYLIB OR LLVM_BUILD_LLVM_DYLIB)
-    # Use the monolithic dynamic library (MSYS2 default)
-    set(llvm_codegen_libs LLVM)
-else()
-    # Use individual static components (Linux/Mac default)
-    llvm_map_components_to_libnames(llvm_codegen_libs
-        Core
-        Target
-        CodeGen
-        MC
-        Support
-        TargetParser
-        AsmPrinter
-        AsmParser
-        ${LLVM_TARGETS_TO_BUILD}
-    )
-endif()
+# --- [CRITICAL FIX] Use monolithic DLL to match MLIR dependencies ---
+set(llvm_codegen_libs LLVM)
 
 add_library(MokshaLLVMCodeGen
     CodeGen.cpp

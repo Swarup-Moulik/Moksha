@@ -307,9 +307,8 @@ TypeLowering::TypeLowering(::mlir::MLIRContext &ctx) : context(ctx) {}
     return ::moksha::IR::MapType::get(&context, keyType, valType);
   }
   case hir::TypeKind::Promise: {
-    auto &promType = static_cast<const hir::HIRPromiseType &>(type);
-    ::mlir::Type innerTy = lowerHIRType(*promType.getInner());
-    return ::moksha::IR::PromiseType::get(&context, innerTy);
+    auto i8Ty = ::mlir::IntegerType::get(&context, 8);
+    return ::moksha::IR::PointerType::get(&context, i8Ty);
   }
   default:
     return ::mlir::NoneType::get(&context);

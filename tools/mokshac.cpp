@@ -37,17 +37,23 @@
 #include "moksha/Sema/SymbolTable.h"
 #include "moksha/Sema/TypeChecker.h"
 #include "moksha/Support/Diagnostics.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/InitializePasses.h"
+#include "llvm/PassRegistry.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
 #include <iostream>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // ============================================================================
@@ -153,13 +159,96 @@ static cl::opt<bool> DisableOpt("O0", cl::desc("Disable backend optimizations"),
                                 cl::init(false), cl::cat(MokshaCategory));
 
 // Allows pointing to the built runtime lib
-static cl::opt<std::string> RuntimeLib("rt-lib",
-                                       cl::desc("Path to libmokshaRuntime.a"),
-                                       cl::init("libmokshaRuntime.a"),
-                                       cl::cat(MokshaCategory));
+static cl::opt<std::string>
+    RuntimeLib("rt-lib",
+               cl::desc("Override path to the Moksha runtime library"),
+               cl::init(""), cl::cat(MokshaCategory));
+
+std::string resolveRuntimeLibrary(const std::string &explicitPath,
+                                  const llvm::Triple &triple,
+                                  const char *argv0) {
+  // 1. Explicit override via -rt-lib=...
+  if (!explicitPath.empty()) {
+    return explicitPath;
+  }
+
+  // 2. Map LLVM Triple OS to our CMake Target Strings
+  std::string osName;
+  if (triple.isOSWindows()) {
+    osName = "windows";
+  } else if (triple.isOSDarwin()) {
+    osName = "darwin";
+  } else if (triple.isOSLinux()) {
+    osName = "linux";
+  } else if (triple.getOS() == llvm::Triple::WASI) {
+    osName = "wasi";
+  } else if (triple.isWasm()) {
+    osName = "wasm_web";
+  } else if (triple.getOS() == llvm::Triple::UnknownOS) {
+    osName = "baremetal";
+  } else {
+    osName = "posix_common";
+  }
+
+  std::string libFilename = "libmoksha_rt_" + osName + ".a";
+  std::string exePath = llvm::sys::fs::getMainExecutable(
+      argv0, (void *)(intptr_t)resolveRuntimeLibrary);
+  llvm::StringRef binDir = llvm::sys::path::parent_path(exePath);
+
+  // --- [FIX] Search multiple common CMake output directories ---
+  const char *searchDirs[] = {
+      "../runtime",    // Default target directory
+      "../lib",        // Standard CMake CMAKE_ARCHIVE_OUTPUT_DIRECTORY
+      "../../runtime", // Fallback source directory
+      "."              // Current directory
+  };
+
+  for (const char *dir : searchDirs) {
+    llvm::SmallString<256> libPath = binDir;
+    llvm::sys::path::append(libPath, dir, libFilename);
+    if (llvm::sys::fs::exists(libPath)) {
+      return std::string(libPath.str());
+    }
+  }
+
+  // Fallback to default path to give a clear error message if not found
+  llvm::SmallString<256> fallback = binDir;
+  llvm::sys::path::append(fallback, "..", "runtime", libFilename);
+  return std::string(fallback.str());
+}
 
 int main(int argc, char **argv) {
   llvm::InitLLVM X(argc, argv);
+
+  // 1. INITIALIZE NATIVE TARGETS FIRST!
+  llvm::InitializeAllTargetInfos();
+  llvm::InitializeAllTargets();
+  llvm::InitializeAllTargetMCs();
+  llvm::InitializeAllAsmParsers();
+  llvm::InitializeAllAsmPrinters();
+
+  // 2. INITIALIZE GLOBAL PASS REGISTRY SECOND!
+  llvm::PassRegistry &Registry = *llvm::PassRegistry::getPassRegistry();
+  llvm::initializeCore(Registry);
+  llvm::initializeCodeGen(Registry);
+  llvm::initializeTarget(Registry);
+  llvm::initializeTransformUtils(Registry);
+  llvm::initializeScalarOpts(Registry);
+  llvm::initializeAnalysis(Registry);
+  llvm::initializeIPO(Registry);
+  llvm::initializeInstCombine(Registry);
+  llvm::initializeTargetTransformInfoWrapperPassPass(Registry);
+  llvm::initializeTargetLibraryInfoWrapperPassPass(Registry);
+  llvm::initializeTargetPassConfigPass(Registry);
+  llvm::initializeMachineModuleInfoWrapperPassPass(Registry);
+  llvm::initializeGlobalISel(Registry);
+
+  // Legacy pass names specifically required by TargetPassConfig
+  llvm::initializeLoopStrengthReducePass(Registry);
+  llvm::initializeLowerIntrinsicsPass(Registry);
+  llvm::initializeUnreachableBlockElimLegacyPassPass(Registry);
+  llvm::initializeUnreachableMachineBlockElimLegacyPass(Registry);
+
   cl::HideUnrelatedOptions(MokshaCategory);
   cl::ParseCommandLineOptions(argc, argv, "Moksha Compiler\n");
 
@@ -197,13 +286,81 @@ int main(int argc, char **argv) {
   MacroExpander macroExpander(astContext, diags);
   moduleAST->accept(macroExpander);
 
+  // 1. Create a cache to hold ownership of the imported ASTs
+  std::unordered_map<std::string, std::unique_ptr<moksha::ModuleDecl>>
+      moduleCache;
+
   TypeChecker typeChecker(astContext, symbolTable, diags);
+
+  // Extract the base name of the input file and mark it as loaded
+  llvm::StringRef mainModName = llvm::sys::path::stem(InputFilename);
+  typeChecker.markModuleAsLoaded(mainModName.str());
+
+  // 2. Define the callback to parse imported files
+  typeChecker.loadModuleCallback =
+      [&](const std::string &modName) -> moksha::ModuleDecl * {
+    llvm::SmallString<256> parentDir =
+        llvm::sys::path::parent_path(InputFilename);
+    llvm::SmallString<256> modulePath = parentDir;
+    llvm::sys::path::append(modulePath, modName + ".mox");
+
+    std::string path = modulePath.str().str();
+
+    // If it's already in the cache, just return it
+    if (moduleCache.count(path)) {
+      return moduleCache[path].get();
+    }
+
+    // Open the file using LLVM's Memory Buffer
+    llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> bufOrErr =
+        llvm::MemoryBuffer::getFile(path);
+    if (std::error_code ec = bufOrErr.getError()) {
+      return nullptr; // Returning nullptr tells Sema to emit an error
+    }
+
+    // Add the new file to your existing SourceMgr so diagnostics point to the
+    // right file!
+    unsigned bufID =
+        srcMgr.AddNewSourceBuffer(std::move(*bufOrErr), llvm::SMLoc());
+
+    // Lex and Parse the imported file
+    moksha::Lexer importLexer(srcMgr.getMemoryBuffer(bufID)->getBuffer(),
+                              diags);
+    moksha::Parser importParser(importLexer, astContext, srcMgr, diags);
+
+    std::unique_ptr<moksha::ModuleDecl> importedAST =
+        importParser.parseModule();
+    if (!importedAST || diags.hasErrors()) {
+      return nullptr;
+    }
+
+    // Run Macro expansion on the imported file
+    importedAST->accept(macroExpander);
+
+    // Store in cache to keep memory alive, and return the raw pointer to Sema
+    moksha::ModuleDecl *rawPtr = importedAST.get();
+    moduleCache[path] = std::move(importedAST);
+    return rawPtr;
+  };
+
+  // 3. Trigger semantic analysis
   typeChecker.check(moduleAST.get());
 
   if (typeChecker.hasErrors() || diags.hasErrors()) {
     llvm::errs() << "Semantic analysis failed with " << diags.getNumErrors()
                  << " error(s).\n";
     return 1;
+  }
+
+  // WHOLE-PROGRAM AST MERGE
+  for (auto &pair : moduleCache) {
+    if (pair.second) {
+      for (auto &decl : pair.second->getDeclsMut()) {
+        if (decl) {
+          moduleAST->addDeclaration(std::move(decl));
+        }
+      }
+    }
   }
 
   if (DumpAST) {
@@ -342,28 +499,51 @@ int main(int argc, char **argv) {
         exeFilename += ".exe";
       }
 
-      // If we are just emitting an object file, output directly to
-      // OutputFilename. Otherwise, emit to a temporary .o file, then link.
-      std::string objFilename = EmitObj ? OutputFilename : exeFilename + ".o";
+      // --- [FIX] Emit a .ll file instead of an object file ---
+      std::string llFilename = EmitObj ? OutputFilename : exeFilename + ".ll";
 
-      if (!moksha::emitObjectCode(*llvmModule, objFilename, config)) {
-        llvm::errs() << "Failed to emit object code!\n";
+      if (!moksha::emitObjectCode(*llvmModule, llFilename, config)) {
+        llvm::errs() << "Failed to emit LLVM IR code!\n";
         return 1;
       }
 
       if (EmitObj) {
-        llvm::outs() << "Successfully generated object file: " << objFilename
+        llvm::outs() << "Successfully generated LLVM IR file: " << llFilename
                      << "\n";
       } else {
-        llvm::outs() << "Linking " << exeFilename << "...\n";
-        if (!linkExecutable(objFilename, exeFilename, config.triple,
-                            RuntimeLib)) {
-          llvm::errs() << "Linker failed! Ensure '" << RuntimeLib
-                       << "' is accessible.\n";
+        llvm::outs() << "Compiling " << exeFilename << " via clang...\n";
+
+        std::string resolvedRtLib =
+            resolveRuntimeLibrary(RuntimeLib, actualTriple, argv[0]);
+
+        if (!llvm::sys::fs::exists(resolvedRtLib)) {
+          llvm::errs() << "Fatal: Could not find runtime library at: "
+                       << resolvedRtLib << "\n";
           return 1;
         }
 
-        llvm::sys::fs::remove(objFilename);
+        llvm::outs() << "Running LLVM middle-end optimizers...\n";
+        std::string optCmd = "opt -O2 " + llFilename + " -S -o " + llFilename;
+        int optResult = std::system(optCmd.c_str());
+
+        if (optResult != 0) {
+          llvm::errs() << "Fatal: 'opt' failed to optimize the LLVM IR.\n";
+          return 1;
+        }
+
+        // Shell out to clang.exe to do the heavy lifting
+        std::string cmd = "clang++ -O2 -Wno-override-module " + llFilename + " " +
+                          resolvedRtLib + " -o " + exeFilename;
+
+        int result = std::system(cmd.c_str());
+
+        if (result != 0) {
+          llvm::errs() << "Clang failed to compile the generated LLVM IR.\n";
+          return 1;
+        }
+
+        // Clean up the temporary .ll file
+        llvm::sys::fs::remove(llFilename);
         llvm::outs() << "Successfully generated executable: " << exeFilename
                      << "\n";
       }

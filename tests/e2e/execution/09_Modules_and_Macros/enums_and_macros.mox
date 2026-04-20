@@ -1,0 +1,35 @@
+println("--- [E2E] enums_and_macros.mox ---")
+
+// Enum Definition
+enum Color {
+    Red,
+    Green,
+    Blue = 10,
+    Alpha
+}
+
+// Macro Definition
+macro swap(a, b) {
+    int temp = a;
+    a = b;
+    b = temp;
+}
+
+void test_enums_and_macros() {
+    // Enums implicitly cast to their integer values in memory
+    Color c = Color.Green;
+    println(c);           // Expected: 1
+    println(Color.Blue);  // Expected: 10
+    println(Color.Alpha); // Expected: 11
+
+    int x = 10;
+    int y = 20;
+
+    // Macro Expansion check
+    swap(x, y);
+
+    println(x); // Expected: 20
+    println(y); // Expected: 10
+}
+
+test_enums_and_macros();

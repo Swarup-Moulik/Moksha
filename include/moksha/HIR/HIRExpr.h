@@ -52,12 +52,14 @@ enum class CastOp {
   BitCast,
   IntToFloat,
   FloatToInt,
-  Truncate,
-  AnyCast,
-  SignExtend,
-  ZeroExtend,
+  Truncate,      // Integer narrowing (e.g., long -> int)
+  SignExtend,    // Signed Integer widening (e.g., short -> int)
+  ZeroExtend,    // Unsigned Integer widening (e.g., unsigned short -> unsigned
+                 // int)
+  FloatExtend,   // Float widening (e.g., quarter -> half -> float -> double)
+  FloatTruncate, // Float narrowing (e.g., double -> float)
   PointerCast,
-  Dynamic
+  AnyCast
 };
 
 // [NEW] robust ThreadKind
@@ -484,12 +486,15 @@ private:
 class HIRIndexExpr : public HIRExpr {
 public:
   HIRIndexExpr(std::unique_ptr<HIRExpr> base, std::unique_ptr<HIRExpr> index,
-               const HIRType *type, SourceLocation loc)
+               bool isOptional, const HIRType *type, SourceLocation loc)
       : HIRExpr(Kind::Index, type, ValueCategory::LValue, loc),
-        base(std::move(base)), index(std::move(index)) {}
+        base(std::move(base)), index(std::move(index)), isOptional(isOptional) {
+  }
 
   [[nodiscard]] HIRExpr *getBase() const { return base.get(); }
   [[nodiscard]] HIRExpr *getIndex() const { return index.get(); }
+  [[nodiscard]] bool isOptionalAccess() const { return isOptional; }
+
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
@@ -498,6 +503,7 @@ public:
 private:
   HIRExprPtr base;
   HIRExprPtr index;
+  bool isOptional;
 };
 
 class HIRThisExpr : public HIRExpr {

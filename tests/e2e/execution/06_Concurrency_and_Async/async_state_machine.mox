@@ -1,0 +1,19 @@
+println("--- [E2E] async_state_machine.mox ---")
+
+async void some_io_task() {
+    println("Simulating IO...");
+}
+
+async void fetch_data() {
+    println("State 0: Before await");
+
+    // The AST `await` keyword must be lowered into a state-save,
+    // a return to the event loop, and a reentry switch case.
+    await some_io_task();
+
+    int x = 1;
+    println("State 1: After await. Value: " + string(x));
+}
+
+// Kick off the coroutine. The scheduler will flush it before the program exits.
+fetch_data();

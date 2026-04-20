@@ -1,0 +1,25 @@
+println("--- [E2E] exceptions.mox ---")
+
+void riskyOperation() {
+    println("Attempting risky operation...");
+    if (true) throw "Something went wrong";
+}
+
+void test_top_level_defer() {
+    // Defer at the top of the function
+    defer println("Cleaning up scope...");
+
+    try {
+        riskyOperation();
+    } catch (string e) {
+        println(`Caught string exception: ${e}`);
+    } finally {
+        println("Finally block executed.");
+    }
+}
+
+test_top_level_defer();
+// Expected: Attempting risky operation...
+// Expected: Caught string exception: Something went wrong
+// Expected: Finally block executed.
+// Expected: Cleaning up scope...

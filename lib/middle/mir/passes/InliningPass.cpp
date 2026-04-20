@@ -26,7 +26,7 @@ static void replaceAllUsesInFunction(MIRFunction *F, MIRValue *oldVal,
 bool InliningPass::runOnModule(MIRModule &M) {
   bool changed = false;
   for (auto &func : M.getFunctions()) {
-    changed |= runOnFunction(func.get(), M);
+    changed |= runOnFunction(func, M);
   }
   return changed;
 }
@@ -34,6 +34,14 @@ bool InliningPass::runOnModule(MIRModule &M) {
 bool InliningPass::shouldInline(MIRFunction *callee) {
   if (!callee || callee->isDeclaration())
     return false;
+
+  // Do not inline async functions
+  if (callee->getType()) {
+    std::string retStr = callee->getType()->toString();
+    if (retStr.find("Promise") != std::string::npos) {
+      return false; // Abort inlining!
+    }
+  }
 
   if (callee->isNoInline() || callee->isInterrupt() || callee->isNaked()) {
     return false;
@@ -221,6 +229,18 @@ bool InliningPass::inlineCall(
       condBr->getTrueBlock()->addPredecessor(newBlock);
       newBlock->addSuccessor(condBr->getFalseBlock());
       condBr->getFalseBlock()->addPredecessor(newBlock);
+    } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(term)) {
+      newBlock->addSuccessor(invoke->getNormalDest());
+      invoke->getNormalDest()->addPredecessor(newBlock);
+      if (invoke->getUnwindDest()) {
+        newBlock->addSuccessor(invoke->getUnwindDest());
+        invoke->getUnwindDest()->addPredecessor(newBlock);
+      }
+    } else if (auto *throwInst = llvm::dyn_cast<ThrowInst>(term)) {
+      if (throwInst->getUnwindDest()) {
+        newBlock->addSuccessor(throwInst->getUnwindDest());
+        throwInst->getUnwindDest()->addPredecessor(newBlock);
+      }
     } else if (auto *switchInst = llvm::dyn_cast<SwitchInst>(term)) {
       newBlock->addSuccessor(switchInst->getDefaultBlock());
       switchInst->getDefaultBlock()->addPredecessor(newBlock);
@@ -288,7 +308,21 @@ bool InliningPass::inlineCall(
       for (ReturnInst *ret : returns) {
         MIRBlock *retBlock = ret->getParent();
         if (ret->getReturnValue()) {
-          phi->addIncoming(ret->getReturnValue(), retBlock);
+          MIRValue *retVal = ret->getReturnValue();
+
+          if (retVal->getType() != retTy) {
+            if (retVal->getType()->toString() != retTy->toString()) {
+              auto castInst =
+                  std::make_unique<CastInst>(Opcode::BitCast, retVal, retTy,
+                                             "inline.ret.cast", ret->getLoc());
+              retVal = castInst.get();
+              auto &retInsts = retBlock->getInstructionsMut();
+              // Insert the cast right before the ReturnInst
+              retInsts.insert(retInsts.end() - 1, std::move(castInst));
+            }
+          }
+
+          phi->addIncoming(retVal, retBlock);
         }
 
         // Replace return with branch to the continuation block
@@ -504,8 +538,23 @@ bool InliningPass::inlineInvoke(
           std::make_unique<PhiInst>(retTy, "invoke.ret", returns[0]->getLoc());
       for (ReturnInst *ret : returns) {
         MIRBlock *retBlock = ret->getParent();
-        if (ret->getReturnValue())
-          phi->addIncoming(ret->getReturnValue(), retBlock);
+        if (ret->getReturnValue()) {
+          MIRValue *retVal = ret->getReturnValue();
+
+          if (retVal->getType() != retTy) {
+            if (retVal->getType()->toString() != retTy->toString()) {
+              auto castInst =
+                  std::make_unique<CastInst>(Opcode::BitCast, retVal, retTy,
+                                             "inline.ret.cast", ret->getLoc());
+              retVal = castInst.get();
+              auto &retInsts = retBlock->getInstructionsMut();
+              // Insert the cast right before the ReturnInst
+              retInsts.insert(retInsts.end() - 1, std::move(castInst));
+            }
+          }
+
+          phi->addIncoming(retVal, retBlock);
+        }
 
         auto &retInsts = retBlock->getInstructionsMut();
         retInsts.pop_back();
@@ -529,6 +578,13 @@ bool InliningPass::inlineInvoke(
         retBlock->addSuccessor(normalDest);
         normalDest->addPredecessor(retBlock);
       }
+    }
+  } else {
+    auto &retInsts = normalDest->getInstructionsMut();
+    if (retInsts.empty() ||
+        !llvm::isa<UnreachableInst>(retInsts.back().get())) {
+      retInsts.insert(retInsts.begin(),
+                      std::make_unique<UnreachableInst>(invoke->getLoc()));
     }
   }
 

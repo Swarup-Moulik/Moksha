@@ -37,16 +37,16 @@ public:
     builder.setInsertionPointToStart(mlirModule.getBody());
 
     for (auto &global : mirModule.getGlobals()) {
-      lowerGlobal(global.get());
+      lowerGlobal(global);
     }
 
     for (auto &func : mirModule.getFunctions()) {
-      createFunctionDecl(func.get());
+      createFunctionDecl(func);
     }
 
     for (auto &func : mirModule.getFunctions()) {
       if (!func->isDeclaration()) {
-        if (failed(lowerFunctionBody(func.get())))
+        if (failed(lowerFunctionBody(func)))
           return nullptr;
       }
     }
@@ -93,15 +93,34 @@ private:
   // Helper to recursively map MIR constants to MLIR Attributes
   ::mlir::Attribute getConstantAttribute(mir::MIRConstant *constant) {
     if (auto *intConst = ::llvm::dyn_cast<mir::ConstantInt>(constant)) {
-      // [FIX] Fetch the exact lowered type (preserves sign and width)
       ::mlir::Type exactType = getMLIRType(intConst->getType());
-      return builder.getIntegerAttr(exactType, intConst->getValue());
+
+      // [FIX] Safely route ConstantInts based on the target MLIR type
+      if (exactType.isIntOrIndex()) {
+        return builder.getIntegerAttr(exactType, intConst->getValue());
+      } else if (::llvm::isa<::mlir::FloatType>(exactType)) {
+        return builder.getFloatAttr(exactType,
+                                    static_cast<double>(intConst->getValue()));
+      } else if (::llvm::isa<::moksha::IR::DecimalType>(exactType)) {
+        return builder.getStringAttr(std::to_string(intConst->getValue()));
+      } else {
+        // Fallback for Pointers, Structs, and Arrays zero-initialized via
+        // ConstantInt(0)
+        return builder.getUnitAttr();
+      }
 
     } else if (auto *floatConst =
                    ::llvm::dyn_cast<mir::ConstantFloat>(constant)) {
-      // [FIX] Fetch the exact float type (supports f16, f32, f64, etc.)
       ::mlir::Type exactType = getMLIRType(floatConst->getType());
-      return builder.getFloatAttr(exactType, floatConst->getValue());
+
+      // [FIX] Safely route ConstantFloats
+      if (::llvm::isa<::mlir::FloatType>(exactType)) {
+        return builder.getFloatAttr(exactType, floatConst->getValue());
+      } else if (::llvm::isa<::moksha::IR::DecimalType>(exactType)) {
+        return builder.getStringAttr(std::to_string(floatConst->getValue()));
+      } else {
+        return builder.getUnitAttr();
+      }
 
     } else if (auto *strConst =
                    ::llvm::dyn_cast<mir::ConstantString>(constant)) {
@@ -956,18 +975,13 @@ private:
       if (!closure)
         return ::mlir::failure();
 
-      bool isWeak = spawnInst->getThreadKind() == hir::ThreadKind::Weak;
-
-      // Extract the correct return type dynamically
       ::mlir::Type resType = getMLIRType(spawnInst->getType());
 
-      // Create the op with the correct dynamic type
-      auto spawnOp =
-          builder.create<::moksha::IR::SpawnOp>(loc, resType, closure);
+      auto threadKindAttr = builder.getI32IntegerAttr(
+          static_cast<int32_t>(spawnInst->getThreadKind()));
 
-      if (isWeak) {
-        spawnOp->setAttr("is_weak", builder.getBoolAttr(true));
-      }
+      auto spawnOp = builder.create<::moksha::IR::SpawnOp>(
+          loc, resType, closure, threadKindAttr);
 
       valueMap[inst] = spawnOp.getResult();
       break;

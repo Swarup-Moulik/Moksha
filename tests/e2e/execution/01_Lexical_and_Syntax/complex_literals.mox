@@ -1,0 +1,30 @@
+println("--- [E2E] complex_literals.mox ---")
+
+// Hexadecimal, Octal, and Binary
+int hex_val = 0x1A4F;
+int oct_val = 0o755;
+int bin_val = 0b101010;
+
+println(hex_val); // Expected: 6735
+println(oct_val); // Expected: 493
+println(bin_val); // Expected: 42
+
+// Floating Point Edge Cases
+float standard_float = 3.14159;
+float scientific_pos = 1.23e10;
+float scientific_neg = 4.56E-8;
+float trailing_dot = 10.;
+float leading_dot = .5;
+
+println(standard_float);
+println(scientific_pos);
+println(scientific_neg);
+println(trailing_dot);
+println(leading_dot);
+
+// Underscore separators
+int big_num = 1_000_000;
+float complex_float = 1_000.50_5;
+
+println(big_num);
+println(complex_float);

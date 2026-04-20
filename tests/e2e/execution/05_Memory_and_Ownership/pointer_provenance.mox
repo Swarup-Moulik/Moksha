@@ -1,0 +1,29 @@
+println("--- [E2E] pointer_provenance.mox ---")
+
+void test_pointer_math() {
+    // 1. Allocate some legitimate memory to test with
+    int target = 42;
+    *mut int legitimate_ptr = &target;
+
+    // 2. Cast pointer to an integer address (provenance stripping)
+    usize phys_addr = cast<usize>(legitimate_ptr);
+
+    // 3. Cast back to a pointer
+    *view int ptr = cast<*view int>(phys_addr);
+
+    // 4. Dereference the round-tripped pointer
+    println(*ptr); // Expected: 42
+
+    unsafe {
+        // Unaligned Load/Store verification
+        // Create an arbitrary address offset (simulating hardware memory-mapping)
+        // We won't actually dereference it to avoid segfaulting on your OS,
+        // but we verify the math works correctly.
+        *mut unsigned int unaligned = cast<*mut unsigned int>(phys_addr + 1);
+
+        usize new_addr = cast<usize>(unaligned);
+        println(new_addr == phys_addr + 1); // Expected: true
+    }
+}
+
+test_pointer_math();

@@ -1,0 +1,40 @@
+println("--- [E2E] scope_stress.mox ---")
+
+int x = 100; // Global/Module scope
+
+void run_scope_stress() {
+    println(x); // Expected: 100
+
+    // Testing top-level block scope shadowing
+    {
+        int x = 50; // Shadows global
+        println(x); // Expected: 50
+
+        {
+            int x = 25; // Shadows local block
+            println(x); // Expected: 25
+
+            for (int x in [1, 2, 3]) { // Shadows outer block
+                println(x);
+                // Expected: 1
+                // Expected: 2
+                // Expected: 3
+
+                closure(int) -> int clos = (int x) => { // Shadows loop variable
+                    int x = 5; // Shadows lambda param
+                    return x;
+                };
+
+                // Should completely ignore the passed 99 and the loop variable
+                println(clos(99)); // Expected: 5
+            }
+
+            // Verifying the loop didn't permanently overwrite the block variable
+            println(x); // Expected: 25
+        }
+        println(x); // Expected: 50
+    }
+    println(x); // Expected: 100
+}
+
+run_scope_stress();

@@ -125,7 +125,8 @@ std::unique_ptr<Expr> MemberExpr::clone() const {
   return cloned;
 }
 std::unique_ptr<Expr> IndexExpr::clone() const {
-  return std::make_unique<IndexExpr>(array->clone(), index->clone(), loc);
+  return std::make_unique<IndexExpr>(array->clone(), index->clone(), isOptional,
+                                     loc);
 }
 std::unique_ptr<Expr> NewExpr::clone() const {
   std::vector<ExprPtr> clonedArgs;

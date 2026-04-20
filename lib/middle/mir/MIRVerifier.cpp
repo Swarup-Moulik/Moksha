@@ -42,12 +42,15 @@ MIRVerifier::MIRVerifier(llvm::raw_ostream *os, bool verbose)
 // [Public Entry Points]
 // ============================================================================
 
-// Removed static instantiation, now acts on the current object instance
 bool MIRVerifier::verify(const MIRModule *module) {
+  errors.clear();
+  hasError = false;
   return verifyModule(module);
 }
 
 bool MIRVerifier::verify(const MIRFunction *func) {
+  errors.clear();
+  hasError = false;
   return verifyFunction(func);
 }
 
@@ -92,7 +95,7 @@ bool MIRVerifier::verifyModule(const MIRModule *module) {
   // Check functions
   for (const auto &func : module->getFunctions()) {
     if (!func->isDeclaration()) {
-      if (!verifyFunction(func.get())) {
+      if (!verifyFunction(func)) {
         ok = false;
       }
     }
@@ -102,10 +105,7 @@ bool MIRVerifier::verifyModule(const MIRModule *module) {
 }
 
 bool MIRVerifier::verifyFunction(const MIRFunction *func) {
-  logVerbose("Verifying Function: @" + func->getName());
-
   if (func->isDeclaration()) {
-    logVerbose("  (Declaration skipped)");
     return !hasError;
   }
 
@@ -533,6 +533,19 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
               isPredecessor = true;
           break;
         }
+        case Opcode::Invoke: {
+          const auto *inv = static_cast<const InvokeInst *>(term);
+          if (inv->getNormalDest() == inst->getParent() ||
+              inv->getUnwindDest() == inst->getParent())
+            isPredecessor = true;
+          break;
+        }
+        case Opcode::Throw: {
+          const auto *thr = static_cast<const ThrowInst *>(term);
+          if (thr->getUnwindDest() == inst->getParent())
+            isPredecessor = true;
+          break;
+        }
         default:
           break;
         }
@@ -546,11 +559,12 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
     break;
   }
 
-  // Return
+    // Return
   case Opcode::Return: {
     const auto *ret = static_cast<const ReturnInst *>(inst);
-    // Walk up to find the function
     const MIRFunction *parentFunc = inst->getParent()->getParent();
+
+    // 1. Get the function's expected return type
     const hir::HIRType *funcRetType = parentFunc->getType();
 
     if (ret->getReturnValue()) {
@@ -646,6 +660,28 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
     // The crucial PromiseType check
     if (!llvm::isa<hir::HIRPromiseType>(spawn->getType())) {
       logError("SpawnInst return type MUST be a PromiseType.", inst);
+      return false;
+    }
+    break;
+  }
+  case Opcode::Await: {
+    const auto *awaitInst = static_cast<const AwaitInst *>(inst);
+
+    if (!awaitInst->getPromise()) {
+      logError("AwaitInst requires a promise operand", inst);
+      return false;
+    }
+
+    auto *promTy = llvm::dyn_cast_or_null<hir::HIRPromiseType>(
+        awaitInst->getPromise()->getType());
+    if (!promTy) {
+      logError("Await operand must be a PromiseType", inst);
+      return false;
+    }
+
+    // Verify the await instruction yields the correct unwrapped type
+    if (awaitInst->getType() != promTy->getInnerType()) {
+      logError("Await result type must match the promise's inner type", inst);
       return false;
     }
     break;

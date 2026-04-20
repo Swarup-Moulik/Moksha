@@ -1,0 +1,124 @@
+println("--- [E2E] overflow_torture.mox ---")
+
+// ---------------------------------------------------------
+// 1. 8-bit Signed Integer (char / i8)
+// ---------------------------------------------------------
+char i8_max = 127
+char i8_min = -128
+
+println("i8 Initial Values (Max, Min):")
+println(i8_max)
+println(i8_min)
+
+println("i8 Overflow (127 + 1):")
+char i8_ovf = i8_max + 1
+println(i8_ovf)  // Expected: -128
+
+println("i8 Underflow (-128 - 1):")
+char i8_udf = i8_min - 1
+println(i8_udf)  // Expected: 127
+println("------------------------------------")
+
+// ---------------------------------------------------------
+// 2. 8-bit Unsigned Integer (unsigned char / u8)
+// ---------------------------------------------------------
+unsigned char u8_max = 255
+unsigned char u8_min = 0
+
+println("u8 Initial Values (Max, Min):")
+println(u8_max)
+println(u8_min)
+
+println("u8 Overflow (255 + 1):")
+unsigned char u8_ovf = u8_max + 1
+println(u8_ovf)  // Expected: 0
+
+println("u8 Underflow (0 - 1):")
+unsigned char u8_udf = u8_min - 1
+println(u8_udf)  // Expected: 255
+println("------------------------------------")
+
+// ---------------------------------------------------------
+// 3. 16-bit Signed Integer (short / i16)
+// ---------------------------------------------------------
+short i16_max = 32767
+short i16_min = -32768
+
+println("i16 Initial Values (Max, Min):")
+println(i16_max)
+println(i16_min)
+
+println("i16 Overflow (32767 + 1):")
+short i16_ovf = i16_max + 1
+println(i16_ovf) // Expected: -32768
+
+println("i16 Underflow (-32768 - 1):")
+short i16_udf = i16_min - 1
+println(i16_udf) // Expected: 32767
+println("------------------------------------")
+
+// ---------------------------------------------------------
+// 4. 16-bit Unsigned Integer (unsigned short / u16)
+// ---------------------------------------------------------
+unsigned short u16_max = 65535
+unsigned short u16_min = 0
+
+println("u16 Initial Values (Max, Min):")
+println(u16_max)
+println(u16_min)
+
+println("u16 Overflow (65535 + 1):")
+unsigned short u16_ovf = u16_max + 1
+println(u16_ovf) // Expected: 0
+
+println("u16 Underflow (0 - 1):")
+unsigned short u16_udf = u16_min - 1
+println(u16_udf) // Expected: 65535
+println("------------------------------------")
+
+// ---------------------------------------------------------
+// 5. 16-bit Float (half / f16)
+// ---------------------------------------------------------
+half f16_max = 65504.0
+half f16_min = -65504.0
+half f16_zero = 0.0
+
+println("f16 Initial Values (Max, Min):")
+println(f16_max)
+println(f16_min)
+
+println("f16 Overflow to Infinity:")
+half f16_ovf = f16_max * 2.0
+println(f16_ovf)
+
+println("f16 Underflow to -Infinity:")
+half f16_udf = f16_min * 2.0
+println(f16_udf)
+
+println("f16 Div By Zero:")
+half f16_div = f16_max / f16_zero
+println(f16_div)
+println("------------------------------------")
+
+// ---------------------------------------------------------
+// 6. 8-bit Float (quarter / f8)
+// ---------------------------------------------------------
+quarter f8_max = 57344.0
+quarter f8_min = -57344.0
+quarter f8_zero = 0.0
+
+println("f8 Initial Values (Max, Min):")
+println(f8_max)
+println(f8_min)
+
+println("f8 Overflow to Infinity:")
+quarter f8_ovf = f8_max * 2.0
+println(f8_ovf)
+
+println("f8 Underflow to -Infinity:")
+quarter f8_udf = f8_min * 2.0
+println(f8_udf)
+
+println("f8 Div By Zero:")
+quarter f8_div = f8_max / f8_zero
+println(f8_div)

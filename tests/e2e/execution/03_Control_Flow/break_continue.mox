@@ -1,0 +1,25 @@
+println("--- [E2E] break_continue.mox ---")
+
+void test_loop(bool skip_two, bool break_at_four) {
+    int i = 0;
+    int counter = 0;
+
+    while (i < 5) {
+        i = i + 1;
+
+        if (skip_two && i == 2) {
+            continue; // Jumps to loop condition
+        }
+
+        if (break_at_four && i == 4) {
+            break;    // Escapes the loop
+        }
+
+        counter = counter + 1;
+    }
+
+    println(counter);
+}
+
+test_loop(true, false); // Skips i=2. Evaluates 1,3,4,5. Expected: 4
+test_loop(false, true); // Breaks at i=4. Evaluates 1,2,3. Expected: 3

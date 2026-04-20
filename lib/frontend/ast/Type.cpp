@@ -308,6 +308,8 @@ std::string NullableType::toString() const {
 
 void ClosureType::accept(ASTVisitor &v) const { v.visitClosureType(this); }
 
+void PromiseType::accept(ASTVisitor &v) const { v.visitPromiseType(this); }
+
 // === View Type ===
 bool ViewType::isImmutable() const { return true; }
 const Type *ViewType::stripModifiers() const { return inner->stripModifiers(); }

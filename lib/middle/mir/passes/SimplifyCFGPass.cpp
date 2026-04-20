@@ -64,7 +64,7 @@ bool SimplifyCFGPass::runOnModule(MIRModule &M) {
   bool changed = false;
   for (auto &func : M.getFunctions()) {
     if (!func->isDeclaration()) {
-      changed |= runOnFunction(func.get());
+      changed |= runOnFunction(func);
     }
   }
   return changed;
@@ -218,6 +218,33 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
     MIRBlock *C = br->getTarget();
     if (B == C)
       continue; // Ignore infinite self-loops
+
+    // [FIX START] Prevent the creation of ambiguous parallel edges into Phi
+    // nodes! If A branches to B and C, and we bypass B to jump directly to C, A
+    // will have two parallel edges into C. If C has a Phi node, the CFG becomes
+    // invalid.
+    bool cHasPhi = false;
+    for (auto &inst : C->getInstructions()) {
+      if (llvm::isa<PhiInst>(inst.get())) {
+        cHasPhi = true;
+        break;
+      }
+    }
+
+    bool canBypass = true;
+    if (cHasPhi) {
+      for (MIRBlock *A : B->getPredecessors()) {
+        // If predecessor A already has a path to C, abort bypassing B!
+        if (std::find(C->getPredecessors().begin(), C->getPredecessors().end(),
+                      A) != C->getPredecessors().end()) {
+          canBypass = false;
+          break;
+        }
+      }
+    }
+
+    if (!canBypass)
+      continue;
 
     // Bypass B: Wire all of B's predecessors directly to C
     // Copy predecessors to avoid iterator invalidation during mutation

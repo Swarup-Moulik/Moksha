@@ -1,0 +1,27 @@
+println("--- [E2E] cyclic_module_a.mox (Cyclic Imports) ---")
+
+from "cyclic_module_b" import { ClassB }
+
+public class ClassA {
+    public ClassB? bRef;
+
+    constructor() {
+        this.bRef = null;
+    }
+
+    public string getName() {
+        return "I am ClassA";
+    }
+}
+
+// Instantiate both to prove the types were resolved
+ClassA a = new ClassA();
+ClassB b = new ClassB();
+
+// Create a cyclic memory graph!
+a.bRef = b;
+b.aRef = a;
+
+println(a.getName());                 // Expected: I am ClassA
+println(a.bRef?.getName() ?? "null"); // Expected: I am ClassB
+println(b.aRef?.getName() ?? "null"); // Expected: I am ClassA

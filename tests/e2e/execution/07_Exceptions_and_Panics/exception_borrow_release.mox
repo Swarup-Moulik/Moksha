@@ -1,0 +1,24 @@
+println("--- [E2E] exception_borrow_release.mox ---")
+
+void test_exception_unwind() {
+    int p = 100;
+
+    try {
+        *view int v = &p;
+        if (p == 100) {
+            throw 1;
+        }
+        // NLL 'v' is destroyed during the unwind
+    } catch (int e) {
+        // Safe! The 'try' scope was popped, so 'p' is Unborrowed.
+        // If the compiler fails to release the borrow on the unwind edge,
+        // the borrow checker will fail compilation here.
+        *mut int m = &p;
+        *m = 200;
+        println("Borrow released, mutated successfully.");
+    }
+
+    println(p); // Expected: 200
+}
+
+test_exception_unwind();

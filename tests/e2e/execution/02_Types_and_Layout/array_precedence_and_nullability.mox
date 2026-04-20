@@ -1,0 +1,95 @@
+println("--- [E2E] array_precedence_and_nullability.mox ---")
+
+// --- 0. Define the Base Object ---
+class Object {
+    // Empty base class to satisfy 'new Object()'
+}
+
+// --- 1. Fixed vs Dynamic Sizing (1D & 2D) ---
+void test_sizing() {
+    int[3] fixed1D = [1, 2, 3];
+    int[2][2] fixed2D = [[1, 2], [3, 4]];
+
+    int[] dynamic1D = [1, 2, 3, 4, 5];
+    int[][] dynamic2D = [[1, 2], [3]]; // Jagged arrays are allowed by dynamic sizing
+
+    println(fixed1D[2]);       // Expected: 3
+    println(fixed2D[1][1]);    // Expected: 4
+    println(dynamic1D[4]);     // Expected: 5
+    println(dynamic2D[1][0]);  // Expected: 3
+}
+
+// --- 2. Static vs Dynamic (Any) Typing ---
+void test_typing() {
+    int[] staticInts = [1, 2, 3];
+
+    // Dynamic typing using the 'any' keyword
+    any[] heterogenous = [1, "Moksha", true, new Object()];
+    any[][] mixedMatrix = [[1, 2], ["A", "B"]];
+
+    println(staticInts[0]);       // Expected: 1
+    println(heterogenous[1]);     // Expected: Moksha
+    println(mixedMatrix[1][0]);   // Expected: A
+}
+
+// --- 3. The Nullability Matrix (1D & 2D) ---
+void test_nullability_1D() {
+    int[] nonNull_nonNull = [1, 2];      // Non-nullable array, non-nullable elements
+    int?[] null_nonNull = null;          // Nullable array, non-nullable elements
+    int[]? nonNull_null = [1, null, 3];  // Non-nullable array, nullable elements
+    int?[]? null_null = null;            // Nullable array, nullable elements
+
+    println(nonNull_nonNull[1]); // Expected: 2
+
+    // Test unwrapping nullable elements using the null-coalescing operator
+    println(nonNull_null[0] ?? -1); // Expected: 1
+    println(nonNull_null[1] ?? -1); // Expected: -1 (because it was null)
+}
+
+void test_nullability_2D() {
+    // Non-nullable matrix of non-nullable ints
+    int[][] matrix1 = [[1, 2], [3, 4]];
+
+    // Nullable matrix (the container itself can be null)
+    int?[] [] matrix2 = null;
+
+    // Non-nullable matrix where elements (inner arrays) can be null
+    int[][]? matrix3 = [[1, 2], null, [5, 6]];
+
+    // Fully nullable 2D structure
+    int?[][]? matrix4 = null;
+    matrix4 = [null, [1, 2]];
+
+    println(matrix1[0][1]); // Expected: 2
+
+    // Testing optional chaining (?) combined with null-coalescing (??)
+    println(matrix3[2]?[0] ?? -1); // Expected: 5
+}
+
+// --- 4. Spread Operator (...) with Dynamic Arrays ---
+void test_spread() {
+    int[] listA = [1, 2, 3];
+    int[] listB = [4, 5, 6];
+
+    // Combining arrays using the spread operator
+    int[] combined = [...listA, ...listB, 7, 8, 9];
+
+    println(combined[0]); // Expected: 1 (from listA)
+    println(combined[3]); // Expected: 4 (from listB)
+    println(combined[8]); // Expected: 9 (from literal)
+
+    // Spreading into 2D structures
+    int[][] matrixA = [[1, 1], [2, 2]];
+    int[][] matrixB = [...matrixA, [3, 3]];
+
+    println(matrixB[2][1]); // Expected: 3
+}
+
+// --- Trigger Execution ---
+test_sizing();
+test_typing();
+test_nullability_1D();
+test_nullability_2D();
+test_spread();
+
+println("All tests passed!");

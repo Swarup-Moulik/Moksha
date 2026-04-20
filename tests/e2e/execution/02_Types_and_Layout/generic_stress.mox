@@ -1,0 +1,24 @@
+println("--- [E2E] generic_stress.mox ---")
+
+generic <T>
+T[] map(T[] arr, (T) => T func) { return arr; } // Stub for test
+
+generic Container<T> {
+    public T value;
+    constructor(T val) {
+        this.value = val;
+    }
+    public T getValue() {
+        return this.value;
+    }
+}
+
+int[] arr = [1, 2, 3];
+
+// Generic inference flowing through a pipe with lambdas
+int[] result = arr |> map((int x) => x + 1);
+println(result[0]); // Expected: 1
+
+// Deeply nested generic resolution and method chaining
+Container<Container<int>> nested = new Container<Container<int>>(new Container<int>(999));
+println(nested.getValue().getValue()); // Expected: 999

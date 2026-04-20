@@ -1,0 +1,50 @@
+println("--- [E2E] inheritance.mox ---")
+
+ref class Entity {
+    public string id;
+    constructor(string id) {
+        this.id = id;
+    }
+}
+
+ref class Player(Entity) {
+    public int health;
+    constructor(string name, int hp) {
+        super(name);
+        this.health = hp;
+    }
+    void takeDamage(int amount) {
+        this.health -= amount;
+    }
+}
+
+ref class BaseBox {
+    public int capacity;
+    constructor(int cap) {
+        this.capacity = cap;
+    }
+}
+
+generic <T>
+ref class Box(BaseBox) {
+    public T item;
+    constructor(int cap, T item) {
+        super(cap);
+        this.item = item;
+    }
+    T getItem() {
+        return this.item;
+    }
+}
+
+// 1. Test Standard Inheritance & VTable
+Player p = new Player("Player_1", 100);
+println(p.id);     // Expected: Player_1 (Inherited property)
+println(p.health); // Expected: 100
+p.takeDamage(15);
+println(p.health); // Expected: 85
+
+// 2. Test Generic Inheritance
+Box<string> stringBox = new Box<string>(5, "Secret Item");
+println(stringBox.capacity); // Expected: 5 (Inherited)
+println(stringBox.getItem()); // Expected: Secret Item

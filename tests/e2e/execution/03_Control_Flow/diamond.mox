@@ -1,0 +1,18 @@
+println("--- [E2E] diamond.mox ---")
+
+int test_diamond(bool cond) {
+    int x = 0;
+
+    // Standard CFG Branching (If-Else)
+    if (cond) {
+        x = 10;
+    } else {
+        x = 20;
+    }
+
+    // CFG Convergence (Phi Node)
+    return x + 5;
+}
+
+println(test_diamond(true));  // Expected: 15
+println(test_diamond(false)); // Expected: 25

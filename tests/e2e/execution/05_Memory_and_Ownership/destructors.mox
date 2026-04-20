@@ -1,0 +1,33 @@
+println("--- [E2E] destructors.mox ---")
+
+// 1. Define global mock IO
+class IO {
+    public any open(string path, string mode) { return null; }
+}
+
+void mockClose(any handle) {
+    println("Closed hardware handle successfully");
+}
+
+// 2. This is now a true Global Variable
+IO io = new IO();
+
+ref class Resource {
+    public any handle;
+
+    constructor() {
+        // 3. This successfully looks up 'io' in the global scope!
+        this.handle = io.open("file.txt", "r");
+    }
+
+    destructor() {
+        mockClose(this.handle); // Call the renamed function safely
+    }
+}
+
+void test_global_io() {
+    Resource r = new Resource();
+}
+
+test_global_io();
+// Expected: Closed hardware handle successfully

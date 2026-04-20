@@ -1,0 +1,42 @@
+println("--- [E2E] method_overloading.mox ---")
+
+class Printer {
+    // Overload 1: Int
+    void printData(int i) {
+        println("Int: " + string(i));
+    }
+
+    // Overload 2: String
+    void printData(string s) {
+        println("String: " + s);
+    }
+
+    // Overload 3: Multiple Args (Arity overloading)
+    void printData(string label, int val) {
+        println(label + ": " + string(val));
+    }
+}
+
+class Calculator {
+    // Overload based on Return Type/Params implies different logic
+    int add(int a, int b) {
+        return a + b;
+    }
+
+    double add(double a, double b) {
+        return a + b;
+    }
+}
+
+// Execution
+Printer p = new Printer();
+p.printData(42);               // Expected: Int: 42
+p.printData("Hello");          // Expected: String: Hello
+p.printData("Score", 100);     // Expected: Score: 100
+
+Calculator c = new Calculator();
+int i = c.add(10, 20);
+double d = c.add(10.5, 20.5);
+
+println(i); // Expected: 30
+println(d); // Expected: 31

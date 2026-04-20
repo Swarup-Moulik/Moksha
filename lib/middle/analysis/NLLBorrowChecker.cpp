@@ -20,6 +20,10 @@ static bool isPointerType(MIRValue *val) {
   if (!val || !val->getType())
     return false;
 
+  // Explicitly tagged captures take precedence
+  if (val->getBorrowKind() != BorrowKind::None)
+    return true;
+
   auto kind = val->getType()->getKind();
   if (kind == hir::TypeKind::Any || kind == hir::TypeKind::Int ||
       kind == hir::TypeKind::Float || kind == hir::TypeKind::Decimal ||
@@ -27,18 +31,17 @@ static bool isPointerType(MIRValue *val) {
     return false;
   }
 
-  if (val->getBorrowKind() != BorrowKind::None)
-    return true;
-
   switch (kind) {
   case hir::TypeKind::Pointer:
   case hir::TypeKind::Reference:
   case hir::TypeKind::Closure:
+  case hir::TypeKind::Function: // FIX: Catch function signatures
     return true;
   default: {
     std::string name = val->getType()->toString();
     if (name.find("Closure") != std::string::npos ||
-        name.find("closure") != std::string::npos)
+        name.find("closure") != std::string::npos ||
+        name.find("->") != std::string::npos) // FIX: Catch lambda strings
       return true;
     return false;
   }
@@ -49,17 +52,21 @@ static bool isMoveOnlyType(const hir::HIRType *type) {
   if (!type)
     return false;
   switch (type->getKind()) {
+  // --- MANAGED TYPES ARE MOVE-ONLY ---
   case hir::TypeKind::Slice:
   case hir::TypeKind::String:
   case hir::TypeKind::Promise:
   case hir::TypeKind::Closure:
-    return true;
   case hir::TypeKind::Any:
+    return true;
+
+  // --- PRIMITIVES ARE COPY TYPES ---
   case hir::TypeKind::Int:
   case hir::TypeKind::Float:
   case hir::TypeKind::Decimal:
   case hir::TypeKind::Bool:
     return false;
+
   case hir::TypeKind::Pointer:
     if (auto *ptrTy = llvm::dyn_cast<hir::PointerType>(type)) {
       return ptrTy->getOwnership() == hir::Ownership::Owned;
@@ -68,6 +75,7 @@ static bool isMoveOnlyType(const hir::HIRType *type) {
   case hir::TypeKind::Struct:
     if (auto *structTy = llvm::dyn_cast<hir::StructType>(type)) {
       for (const hir::HIRType *fieldTy : structTy->getFields()) {
+        // Recursively checking if the struct contains move-only fields!
         if (isMoveOnlyType(fieldTy))
           return true;
       }
@@ -126,7 +134,7 @@ NLLBorrowChecker::NLLBorrowChecker(DiagnosticEngine &diags) : diags(diags) {}
 
 void NLLBorrowChecker::checkModule(MIRModule *module) {
   for (auto &func : module->getFunctions())
-    checkFunction(func.get());
+    checkFunction(func);
 }
 
 void NLLBorrowChecker::checkFunction(MIRFunction *func) {
@@ -142,6 +150,12 @@ void NLLBorrowChecker::computeLiveness(MIRFunction *func) {
   for (auto &blockPtr : func->getBlocks()) {
     for (auto &instPtr : blockPtr->getInstructions()) {
       MIRInst *inst = instPtr.get();
+      // Ignore implicit variable loads for drops
+      if (inst->getName().find("cleanup_val") != std::string::npos ||
+          inst->getName().find("heap.free.ptr") != std::string::npos ||
+          inst->getName().find(".drop.") != std::string::npos) {
+        continue;
+      }
       if (auto *load = llvm::dyn_cast<LoadInst>(inst)) {
         if (load->getPointer())
           lastUses[load->getPointer()] = inst;
@@ -166,6 +180,14 @@ void NLLBorrowChecker::computeLiveness(MIRFunction *func) {
         if (ins->getValue())
           lastUses[ins->getValue()] = inst;
       } else if (auto *call = llvm::dyn_cast<CallInst>(inst)) {
+        // Ignore destructors and free calls
+        if (call->getCallee()) {
+          std::string calleeName = call->getCallee()->getName();
+          if (calleeName == "__moksha_free" ||
+              calleeName.find(".destructor_ret_void") != std::string::npos) {
+            continue;
+          }
+        }
         if (call->getCallee() && !llvm::isa<MIRFunction>(call->getCallee()))
           lastUses[call->getCallee()] = inst;
         for (MIRValue *arg : call->getArgs()) {
@@ -192,6 +214,9 @@ void NLLBorrowChecker::computeLiveness(MIRFunction *func) {
         if (cast->getValue())
           lastUses[cast->getValue()] = inst;
       } else if (auto *arc = llvm::dyn_cast<ARCInst>(inst)) {
+        // Ignore ARC Releases
+        if (arc->getOpcode() == Opcode::Release)
+          continue;
         if (arc->getObject())
           lastUses[arc->getObject()] = inst;
       } else if (auto *await = llvm::dyn_cast<AwaitInst>(inst)) {
@@ -205,6 +230,26 @@ void NLLBorrowChecker::computeLiveness(MIRFunction *func) {
           if (cap)
             lastUses[cap] = inst;
         }
+      } else if (auto *atomLoad = llvm::dyn_cast<AtomicLoadInst>(inst)) {
+        if (atomLoad->getPointer())
+          lastUses[atomLoad->getPointer()] = inst;
+      } else if (auto *atomStore = llvm::dyn_cast<AtomicStoreInst>(inst)) {
+        if (atomStore->getValue())
+          lastUses[atomStore->getValue()] = inst;
+        if (atomStore->getPointer())
+          lastUses[atomStore->getPointer()] = inst;
+      } else if (auto *atomRmw = llvm::dyn_cast<AtomicRMWInst>(inst)) {
+        if (atomRmw->getValue())
+          lastUses[atomRmw->getValue()] = inst;
+        if (atomRmw->getPointer())
+          lastUses[atomRmw->getPointer()] = inst;
+      } else if (auto *atomCas = llvm::dyn_cast<AtomicCmpXchgInst>(inst)) {
+        if (atomCas->getPointer())
+          lastUses[atomCas->getPointer()] = inst;
+        if (atomCas->getExpected())
+          lastUses[atomCas->getExpected()] = inst;
+        if (atomCas->getDesired())
+          lastUses[atomCas->getDesired()] = inst;
       }
     }
   }
@@ -335,7 +380,7 @@ void NLLBorrowChecker::computeDataflow(MIRFunction *func) {
           }
         }
       } else if (auto *store = llvm::dyn_cast<StoreInst>(inst)) {
-        // [FIX] Forward loans through Stores securely using resolvePlace
+        // Forward loans through Stores securely using resolvePlace
         size_t n = currentLoans.size();
         std::vector<Place> srcPlaces = resolvePlace(store->getValue());
         std::vector<Place> destPlaces = resolvePlace(store->getPointer());
@@ -343,7 +388,8 @@ void NLLBorrowChecker::computeDataflow(MIRFunction *func) {
         currentLoans.erase(
             std::remove_if(currentLoans.begin(), currentLoans.end(),
                            [&](const Loan &l) {
-                             // Only clear move loans (where pointer == nullptr)
+                             // 1. Clear move loans if the destination is
+                             // overwritten
                              if (l.pointer == nullptr) {
                                for (const Place &dest : destPlaces) {
                                  if (l.borrowedPlace.conflictsWith(dest)) {
@@ -351,11 +397,19 @@ void NLLBorrowChecker::computeDataflow(MIRFunction *func) {
                                  }
                                }
                              }
+                             // 2. NLL REASSIGNMENT KILL!
+                             else if (l.pointer != LOCK_MARKER) {
+                               for (const Place &dest : destPlaces) {
+                                 if (dest.base && l.pointer == dest.base) {
+                                   return true;
+                                 }
+                               }
+                             }
                              return false;
                            }),
             currentLoans.end());
 
-        // [FIX 1] Prevent Environment Pack StoreInsts from generating
+        // Prevent Environment Pack StoreInsts from generating
         // independent loans
         bool isClosureEnv = false;
         if (auto *gep =
@@ -414,37 +468,34 @@ void NLLBorrowChecker::computeDataflow(MIRFunction *func) {
               }
 
               if (inherits) {
-                // [FIX 2] Preserve mutability for closure loans across
-                // bitcasts!
                 bool isValMut = isExclusiveBorrow(store->getValue());
                 bool isClosure = false;
+
                 if (store->getValue() && store->getValue()->getType()) {
-                  std::string tyName = store->getValue()->getType()->toString();
-                  // Case-insensitive check ensures casted AST types retain
-                  // mutability
-                  if (tyName.find("Closure") != std::string::npos ||
-                      tyName.find("closure") != std::string::npos)
+                  auto kind = store->getValue()->getType()->getKind();
+                  // FIX: Ensure Function signatures are treated as Closures
+                  if (kind == hir::TypeKind::Closure ||
+                      kind == hir::TypeKind::Function ||
+                      kind == hir::TypeKind::Any) {
                     isClosure = true;
+                  }
+
+                  // Fallback string matching
+                  std::string tyName = store->getValue()->getType()->toString();
+                  if (tyName.find("Closure") != std::string::npos ||
+                      tyName.find("closure") != std::string::npos ||
+                      tyName.find("->") != std::string::npos) {
+                    isClosure = true;
+                  }
                 }
 
+                // Preserves 'isMut' if it's a closure!
                 Loan inheritedLoan{active.borrowedPlace, store->getPointer(),
                                    active.isMut && (isValMut || isClosure)};
 
                 if (std::find(currentLoans.begin(), currentLoans.end(),
                               inheritedLoan) == currentLoans.end()) {
                   currentLoans.push_back(inheritedLoan);
-                }
-
-                // 2. Propagate inherited loan up to the base allocation
-                for (const Place &dest : destPlaces) {
-                  if (dest.base && dest.base != store->getPointer()) {
-                    Loan baseLoan{active.borrowedPlace, dest.base,
-                                  active.isMut && (isValMut || isClosure)};
-                    if (std::find(currentLoans.begin(), currentLoans.end(),
-                                  baseLoan) == currentLoans.end()) {
-                      currentLoans.push_back(baseLoan);
-                    }
-                  }
                 }
               }
             }
@@ -788,7 +839,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
 
               if (!isSamePointer) {
                 diags.report(inst->getLoc(), DiagID::err_borrow_violation)
-                    << "Cannot borrow memory immutably because it is currently "
+                    << "Cannot borrow memory immutably because it is "
+                       "currently "
                        "borrowed mutably.";
                 reported = true;
                 break;
@@ -851,7 +903,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
               }
               if (!isSamePointer && active.borrowedPlace.conflictsWith(dest)) {
                 diags.report(inst->getLoc(), DiagID::err_borrow_violation)
-                    << "Cannot mutate memory because it is currently borrowed.";
+                    << "Cannot mutate memory because it is currently "
+                       "borrowed.";
                 reportedMutation = true;
                 break;
               }
@@ -914,7 +967,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
                   if (active.pointer == LOCK_MARKER &&
                       active.borrowedPlace.conflictsWith(src)) {
                     diags.report(inst->getLoc(), DiagID::err_borrow_violation)
-                        << "Cannot alias a lock pointer as a mutable pointer.";
+                        << "Cannot alias a lock pointer as a mutable "
+                           "pointer.";
                     reportedAlias = true;
                     break;
                   }
@@ -944,8 +998,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
 
                   bool isMutAttempt = isExclusiveBorrow(store->getValue());
 
-                  // [FIX] Allow aliasing if the new pointer shares the base via
-                  // an authorized loan
+                  // [FIX] Allow aliasing if the new pointer shares the base
+                  // via an authorized loan
                   if (!isSamePointer) {
                     for (const Loan &other : activeLoans) {
                       if (other.pointer != nullptr &&
@@ -961,7 +1015,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
                     }
                   }
 
-                  // [FIX] Allow reborrowing if it shares the same base pointer
+                  // [FIX] Allow reborrowing if it shares the same base
+                  // pointer
                   if (!isSamePointer && (isMutAttempt || active.isMut)) {
                     if (isMutAttempt) {
                       diags.report(inst->getLoc(), DiagID::err_borrow_violation)
@@ -985,8 +1040,9 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
         bool isLockOrUnlock = false;
         if (call->getCallee()) {
           std::string name = call->getCallee()->getName();
-          // [FIX] Use .find() to catch all variants of lock/unlock and prevent
-          // them from falling through to the standard function argument checks!
+          // [FIX] Use .find() to catch all variants of lock/unlock and
+          // prevent them from falling through to the standard function
+          // argument checks!
           if (name.find("unlock") != std::string::npos) {
             isLockOrUnlock = true;
           } else if (name.find("lock") != std::string::npos) {
@@ -1007,8 +1063,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
                   }
                 }
 
-                // 2. If no deadlock, verify we aren't locking actively aliased
-                // memory
+                // 2. If no deadlock, verify we aren't locking actively
+                // aliased memory
                 if (!deadlock) {
                   for (const Loan &active : activeLoans) {
                     if (active.pointer != LOCK_MARKER &&
@@ -1059,7 +1115,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
                   if (!isSamePointer && (isMutAttempt || active.isMut)) {
                     if (isMutAttempt) {
                       diags.report(inst->getLoc(), DiagID::err_borrow_violation)
-                          << "Cannot pass memory to a function mutably because "
+                          << "Cannot pass memory to a function mutably "
+                             "because "
                              "it is already borrowed.";
                     } else {
                       diags.report(inst->getLoc(), DiagID::err_borrow_violation)
@@ -1091,7 +1148,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
             continue; // Snapshot copy, no conflict
           }
 
-          // Trace through implicit loads to find the true captured memory base
+          // Trace through implicit loads to find the true captured memory
+          // base
           MIRValue *tracedCap = cap;
           while (auto *load = llvm::dyn_cast<LoadInst>(tracedCap)) {
             tracedCap = load->getPointer();
@@ -1111,7 +1169,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
                   active.borrowedPlace.conflictsWith(src)) {
                 if (isRef) {
                   diags.report(inst->getLoc(), DiagID::err_borrow_violation)
-                      << "Use of moved value. The memory was previously moved "
+                      << "Use of moved value. The memory was previously "
+                         "moved "
                          "or "
                          "dropped.";
                   reported = true;
@@ -1160,7 +1219,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
           if (borrowsLocalMemory(closureVal)) {
             diags.report(inst->getLoc(), DiagID::err_borrow_violation)
                 << "Cannot borrow local variable inside a thread block. "
-                   "The thread might outlive the current stack frame, causing "
+                   "The thread might outlive the current stack frame, "
+                   "causing "
                    "a dangling pointer.";
           }
         }
@@ -1182,13 +1242,14 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
               MIRValue *currPtr = q.front();
               q.pop();
 
-              // We must catch this before the pointer type filter skips struct
-              // environments!
+              // We must catch this before the pointer type filter skips
+              // struct environments!
               if (llvm::isa<AllocaInst>(currPtr)) {
                 return true;
               }
 
-              // Safe by-value copies of primitives do not capture stack memory!
+              // Safe by-value copies of primitives do not capture stack
+              // memory!
               if (!isPointerType(currPtr) && !isMoveType(currPtr)) {
                 continue;
               }
@@ -1198,8 +1259,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
                 return true;
               }
 
-              // 1. Structurally trace backwards through Loads FIRST to prevent
-              // resolvePlace from aggressively yielding the container
+              // 1. Structurally trace backwards through Loads FIRST to
+              // prevent resolvePlace from aggressively yielding the container
               // AllocaInst
               if (auto *load = llvm::dyn_cast<LoadInst>(currPtr)) {
                 MIRValue *srcPtr = load->getPointer();
@@ -1310,8 +1371,6 @@ std::vector<Place> NLLBorrowChecker::resolvePlace(MIRValue *val) const {
       }
       if (auto *load = llvm::dyn_cast<LoadInst>(inst)) {
         if (!isPointerType(load)) {
-          worklist.push({load->getPointer(), proj});
-          continue;
         } else {
           bool foundStore = false;
           if (auto *parentFunc = load->getParent()->getParent()) {
@@ -1348,6 +1407,24 @@ std::vector<Place> NLLBorrowChecker::resolvePlace(MIRValue *val) const {
         }
         newProj.insert(newProj.end(), proj.begin(), proj.end());
         worklist.push({gep->getPointer(), newProj});
+        continue;
+      }
+      if (inst->getOpcode() == Opcode::MakeClosure) {
+        auto *mc = static_cast<MakeClosureInst *>(inst);
+        for (auto *cap : mc->getCaptures()) {
+          if (cap) {
+            worklist.push({cap, proj}); // Push the capture, not the closure!
+          }
+        }
+        continue;
+      }
+
+      if (inst->getOpcode() == Opcode::Spawn) {
+        auto *spawn = static_cast<SpawnInst *>(inst);
+        if (spawn->getClosure()) {
+          worklist.push(
+              {spawn->getClosure(), proj}); // Trace back into the closure
+        }
         continue;
       }
       if (auto *phi = llvm::dyn_cast<PhiInst>(inst)) {

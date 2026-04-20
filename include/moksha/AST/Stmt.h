@@ -118,6 +118,8 @@ public:
 
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const std::vector<DeclPtr> &getDecls() const { return decls; }
+  std::vector<DeclPtr> &getDeclsMut() { return decls; }
+  void addDeclaration(DeclPtr decl) { decls.push_back(std::move(decl)); }
   std::unique_ptr<Decl> clone() const override;
   static bool classof(const Decl *D) {
     return D->getKind() == StmtKind::ModuleDecl;
@@ -147,6 +149,7 @@ public:
   void setShared(bool s) { isShared = s; }
   [[nodiscard]] const Type *getType() const { return type.get(); }
   [[nodiscard]] const Expr *getInitializer() const { return initializer.get(); }
+  ExprPtr &getInitializerMut() { return initializer; }
   [[nodiscard]] bool isConstVar() const {
     if (isConst)
       return true;
@@ -272,6 +275,7 @@ public:
   int getVTableIndex() const { return vtableIndex; }
   void setVTableIndex(int idx) { vtableIndex = idx; }
   void setReturnType(TypePtr newType) { returnType = std::move(newType); }
+  void setName(std::string newName) { name = std::move(newName); }
 
 private:
   std::vector<Param> params;

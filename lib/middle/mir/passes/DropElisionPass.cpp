@@ -50,7 +50,7 @@ MIRValue *getBaseAlloca(MIRValue *val) {
 bool DropElisionPass::runOnModule(MIRModule &M) {
   bool changed = false;
   for (auto &func : M.getFunctions()) {
-    changed |= runOnFunction(func.get());
+    changed |= runOnFunction(func);
   }
   return changed;
 }
@@ -151,6 +151,26 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
                 }
               }
             }
+          } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(inst)) {
+            for (auto *arg : invoke->getArgs()) {
+              if (auto *argLoad = llvm::dyn_cast<LoadInst>(arg)) {
+                if (argLoad->getName() != "cleanup_val" &&
+                    argLoad->getBorrowKind() != BorrowKind::View) {
+                  bool isShared = false;
+                  if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(
+                          argLoad->getType())) {
+                    if (ptrTy->getOwnership() == hir::Ownership::Shared)
+                      isShared = true;
+                  }
+                  if (!isShared) {
+                    if (MIRValue *sourceAlloca =
+                            getBaseAlloca(argLoad->getPointer())) {
+                      currentOut.insert(sourceAlloca);
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -203,6 +223,20 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
                         getBaseAlloca(argLoad->getPointer())) {
                   movedAllocas.insert(sourceAlloca);
                 }
+              }
+            }
+          }
+        }
+      } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(inst)) {
+        if (invoke->getCallee()) {
+          std::string calleeName = invoke->getCallee()->getName();
+          if (calleeName == "__moksha_free" ||
+              calleeName.find(".destructor_ret_void") != std::string::npos ||
+              calleeName.find(".drop_ret_void") != std::string::npos) {
+            if (invoke->getArgs().size() > 0) {
+              if (MIRValue *base = getBaseAlloca(invoke->getArgs()[0])) {
+                if (movedAllocas.count(base))
+                  elideInstruction = true;
               }
             }
           }

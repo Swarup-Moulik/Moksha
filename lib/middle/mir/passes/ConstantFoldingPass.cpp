@@ -68,6 +68,21 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
               mutatedGlobals.insert(g);
             }
           }
+        } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(inst.get())) {
+          for (MIRValue *arg : invoke->getArgs()) {
+            if (auto *g =
+                    llvm::dyn_cast_or_null<MIRGlobal>(getBasePointer(arg))) {
+              mutatedGlobals.insert(g);
+            }
+          }
+        } else if (auto *closure =
+                       llvm::dyn_cast<MakeClosureInst>(inst.get())) {
+          for (MIRValue *cap : closure->getCaptures()) {
+            if (auto *g =
+                    llvm::dyn_cast_or_null<MIRGlobal>(getBasePointer(cap))) {
+              mutatedGlobals.insert(g);
+            }
+          }
         }
       }
     }
@@ -107,7 +122,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
                   }
                 }
 
-                replaceAllUsesInFunction(func.get(), load, replacement);
+                replaceAllUsesInFunction(func, load, replacement);
                 it = insts.erase(it); // Remove the LoadInst
                 changed = true;
                 continue;
@@ -375,7 +390,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
         }
 
         if (folded) {
-          replaceAllUsesInFunction(func.get(), inst, folded);
+          replaceAllUsesInFunction(func, inst, folded);
           it = insts.erase(it); // Remove the redundant instruction
           changed = true;
           continue; // Don't increment iterator

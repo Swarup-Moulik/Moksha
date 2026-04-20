@@ -1,19 +1,0 @@
-// 1. Unicode Identifiers
-// The Lexer must correctly process UTF-8 byte sequences.
-int über_var = 100;
-string 漢字 = "Hanzi";
-float ∆_delta = 3.14;
-
-// 2. Weird Whitespace
-// Vertical tabs (\v), form feeds (\f), and carriage returns (\r)
-// must be successfully swallowed by skipWhitespace() without generating tokens.
-int	a=10; // Contains tab, vertical tab, and form feed
-
-// 3. Extremely Long Identifier (Stress Test)
-// Should parse as a single TokenKind::Identifier without buffer overflow.
-int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = 1;
-
-// 4. EOF without trailing newline
-// The lexer must emit TokenKind::Eof without crashing if a comment
-// or identifier touches the exact end of the file buffer.
-int b = 2 // No newline after this

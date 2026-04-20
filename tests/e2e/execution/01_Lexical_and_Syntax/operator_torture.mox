@@ -1,0 +1,35 @@
+println("--- [E2E] operator_torture.mox ---")
+
+int add(int a, int b) { return a + b; }
+int multiply(int a, int b) { return a * b; }
+int process(int x) { return x; }
+int transform(int v) { return v * 2; }
+bool check(int v) { return v > 0; }
+
+int a = 10;
+int b = 20;
+int c = 2;
+int d = 5;
+int dynamicVal = 42;
+int? nullableVal = null;
+bool x = true;
+bool y = false;
+bool z = true;
+
+int test1 = (a + b |> process()) * c;
+println(test1); // Expected: 60
+
+int test2 = true ? b : (c |> process()) + d;
+println(test2); // Expected: 20
+
+a = b |> process();
+println(a); // Expected: 20
+
+int test3 = nullableVal ?? 100 |> process();
+println(test3); // Expected: 100
+
+bool result1 = ((a + b * c |> transform()) > 0) ? x : y && z;
+println(result1);
+
+bool result2 = (int(dynamicVal) |> transform()) ?? 100 >= 50;
+println(result2);

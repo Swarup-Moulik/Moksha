@@ -1,5 +1,6 @@
 #pragma once
 
+#include "moksha/AST/Stmt.h"
 #include "moksha/AST/Type.h"
 #include "llvm/ADT/StringMap.h"
 #include <memory>
@@ -51,6 +52,7 @@ public:
   const Type *createViewType(const Type *inner);
   const Type *createLockType(const Type *inner);
   const Type *createWeakType(const Type *inner);
+  const Type *createPromiseType(const Type *inner);
   const Type *createArrayType(const Type *element,
                               std::unique_ptr<Expr> sizeExpr);
   const Type *getSliceType(const Type *elementType);
@@ -79,11 +81,17 @@ public:
 
   // Store concrete classes generated from generic templates
   void registerInstantiatedClass(std::unique_ptr<ClassDecl> decl);
+  void registerInstantiatedFunction(std::unique_ptr<FunctionDecl> decl) {
+    instantiatedFuncDecls.push_back(decl.get());
+    ownedFuncInstantiations.push_back(std::move(decl));
+  }
 
   // Retrieve a list of all dynamically generated classes
-  // so the Backend can lower them to HIR/MIR!
   const std::vector<const ClassDecl *> &getInstantiatedClasses() const {
     return instantiatedClassDecls;
+  }
+  const std::vector<const FunctionDecl *> &getInstantiatedFunctions() const {
+    return instantiatedFuncDecls;
   }
 
 private:
@@ -92,6 +100,8 @@ private:
   std::vector<std::unique_ptr<Decl>> builtinDecls;
   std::vector<std::unique_ptr<ClassDecl>> ownedInstantiations;
   std::vector<const ClassDecl *> instantiatedClassDecls;
+  std::vector<std::unique_ptr<FunctionDecl>> ownedFuncInstantiations;
+  std::vector<const FunctionDecl *> instantiatedFuncDecls;
   TypePtr VoidTy, BoolTy, CharTy, StringTy, AnyTy, NullTy;
   TypePtr I8Ty, I16Ty, I32Ty, I64Ty, ISizeTy;
   TypePtr U8Ty, U16Ty, U32Ty, U64Ty, USizeTy;

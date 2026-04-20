@@ -1,0 +1,18 @@
+println("--- [E2E] types_and_scope.mox ---")
+
+// Explicit Type
+int x = 10;
+
+// Scoping & Shadowing
+{
+  int x = 20; // Allowed: shadows outer x
+  println(x); // Expected: 20
+}
+
+println(x); // Expected: 10
+
+// Const correctness
+const double PI = 3.14;
+double area = PI * 2.0;
+
+println(area); // Expected: 6.28

@@ -1,4 +1,0 @@
-public generic Box<T> {
-    public T val;
-    constructor(T v) { this.val = v; }
-}

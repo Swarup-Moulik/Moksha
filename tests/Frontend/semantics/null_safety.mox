@@ -1,8 +1,0 @@
-// Non-nullable by default
-string name = "Moksha";
-
-// Nullable type
-string? nick = null;
-
-// Null Coalescing
-string display = nick ?? "Guest";

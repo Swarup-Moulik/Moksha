@@ -1,0 +1,25 @@
+println("--- [E2E] control_flow.mox ---")
+
+void test_switch(int val) {
+    switch (val) {
+        case 1: println("One"); break;
+        case 10:20: println("Range 10 to 20"); break;
+        default: println("Other"); break;
+    }
+}
+
+void test_loops_and_defer() {
+    int[] list = [1, 2, 3];
+
+    for (int x in list) {
+        println(x); // Expected: 1 \n 2 \n 3
+    }
+
+    // The defer block MUST execute last before the function returns
+    defer println("Deferred Execution");
+    println("Normal Execution");
+}
+
+test_switch(15); // Expected: Range 10 to 20
+test_switch(99); // Expected: Other
+test_loops_and_defer();

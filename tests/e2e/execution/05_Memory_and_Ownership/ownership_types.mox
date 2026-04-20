@@ -1,0 +1,16 @@
+println("--- [E2E] ownership_types.mox ---")
+
+void test_memory_types() {
+    int ref_count = 0;
+
+    // Proves the frontend parses '&int?' correctly and evaluates it to null.
+    // (A nullable view borrow).
+    *view int? borrowed = null;
+
+    int val = 42;
+    borrowed = &val;
+
+    println(*borrowed ?? -1); // Expected: 42
+}
+
+test_memory_types();

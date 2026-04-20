@@ -1,0 +1,18 @@
+println("--- [E2E] shadowing_borrows.mox ---")
+
+void test_shadowing() {
+    int p = 42;
+    *view int v = &p;
+
+    // Shadowing the variable name 'v' with another *view is perfectly fine
+    // because multiple shared reads are allowed by the mutability matrix.
+    // The previous 'v' becomes inaccessible lexically, but the borrow checker
+    // safely tracks both until they naturally die.
+    *view int v = &p;
+
+    int x = *v;
+
+    println(x); // Expected: 42
+}
+
+test_shadowing();

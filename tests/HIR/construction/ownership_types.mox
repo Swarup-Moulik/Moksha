@@ -1,5 +1,0 @@
-void test_memory() {
-    // Assuming your frontend supports these types
-    int ref_count = 0
-    &int? borrowed = null       // Translates to &int
-}

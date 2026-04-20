@@ -1,0 +1,25 @@
+println("--- [E2E] arc_loop_elision.mox ---")
+
+ref class PureNode {
+    // No custom destructor, so ARCAnalyzer IS allowed to elide pure pairs!
+    public int data;
+    constructor() { this.data = 100; }
+}
+
+void test_loop_elision() {
+    PureNode s = new PureNode();
+    int i = 0;
+
+    while (i < 10) {
+        // The Inserter will naively put a Retain/Release here.
+        // The Analyzer MUST delete them because 'copy' never escapes the loop
+        // and PureNode has no custom drop() side-effects!
+        PureNode copy = s;
+        i = i + 1;
+    }
+
+    // If it survives the loop without double-freeing or leaking, elision works.
+    println(s.data); // Expected: 100
+}
+
+test_loop_elision();

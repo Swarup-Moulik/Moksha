@@ -1,0 +1,20 @@
+println("--- [E2E] null_safety.mox ---")
+
+void test_nullability() {
+    // Non-nullable by default
+    string name = "Moksha";
+
+    // Nullable type
+    string? nick = null;
+    string? valid_nick = "Compiler";
+
+    // Null Coalescing
+    string display1 = nick ?? "Guest";
+    string display2 = valid_nick ?? "Guest";
+
+    println(name);     // Expected: Moksha
+    println(display1); // Expected: Guest
+    println(display2); // Expected: Compiler
+}
+
+test_nullability();

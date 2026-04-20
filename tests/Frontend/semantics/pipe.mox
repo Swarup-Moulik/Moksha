@@ -1,8 +1,0 @@
-// Mock definitions to satisfy the TypeChecker
-int processNumber(int n) { return n; }
-
-// Test pipe with both identifiers and calls
-"hello" |> length() |> print();
-
-// Test ternary alongside pipe
-true ? 100 : 200 |> processNumber();

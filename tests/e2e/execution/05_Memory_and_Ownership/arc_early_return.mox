@@ -1,0 +1,28 @@
+println("--- [E2E] arc_early_return.mox ---")
+
+ref class Resource {
+    public int id;
+    constructor(int id) { this.id = id; }
+    destructor() { println(`Freed Resource ${this.id}`); }
+}
+
+void testEarlyReturn(bool trigger) {
+    Resource r1 = new Resource(1);
+
+    if (trigger) {
+        Resource r2 = new Resource(2);
+        // ARC pass MUST insert a drop for `r2` AND `r1` here before returning.
+        return;
+    }
+
+    // ARC pass MUST insert a drop for `r1` here.
+}
+
+println("Testing true branch:");
+testEarlyReturn(true);
+// Expected: Freed Resource 2
+// Expected: Freed Resource 1
+
+println("Testing false branch:");
+testEarlyReturn(false);
+// Expected: Freed Resource 1

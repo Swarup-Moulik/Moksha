@@ -1,0 +1,38 @@
+println("--- [E2E] ternary_and_cast.mox ---")
+
+void test_ternary() {
+    int x = 10;
+    int y = 20;
+
+    // Ternary Operator
+    int max = (x > y) ? x : y;
+    println(max); // Expected: 20
+
+    // Nested Ternary
+    string result = (x == y) ? "equal" : ((x > y) ? "greater" : "lesser");
+    println(result); // Expected: lesser
+}
+
+void test_casting() {
+    int x = 10;
+
+    // Functional Casting Style
+    double d = double(x);
+    println(d); // Expected: 10
+
+    // Template Casting Style
+    int rounded = cast<int>(3.14);
+    println(rounded); // Expected: 3
+}
+
+void test_null_coalescing() {
+    string? name = null;
+    string? validName = "Admin";
+
+    println(name ?? "Guest");        // Expected: Guest
+    println(validName ?? "Guest");   // Expected: Admin
+}
+
+test_ternary();
+test_casting();
+test_null_coalescing();

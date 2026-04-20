@@ -113,7 +113,7 @@ public:
                                        ? ptrTy->getOwnership()
                                        : resolvedPtrTy->getOwnership();
         return const_cast<hir::HIRModule *>(hirModule)->getPointerType(
-            resolvedPtrTy->getPointee(), mergedOwn);
+            resolved, mergedOwn);
       }
 
       if (resolved != ptrTy->getPointee()) {
@@ -122,46 +122,6 @@ public:
       }
       return t;
     }
-
-    if (auto *structTy = llvm::dyn_cast_or_null<hir::StructType>(t)) {
-      if (structTy->isRefClass()) {
-        return const_cast<hir::HIRModule *>(hirModule)->getPointerType(
-            t, hir::Ownership::Shared);
-      }
-    }
-
-    // --- UNIVERSAL REF CLASS RECOVERY ---
-    std::string clsName = tName;
-
-    // Strip modifiers
-    size_t bracketPos = clsName.find('<');
-    if (bracketPos != std::string::npos)
-      clsName = clsName.substr(0, bracketPos);
-    if (clsName.find("shared ") == 0)
-      clsName = clsName.substr(7);
-    if (clsName.find("owned ") == 0)
-      clsName = clsName.substr(6);
-    if (clsName.find("weak ") == 0)
-      clsName = clsName.substr(5);
-    if (clsName.find("struct ") == 0)
-      clsName = clsName.substr(7);
-    if (clsName.find("class ") == 0)
-      clsName = clsName.substr(6);
-    if (clsName.find("struct.") == 0)
-      clsName = clsName.substr(7);
-    if (clsName.find("class.") == 0)
-      clsName = clsName.substr(6);
-
-    for (const auto *cls : hirModule->getClasses()) {
-      if (cls->getName() == clsName) {
-        if (cls->isRefClass()) {
-          return const_cast<hir::HIRModule *>(hirModule)->getPointerType(
-              t, hir::Ownership::Shared);
-        }
-        break;
-      }
-    }
-
     return t;
   }
 
@@ -173,17 +133,19 @@ public:
     MIRValue *val = lastExprValue;
 
     if (auto *loadInst = llvm::dyn_cast_or_null<LoadInst>(val)) {
+      MIRValue *ptr = loadInst->getPointer(); // FIX: Extract before popping
       auto &insts = builder->getInsertBlock()->getInstructionsMut();
       if (!insts.empty() && insts.back().get() == loadInst) {
         insts.pop_back();
       }
-      return loadInst->getPointer();
+      return ptr;
     } else if (auto *loadWeak = llvm::dyn_cast_or_null<LoadWeakInst>(val)) {
+      MIRValue *ptr = loadWeak->getPointer(); // FIX: Extract before popping
       auto &insts = builder->getInsertBlock()->getInstructionsMut();
       if (!insts.empty() && insts.back().get() == loadWeak) {
         insts.pop_back();
       }
-      return loadWeak->getPointer();
+      return ptr;
     } else if (auto *castInst = llvm::dyn_cast_or_null<CastInst>(val)) {
       if (castInst->getOpcode() == Opcode::AnyCast) {
         return castInst;
@@ -303,7 +265,7 @@ public:
           const_cast<hir::HIRModule *>(hirModule)->getPointerType(
               task.genericClass->getType(), hir::Ownership::Borrowed);
 
-      // [FIX] Iterate through ALL methods, including the destructor, and
+      //  Iterate through ALL methods, including the destructor, and
       // generate them!
       for (const auto &method : task.genericClass->getMethods()) {
         if (!method->isExtern()) {
@@ -312,7 +274,7 @@ public:
             pTys.push_back(resolveType(p.type));
           }
 
-          // [FIX] Inject the concrete class type into the prefix (e.g.,
+          //  Inject the concrete class type into the prefix (e.g.,
           // "*Container<i32>" -> "Container_i32")
           std::string uniquePrefix = thisTy->toString();
           if (!uniquePrefix.empty() && uniquePrefix[0] == '*')
@@ -474,7 +436,7 @@ public:
     destroyFunc->addBlock(std::move(db));
     currFunc = destroyFunc;
 
-    // [FIX] Safely iterate globals and call destructors ONLY if they actually
+    //  Safely iterate globals and call destructors ONLY if they actually
     // exist!
     for (const auto &global : hirModule->getGlobals()) {
       if (auto *varDecl = llvm::dyn_cast<hir::HIRVarDeclStmt>(global)) {
@@ -489,7 +451,7 @@ public:
         if (auto *stTy = llvm::dyn_cast_or_null<hir::StructType>(actualType)) {
           baseName = stTy->getName().str();
 
-          // [FIX] Sanitize instead of stripping!
+          //  Sanitize instead of stripping!
           std::replace(baseName.begin(), baseName.end(), '<', '_');
           std::replace(baseName.begin(), baseName.end(), '>', '_');
           while (!baseName.empty() && baseName.back() == '_')
@@ -655,7 +617,7 @@ public:
           if (typeName.find("class ") == 0)
             typeName = typeName.substr(6);
 
-          // [FIX] 1. Pre-calculate if any cleanup action is required
+          //  1. Pre-calculate if any cleanup action is required
           std::string dropName = typeName + ".destructor_ret_void";
           MIRFunction *dropFunc = mirModule->getFunction(dropName);
 
@@ -672,7 +634,7 @@ public:
                valTy->getKind() == hir::TypeKind::Slice ||
                valTy->getKind() == hir::TypeKind::Promise);
 
-          // [FIX] 2. Only emit the LoadInst if we have work to do
+          //  2. Only emit the LoadInst if we have work to do
           if (dropFunc || isARC || needsFree) {
             auto *loaded = builder->insert(
                 std::make_unique<LoadInst>(allocaPtr, "cleanup_val", dropLoc));
@@ -721,40 +683,20 @@ public:
 
               // Safely extract the env_ptr from the Closure Fat Pointer
               if (isClosureType) {
-                // To safely extract the 2nd pointer (env) without tripping the
-                // Strict MIR Verifier, we treat the Closure struct like an
-                // array of 2 pointers and GEP directly.
                 auto *voidTy =
                     const_cast<hir::HIRModule *>(hirModule)->getVoidType();
                 auto *voidPtrTy =
                     const_cast<hir::HIRModule *>(hirModule)->getPointerType(
                         voidTy, hir::Ownership::None);
-                auto *doublePtrTy =
-                    const_cast<hir::HIRModule *>(hirModule)->getPointerType(
-                        voidPtrTy, hir::Ownership::None);
 
-                // 1. BitCast the generic closure pointer to a void** (array of
-                // pointers)
-                MIRValue *castClosure = builder->createBitCast(
-                    loaded, doublePtrTy, "closure.drop.cast", loc);
+                // Extract the environment pointer (index 1) directly from the
+                // fat pointer struct
+                castToVoid = builder->insert(std::make_unique<ExtractValueInst>(
+                    loaded, 1, voidPtrTy, "env.drop.extract", loc));
 
-                // 2. GEP to index 1 (the environment pointer offset)
-                auto *i32Ty =
-                    const_cast<hir::HIRModule *>(hirModule)->getIntType(32,
-                                                                        true);
-                auto *one =
-                    mirModule->getOrInsertConstant<ConstantInt>(1, i32Ty);
-
-                MIRValue *envGep = builder->createGEP(
-                    castClosure, {one}, voidPtrTy, "env.drop.gep", loc);
-
-                // 3. The Pointee Type of `doublePtrTy` is exactly `voidPtrTy`.
-                // We use the EXACT same cached type object to satisfy the
-                // verifier perfectly.
-                auto loadInst =
-                    std::make_unique<LoadInst>(envGep, "env.drop.load", loc);
-                loadInst->setType(voidPtrTy);
-                castToVoid = builder->insert(std::move(loadInst));
+                builder->insert(std::make_unique<ARCInst>(
+                    Opcode::Release, castToVoid, nullptr, dropLoc));
+                continue;
               } else if (isAnyType) {
                 auto *expectedTy = freeFunc->getRawArguments()[0]->getType();
                 castToVoid = builder->insert(std::make_unique<ExtractValueInst>(
@@ -1029,6 +971,98 @@ private:
     return val;
   }
 
+  MIRValue *coerceToString(MIRValue *val, SourceLocation loc) {
+    if (val->getType()->getKind() == hir::TypeKind::String)
+      return val;
+
+    auto *stringTy = const_cast<hir::HIRModule *>(hirModule)->getStringType();
+    std::string typeName;
+    const hir::HIRType *valTy = val->getType();
+
+    if (auto *intTy = llvm::dyn_cast<hir::HIRIntType>(valTy)) {
+      if (intTy->isSize()) {
+        typeName = intTy->isSigned() ? "isize" : "usize";
+      } else {
+        switch (intTy->getWidth()) {
+        case 8:
+          typeName = intTy->isSigned() ? "char" : "uchar";
+          break;
+        case 16:
+          typeName = intTy->isSigned() ? "short" : "ushort";
+          break;
+        case 32:
+          typeName = intTy->isSigned() ? "int" : "uint";
+          break;
+        case 64:
+          typeName = intTy->isSigned() ? "long" : "ulong";
+          break;
+        default:
+          typeName = "int";
+          break;
+        }
+      }
+    } else if (auto *floatTy = llvm::dyn_cast<hir::HIRFloatType>(valTy)) {
+      switch (floatTy->getWidth()) {
+      case 8:
+        typeName = "quarter";
+        break;
+      case 16:
+        typeName = "half";
+        break;
+      case 32:
+        typeName = "float";
+        break;
+      case 64:
+        typeName = "double";
+        break;
+      default:
+        typeName = "float";
+        break;
+      }
+    } else if (valTy->getKind() == hir::TypeKind::Bool) {
+      typeName = "bool";
+    } else if (valTy->getKind() == hir::TypeKind::Decimal) {
+      typeName = "decimal";
+    } else {
+      // Intercept char arrays/pointers to treat them as C-Strings
+      bool isCString = false;
+      if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(valTy)) {
+        if (auto *intTy =
+                llvm::dyn_cast_or_null<hir::HIRIntType>(ptrTy->getPointee())) {
+          if (intTy->getWidth() == 8) { // Is it an i8* ?
+            isCString = true;
+          }
+        }
+      }
+
+      if (isCString) {
+        typeName = "cstr"; // Routes to __moksha_cstr_to_string
+      } else {
+        typeName = "ptr";
+        auto *voidTy = const_cast<hir::HIRModule *>(hirModule)->getVoidType();
+        auto *voidPtrTy =
+            const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                voidTy, hir::Ownership::None);
+        val = builder->createBitCast(val, voidPtrTy, "ptr.cast", loc);
+        valTy = voidPtrTy;
+      }
+    }
+
+    std::string toStringName = "__moksha_" + typeName + "_to_string";
+    MIRFunction *toStringFunc = mirModule->getFunction(toStringName);
+
+    if (!toStringFunc) {
+      auto fn = std::make_unique<MIRFunction>(stringTy, toStringName,
+                                              Linkage::External);
+      fn->addArgument(std::make_unique<MIRArgument>(fn.get(), valTy, 0));
+      toStringFunc = fn.get();
+      mirModule->addFunction(std::move(fn));
+    }
+
+    return builder->createCall(toStringFunc, {val}, stringTy,
+                               typeName + ".to_str", false, loc);
+  }
+
   // Helper function to evaluate string escapes down to raw bytes
   std::string unescapeString(const std::string &in) {
     std::string out;
@@ -1157,10 +1191,10 @@ private:
       mirFunc->addArgument(std::move(arg));
     }
 
-    // [FIX 3] Preserve parameter names to fix the `*u8 %` bug
+    // Preserve parameter names to fix the `*u8 %` bug
     for (const auto &p : hirFunc->getParams()) {
       auto arg = std::make_unique<MIRArgument>(mirFunc.get(),
-                                               resolveType(p.getType()), idx++);
+                                               resolveType(p.type), idx++);
       arg->setName(p.getName());
       applyBorrowKind(arg.get(), p.getType());
       mirFunc->addArgument(std::move(arg));
@@ -1183,7 +1217,7 @@ private:
 
       if (initVal && initVal->getType() && initVal->getType() != actualType) {
 
-        // --- [FIX] Unwrap type strings for robust numeric coercion ---
+        // ---  Unwrap type strings for robust numeric coercion ---
         std::string tyStr = actualType->toString();
         bool isIntTy = actualType->getKind() == hir::TypeKind::Int ||
                        tyStr.find("i8") != std::string::npos ||
@@ -1235,7 +1269,7 @@ private:
             valToStore = builder->insert(std::make_unique<LoadInst>(
                 castPtr, "init.load", varDecl->getLoc()));
           } else {
-            // --- [FIX] Safe fallback for unmodified constants! ---
+            // ---  Safe fallback for unmodified constants! ---
             if (auto *mirConst = llvm::dyn_cast_or_null<MIRConstant>(initVal)) {
               valToStore = mirModule->getOrInsertConstant<ConstantBitCast>(
                   mirConst, actualType);
@@ -1331,7 +1365,7 @@ private:
 
     size_t argIdx = 0;
 
-    // [FIX] Explicitly map the implicit 'this' pointer if it exists
+    //  Explicitly map the implicit 'this' pointer if it exists
     if (thisType && argIdx < mirArgs.size()) {
       MIRArgument *thisArg = mirArgs[argIdx].get();
       auto *alloca =
@@ -1342,7 +1376,7 @@ private:
       argIdx++;
     }
 
-    // [FIX] Safely map the rest of the explicit parameters
+    //  Safely map the rest of the explicit parameters
     for (size_t i = 0; i < hirParams.size(); ++i) {
       if (argIdx >= mirArgs.size())
         break; // Safety check
@@ -1356,7 +1390,7 @@ private:
           std::make_unique<StoreInst>(arg, alloca, hirParams[i].getLoc()));
       symbolMap[hirParams[i].getName()] = alloca;
 
-      // [FIX] Add managed parameters to the root lexical scope so they get
+      //  Add managed parameters to the root lexical scope so they get
       // freed!
       if (actualType) {
         std::string tyStr = actualType->toString();
@@ -1386,6 +1420,45 @@ private:
         }
       }
       argIdx++;
+    }
+
+    if (mirName.find(".constructor") != std::string::npos &&
+        thisType != nullptr) {
+      std::string className = mirName.substr(0, mirName.find(".constructor"));
+      const hir::HIRClass *targetCls = nullptr;
+      for (const auto *cls : hirModule->getClasses()) {
+        if (cls->getName() == className) {
+          targetCls = cls;
+          break;
+        }
+      }
+
+      if (targetCls) {
+        for (const auto *parentTy : targetCls->getParentTypes()) {
+          // Clean up prefix spaces/symbols
+          std::string pName = parentTy->toString();
+          while (!pName.empty() && !isalnum(pName[0]))
+            pName = pName.substr(1);
+
+          std::string parentCtorName = pName + ".constructor_ret_void";
+          if (MIRFunction *parentCtor =
+                  mirModule->getFunction(parentCtorName)) {
+            MIRValue *thisAddr = symbolMap["this"];
+            MIRValue *loadedThis =
+                builder->createLoad(thisAddr, "this.val", func.getLoc());
+
+            const hir::HIRType *expectedThisTy =
+                parentCtor->getRawArguments()[0]->getType();
+            MIRValue *castedThis = builder->createBitCast(
+                loadedThis, expectedThisTy, "base.cast", func.getLoc());
+
+            builder->createCall(
+                parentCtor, {castedThis},
+                const_cast<hir::HIRModule *>(hirModule)->getVoidType(), "",
+                false, func.getLoc());
+          }
+        }
+      }
     }
 
     if (func.getBody()) {
@@ -1435,12 +1508,175 @@ private:
 
       emitScopeCleanup(scopeStack.back(), func.getLoc());
 
+      // AUTOMATIC FIELD CLEANUP IN DESTRUCTORS
+      if (mirName.find(".destructor") != std::string::npos &&
+          thisType != nullptr) {
+        std::string className = mirName.substr(0, mirName.find(".destructor"));
+        const hir::HIRClass *targetCls = nullptr;
+        for (const auto *cls : hirModule->getClasses()) {
+          if (cls->getName() == className) {
+            targetCls = cls;
+            break;
+          }
+        }
+
+        if (targetCls && symbolMap.count("this")) {
+          // Resolve the struct type (stripping pointers)
+          const hir::HIRType *actualTy = targetCls->getType();
+          if (auto *ptrTy =
+                  llvm::dyn_cast_or_null<hir::PointerType>(actualTy)) {
+            actualTy = ptrTy->getPointee();
+          }
+
+          if (auto *stTy = llvm::dyn_cast_or_null<hir::StructType>(actualTy)) {
+            MIRValue *thisAddr = symbolMap["this"];
+            MIRValue *loadedThis =
+                builder->createLoad(thisAddr, "this.val", func.getLoc());
+
+            auto *structPtrTy =
+                const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                    stTy, hir::Ownership::None);
+            if (loadedThis->getType() != structPtrTy) {
+              loadedThis = builder->createBitCast(
+                  loadedThis, structPtrTy, "this.struct.cast", func.getLoc());
+            }
+
+            auto *i32Ty =
+                const_cast<hir::HIRModule *>(hirModule)->getIntType(32, true);
+            auto *zero = mirModule->getOrInsertConstant<ConstantInt>(0, i32Ty);
+
+            // Iterate through every field
+            for (size_t i = 0; i < stTy->getFields().size(); ++i) {
+              const hir::HIRType *fieldTy = stTy->getFields()[i];
+
+              bool isManaged = false;
+              if (auto *ptrTy =
+                      llvm::dyn_cast_or_null<hir::PointerType>(fieldTy)) {
+                if (ptrTy->getOwnership() != hir::Ownership::None &&
+                    ptrTy->getOwnership() != hir::Ownership::Borrowed) {
+                  isManaged = true;
+                }
+              } else if (auto *nullTy =
+                             llvm::dyn_cast_or_null<hir::HIRNullableType>(
+                                 fieldTy)) {
+                //  Check the inner type of Nullables!
+                const hir::HIRType *inner = nullTy->getInner();
+                if (auto *innerPtr =
+                        llvm::dyn_cast_or_null<hir::PointerType>(inner)) {
+                  if (innerPtr->getOwnership() != hir::Ownership::None &&
+                      innerPtr->getOwnership() != hir::Ownership::Borrowed) {
+                    isManaged = true;
+                  }
+                } else if (inner->getKind() == hir::TypeKind::Struct) {
+                  isManaged = true; // Ref classes inside nullables
+                }
+              } else if (fieldTy->getKind() == hir::TypeKind::String ||
+                         fieldTy->getKind() == hir::TypeKind::Array ||
+                         fieldTy->getKind() == hir::TypeKind::Map ||
+                         fieldTy->getKind() == hir::TypeKind::Closure ||
+                         fieldTy->getKind() == hir::TypeKind::Any ||
+                         fieldTy->getKind() ==
+                             hir::TypeKind::Struct) { // Catch direct ref
+                                                      // classes
+                isManaged = true;
+              } else {
+                std::string tyStr = fieldTy->toString();
+                if (tyStr.find("Arc<") != std::string::npos ||
+                    tyStr.find("Box<") != std::string::npos ||
+                    tyStr.find("?") !=
+                        std::string::npos) { // Catch string matching nullables
+                  isManaged = true;
+                }
+              }
+
+              // DO NOT emit release for weak references! They don't own the
+              // memory.
+              if (fieldTy->getKind() == hir::TypeKind::Weak ||
+                  fieldTy->toString().find("weak") != std::string::npos) {
+                isManaged = false;
+              }
+
+              if (isManaged) {
+                // Calculate GEP to the field
+                auto *idx =
+                    mirModule->getOrInsertConstant<ConstantInt>(i, i32Ty);
+                MIRValue *fieldGep =
+                    builder->createGEP(loadedThis, {zero, idx}, fieldTy,
+                                       "field.gep", func.getLoc());
+
+                // Load the field
+                MIRValue *fieldVal =
+                    builder->createLoad(fieldGep, "field.load", func.getLoc());
+
+                // Find the correct drop function
+                std::string dropName = "";
+                const hir::HIRType *baseFieldTy = fieldTy;
+
+                // Unwrap pointers, references, and nullables down to the raw
+                // StructType
+                while (baseFieldTy) {
+                  if (auto *pTy = llvm::dyn_cast_or_null<hir::PointerType>(
+                          baseFieldTy)) {
+                    baseFieldTy = pTy->getPointee();
+                  } else if (auto *rTy =
+                                 llvm::dyn_cast_or_null<hir::ReferenceType>(
+                                     baseFieldTy)) {
+                    baseFieldTy = rTy->getInner();
+                  } else if (auto *nTy =
+                                 llvm::dyn_cast_or_null<hir::HIRNullableType>(
+                                     baseFieldTy)) {
+                    baseFieldTy = nTy->getInner();
+                  } else {
+                    break; // Unwrapped
+                  }
+                }
+
+                if (baseFieldTy &&
+                    baseFieldTy->getKind() == hir::TypeKind::Struct) {
+                  std::string fName = baseFieldTy->toString();
+                  // Clean standard prefixes
+                  while (!fName.empty() &&
+                         (fName[0] == '&' || fName[0] == '*' ||
+                          fName[0] == ' ' || fName[0] == '?'))
+                    fName = fName.substr(1);
+                  if (fName.find("struct ") == 0)
+                    fName = fName.substr(7);
+                  if (fName.find("class ") == 0)
+                    fName = fName.substr(6);
+                  if (fName.find("Arc<") == 0)
+                    fName = fName.substr(4, fName.length() - 5);
+                  if (fName.find("Box<") == 0)
+                    fName = fName.substr(4, fName.length() - 5);
+
+                  // Strip the Nullable '?' suffix that ruins name lookup!
+                  if (!fName.empty() && fName.back() == '?')
+                    fName.pop_back();
+
+                  dropName = fName + ".destructor_ret_void";
+                }
+
+                MIRFunction *dropFunc = dropName.empty()
+                                            ? nullptr
+                                            : mirModule->getFunction(dropName);
+
+                // Emit Release Instruction
+                builder->insert(std::make_unique<ARCInst>(
+                    Opcode::Release, fieldVal, dropFunc, func.getLoc()));
+              }
+            }
+          }
+        }
+      }
+
       if (currFunc->isNoReturn()) {
         builder->insert(std::make_unique<UnreachableInst>(func.getLoc()));
       } else {
-        // [FIX] Implicit Default Return for Non-Void Functions
+        // Implicit Default Return for Non-Void Functions
         const hir::HIRType *expectedTy = currFunc->getType();
-        if (expectedTy && expectedTy->getKind() != hir::TypeKind::Void) {
+        bool isVoidReturn =
+            !expectedTy || expectedTy->getKind() == hir::TypeKind::Void;
+
+        if (!isVoidReturn) {
           MIRValue *defVal = nullptr;
           if (expectedTy->getKind() == hir::TypeKind::Int)
             defVal = mirModule->getOrInsertConstant<ConstantInt>(0, expectedTy);
@@ -1507,7 +1743,42 @@ private:
         const hir::HIRType *expectedTy = currFunc->getType();
         if (expectedTy && expectedTy->getKind() != hir::TypeKind::Void &&
             retVal->getType() != expectedTy) {
-          if (llvm::dyn_cast_or_null<ConstantNull>(retVal)) {
+
+          // Box raw values into Resolved Promises
+          if (expectedTy->getKind() == hir::TypeKind::Promise) {
+            std::string funcName = "moksha_rt_make_resolved_promise";
+            ensureBuiltinMIR(funcName);
+            MIRFunction *makePromFunc = mirModule->getFunction(funcName);
+
+            auto *voidTy =
+                const_cast<hir::HIRModule *>(hirModule)->getVoidType();
+            auto *voidPtrTy =
+                const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                    voidTy, hir::Ownership::None);
+
+            if (!makePromFunc) {
+              auto fn = std::make_unique<MIRFunction>(voidPtrTy, funcName,
+                                                      Linkage::External);
+              fn->addArgument(
+                  std::make_unique<MIRArgument>(fn.get(), voidPtrTy, 0));
+              makePromFunc = fn.get();
+              mirModule->addFunction(std::move(fn));
+            }
+
+            MIRValue *arg = retVal;
+            if (arg->getType() != voidPtrTy) {
+              arg = builder->createBitCast(arg, voidPtrTy, "prom.arg.cast",
+                                           stmt.getLoc());
+            }
+
+            MIRValue *rawProm =
+                builder->createCall(makePromFunc, {arg}, voidPtrTy,
+                                    "resolved.prom", false, stmt.getLoc());
+            retVal = builder->createBitCast(rawProm, expectedTy, "prom.cast",
+                                            stmt.getLoc());
+          }
+          // Standard Coercion
+          else if (llvm::dyn_cast_or_null<ConstantNull>(retVal)) {
             retVal = mirModule->getOrInsertConstant<ConstantNull>(expectedTy);
           } else if (expectedTy->getKind() == hir::TypeKind::Any) {
             retVal = builder->insert(std::make_unique<CastInst>(
@@ -1746,7 +2017,7 @@ private:
         std::make_unique<LoadInst>(indexAlloca, "idx.load", stmt.getLoc()));
 
     MIRValue *lengthVal = nullptr;
-    // [FIX] Get the original AST type, as MIR arrays decay to pointers
+    //  Get the original AST type, as MIR arrays decay to pointers
     const hir::HIRType *colTy = stmt.getCollection()->getType();
     if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(colTy)) {
       colTy = ptrTy->getPointee();
@@ -1776,9 +2047,29 @@ private:
     // --- Body Block ---
     builder->setInsertPoint(bodyBlock);
 
-    // [FIX] Auto-extract the item from the array into 'x'
+    //  Auto-extract the item from the array into 'x'
     if (collection && loopVar) {
-      auto *gep = builder->createGEP(collection, {currentIndex},
+      MIRValue *dataPtr = collection;
+
+      // Extract the raw memory pointer (index 0) from the Fat Pointer slice
+      // struct
+      if (colTy && colTy->getKind() == hir::TypeKind::Slice) {
+        auto *elemPtrTy =
+            const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                stmt.getVariable()->getType(), hir::Ownership::None);
+        dataPtr = builder->insert(std::make_unique<ExtractValueInst>(
+            collection, 0, elemPtrTy, "slice.ptr.extract", stmt.getLoc()));
+      } else if (colTy && colTy->getKind() == hir::TypeKind::Array) {
+        auto *elemPtrTy =
+            const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                stmt.getVariable()->getType(), hir::Ownership::None);
+        if (dataPtr->getType() != elemPtrTy) {
+          dataPtr = builder->createBitCast(dataPtr, elemPtrTy,
+                                           "array.decay.cast", stmt.getLoc());
+        }
+      }
+
+      auto *gep = builder->createGEP(dataPtr, {currentIndex},
                                      stmt.getVariable()->getType(), "elem.ptr",
                                      stmt.getLoc());
 
@@ -1859,7 +2150,7 @@ private:
     }
 
     // 2. Map blocks to their constants and execution bodies
-    // [FIX] Track massive ranges separately to prevent OOM
+    //  Track massive ranges separately to prevent OOM
     struct RangeValue {
       int64_t start;
       int64_t end;
@@ -1896,7 +2187,7 @@ private:
               int64_t start = lhsConst->getValue();
               int64_t end = rhsConst->getValue();
 
-              // [FIX] Threshold check! If the range is > 64 elements, track it
+              //  Threshold check! If the range is > 64 elements, track it
               // dynamically. Otherwise, safely unroll it into the dense jump
               // table.
               if (end - start > 64) {
@@ -1969,7 +2260,7 @@ private:
     const hir::HIRType *boolTy =
         const_cast<hir::HIRModule *>(hirModule)->getBoolType();
 
-    // --- [FIX] Emit bounds-checking blocks for large ranges ---
+    // ---  Emit bounds-checking blocks for large ranges ---
     for (const auto &m : mappings) {
       for (const auto &range : m.rangeValues) {
         MIRBlock *nextCheckBlock = newBlock("switch.next_range");
@@ -2033,7 +2324,7 @@ private:
       }
 
       if (!getTerminator(builder->getInsertBlock())) {
-        // [FIX] Conditional Fallthrough Logic:
+        //  Conditional Fallthrough Logic:
         if (isEmpty) {
           // EMPTY CASE: Branch to the next available block (Fallthrough)
           if (i < mappings.size() - 1) {
@@ -2282,8 +2573,24 @@ private:
 
       MIRValue *valToStore = lpad;
       if (lpad->getType() != catchType) {
-        valToStore =
-            builder->createBitCast(lpad, catchType, "ex.cast", stmt.getLoc());
+        auto kind = catchType->getKind();
+
+        //  Identify all primitive/value types that require AnyCast
+        // unpacking from the *void exception payload.
+        bool isPrimitive =
+            (kind == hir::TypeKind::Int || kind == hir::TypeKind::Float ||
+             kind == hir::TypeKind::Bool || kind == hir::TypeKind::Decimal);
+        // Note: Add hir::TypeKind::Enum or Char here if your AST has them!
+
+        if (isPrimitive) {
+          valToStore = builder->insert(std::make_unique<CastInst>(
+              Opcode::AnyCast, lpad, catchType, "ex.unpack", stmt.getLoc()));
+        } else {
+          // Complex types (Strings, Arrays, Objects, Boxes) are already
+          // pointers, so a BitCast is sufficient.
+          valToStore =
+              builder->createBitCast(lpad, catchType, "ex.cast", stmt.getLoc());
+        }
       }
 
       // Store into the explicitly casted destination
@@ -2395,7 +2702,7 @@ private:
         valToStore = mirModule->getOrInsertConstant<ConstantFloat>(
             cFloat->getValue(), actualType);
       } else if (llvm::dyn_cast_or_null<ConstantNull>(initVal)) {
-        // [FIX] Coerce the Null pointer to the expected Variable Type
+        //  Coerce the Null pointer to the expected Variable Type
         valToStore = mirModule->getOrInsertConstant<ConstantNull>(actualType);
       } else if (actualType->getKind() == hir::TypeKind::Any) {
         valToStore = builder->insert(
@@ -2547,6 +2854,15 @@ private:
           MIRValue *containerPtr = builder->createGEP(
               objPtr, gepIndices, memExpr->getType(), "bf.gep", expr.getLoc());
 
+          auto *expectedPtrTy =
+              const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                  memExpr->getType(), hir::Ownership::None);
+
+          if (containerPtr->getType() != expectedPtrTy) {
+            containerPtr = builder->createBitCast(containerPtr, expectedPtrTy,
+                                                  "bf.gep.cast", expr.getLoc());
+          }
+
           // 4. Load the old container
           MIRValue *oldVal =
               builder->createLoad(containerPtr, "bf.load", expr.getLoc());
@@ -2593,7 +2909,6 @@ private:
 
       // Normal Assignment Logic
       MIRValue *lhsPtr = nullptr;
-
       if (auto *ident =
               llvm::dyn_cast_or_null<hir::HIRIdentifierExpr>(expr.getLHS())) {
         std::string name = ident->getName();
@@ -2601,10 +2916,6 @@ private:
           lhsPtr = symbolMap[name];
         else
           lhsPtr = mirModule->getGlobal(name);
-      } else if (auto *deref =
-                     llvm::dyn_cast_or_null<hir::HIRDerefExpr>(expr.getLHS())) {
-        visit(deref->getPointer());
-        lhsPtr = lastExprValue;
       } else {
         lhsPtr = evaluateAsLValue(expr.getLHS());
       }
@@ -2627,25 +2938,6 @@ private:
         if (auto *ptrTy =
                 llvm::dyn_cast_or_null<hir::PointerType>(expectedTy)) {
           expectedTy = ptrTy->getPointee();
-        }
-
-        if (expectedTy && rhs->getType()) {
-          if (auto *pTy =
-                  llvm::dyn_cast_or_null<hir::PointerType>(expectedTy)) {
-            if (pTy->getOwnership() != hir::Ownership::None &&
-                pTy->getPointee() == rhs->getType()) {
-              lhsPtr = builder->insert(std::make_unique<LoadInst>(
-                  lhsPtr, "assign.deref", expr.getLoc()));
-              expectedTy = pTy->getPointee();
-            }
-          } else if (auto *rTy = llvm::dyn_cast_or_null<hir::ReferenceType>(
-                         expectedTy)) {
-            if (rTy->getInner() == rhs->getType()) {
-              lhsPtr = builder->insert(std::make_unique<LoadInst>(
-                  lhsPtr, "assign.deref", expr.getLoc()));
-              expectedTy = rTy->getInner();
-            }
-          }
         }
 
         if (expectedTy && rhs->getType() && expectedTy != rhs->getType()) {
@@ -2690,6 +2982,26 @@ private:
           }
         }
 
+        // Force the destination to be a raw pointer to satisfy the verifier
+        if (lhsPtr && lhsPtr->getType()) {
+          if (auto *pTy = llvm::dyn_cast<hir::PointerType>(lhsPtr->getType())) {
+            auto *rawTy =
+                const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                    pTy->getPointee(), hir::Ownership::None);
+            if (lhsPtr->getType() != rawTy) {
+              lhsPtr = builder->createBitCast(lhsPtr, rawTy, "store.dest.cast",
+                                              expr.getLoc());
+            }
+          } else if (auto *rTy = llvm::dyn_cast<hir::ReferenceType>(
+                         lhsPtr->getType())) {
+            auto *rawTy =
+                const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                    rTy->getInner(), hir::Ownership::None);
+            lhsPtr = builder->createBitCast(lhsPtr, rawTy, "store.dest.cast",
+                                            expr.getLoc());
+          }
+        }
+
         if (isWeakMemory(expectedTy)) {
           builder->createStoreWeak(rhs, lhsPtr, expr.getLoc());
         } else {
@@ -2706,7 +3018,7 @@ private:
                 builder->insert(std::make_unique<ExtractValueInst>(
                     oldVal, 0, voidPtrTy, "old.any.ptr", expr.getLoc()));
 
-            // [FIX] Manually define __moksha_free if it doesn't exist
+            //  Manually define __moksha_free if it doesn't exist
             std::string freeName = "__moksha_free";
             MIRFunction *freeFunc = mirModule->getFunction(freeName);
             if (!freeFunc) {
@@ -2754,39 +3066,69 @@ private:
           resTy = lhsVal->getType();
         }
 
+        const hir::HIRType *checkTy = resTy;
+        if (auto *v = llvm::dyn_cast_or_null<hir::HIRViewType>(checkTy))
+          checkTy = v->getInner();
+        if (auto *m = llvm::dyn_cast_or_null<hir::HIRMutType>(checkTy))
+          checkTy = m->getInner();
+        if (auto *l = llvm::dyn_cast_or_null<hir::HIRLockType>(checkTy))
+          checkTy = l->getInner();
+
+        if (auto *nullTy =
+                llvm::dyn_cast_or_null<hir::HIRNullableType>(checkTy)) {
+          resTy = nullTy->getInner();
+        }
+
+        // Unwrap the value for the final result
         MIRValue *lhsCast = lhsVal;
         if (lhsVal->getType() != resTy) {
-          lhsCast = builder->createBitCast(lhsVal, resTy, "unwrap.cast",
-                                           expr.getLoc());
+          if (lhsVal->getType()->toString() != resTy->toString()) {
+            lhsCast = builder->createBitCast(lhsVal, resTy, "unwrap.cast",
+                                             expr.getLoc());
+          }
         }
 
         MIRBlock *lhsBlock = builder->getInsertBlock();
         MIRBlock *rhsBlock = newBlock("nullcoal.rhs");
         MIRBlock *mergeBlock = newBlock("nullcoal.end");
 
-        auto *nullConst =
-            mirModule->getOrInsertConstant<ConstantNull>(lhsVal->getType());
+        const hir::HIRType *cmpTy = lhsVal->getType();
+        auto *nullConst = mirModule->getOrInsertConstant<ConstantNull>(cmpTy);
+
+        MIRValue *safeNull = nullConst;
+
+        // 1. Use string comparison to catch structural desyncs
+        if (safeNull->getType()->toString() != cmpTy->toString()) {
+          safeNull = builder->insert(
+              std::make_unique<CastInst>(Opcode::BitCast, nullConst, cmpTy,
+                                         "null.sync.force", expr.getLoc()));
+        }
+
         const hir::HIRType *boolTy =
             const_cast<hir::HIRModule *>(hirModule)->getBoolType();
+
         MIRValue *isNotNull =
-            builder->createICmp(CompareInst::Predicate::NE, lhsVal, nullConst,
+            builder->createICmp(CompareInst::Predicate::NE, lhsVal, safeNull,
                                 boolTy, "notnull", expr.getLoc());
 
         builder->createCondBr(isNotNull, mergeBlock, rhsBlock);
 
+        // Evaluate RHS (if null)
         builder->setInsertPoint(rhsBlock);
         visit(expr.getRHS());
         MIRValue *rhsVal = lastExprValue;
 
         MIRValue *rhsCast = rhsVal;
         if (rhsVal->getType() != resTy) {
-          rhsCast =
-              builder->createBitCast(rhsVal, resTy, "rhs.cast", expr.getLoc());
+          if (rhsVal->getType()->toString() != resTy->toString()) {
+            rhsCast = builder->createBitCast(rhsVal, resTy, "unwrap.cast",
+                                             expr.getLoc());
+          }
         }
-
         MIRBlock *rhsEndBlock = builder->getInsertBlock();
         builder->createBr(mergeBlock);
 
+        // Merge results
         builder->setInsertPoint(mergeBlock);
         auto *phi = builder->createPhi(resTy, "nullcoal.phi", expr.getLoc());
         phi->addIncoming(lhsCast, lhsBlock);
@@ -2863,6 +3205,81 @@ private:
     if (!lhs || !rhs) {
       lastExprValue = nullptr;
       return;
+    }
+
+    // POINTER ARITHMETIC INTERCEPTOR
+    bool lhsIsPtr = lhs->getType() &&
+                    (lhs->getType()->getKind() == hir::TypeKind::Pointer ||
+                     lhs->getType()->getKind() == hir::TypeKind::Reference);
+    bool rhsIsPtr = rhs->getType() &&
+                    (rhs->getType()->getKind() == hir::TypeKind::Pointer ||
+                     rhs->getType()->getKind() == hir::TypeKind::Reference);
+
+    if (lhsIsPtr || rhsIsPtr) {
+      if (expr.getOp() == hir::BinaryOp::Add) {
+        // Pointer + Integer
+        MIRValue *ptr = lhsIsPtr ? lhs : rhs;
+        MIRValue *idx = lhsIsPtr ? rhs : lhs;
+
+        const hir::HIRType *pointeeTy = nullptr;
+        if (auto *pTy =
+                llvm::dyn_cast_or_null<hir::PointerType>(ptr->getType())) {
+          pointeeTy = pTy->getPointee();
+        } else if (auto *rTy = llvm::dyn_cast_or_null<hir::ReferenceType>(
+                       ptr->getType())) {
+          pointeeTy = rTy->getInner();
+        }
+        lastExprValue =
+            builder->createGEP(ptr, {idx}, pointeeTy, "ptr.add", expr.getLoc());
+        return;
+      } else if (expr.getOp() == hir::BinaryOp::Sub) {
+        if (lhsIsPtr && !rhsIsPtr) {
+          // Pointer - Integer
+          auto *zero =
+              mirModule->getOrInsertConstant<ConstantInt>(0, rhs->getType());
+          MIRValue *negIdx =
+              builder->createSub(zero, rhs, "neg.idx", expr.getLoc());
+          const hir::HIRType *pointeeTy = nullptr;
+          if (auto *pTy =
+                  llvm::dyn_cast_or_null<hir::PointerType>(lhs->getType()))
+            pointeeTy = pTy->getPointee();
+          lastExprValue = builder->createGEP(lhs, {negIdx}, pointeeTy,
+                                             "ptr.sub", expr.getLoc());
+          return;
+        } else if (lhsIsPtr && rhsIsPtr) {
+          // Pointer - Pointer
+          const hir::HIRType *isizeTy =
+              const_cast<hir::HIRModule *>(hirModule)->getIntType(64, true,
+                                                                  true);
+          MIRValue *lhsInt = builder->createBitCast(
+              lhs, isizeTy, "ptrtoint.lhs", expr.getLoc());
+          MIRValue *rhsInt = builder->createBitCast(
+              rhs, isizeTy, "ptrtoint.rhs", expr.getLoc());
+          MIRValue *byteDiff =
+              builder->createSub(lhsInt, rhsInt, "byte.diff", expr.getLoc());
+
+          const hir::HIRType *pointeeTy = nullptr;
+          if (auto *pTy =
+                  llvm::dyn_cast_or_null<hir::PointerType>(lhs->getType()))
+            pointeeTy = pTy->getPointee();
+
+          if (pointeeTy && pointeeTy->getKind() != hir::TypeKind::Void) {
+            auto *nullPtr = mirModule->getOrInsertConstant<ConstantNull>(
+                const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                    pointeeTy, hir::Ownership::None));
+            auto *one = mirModule->getOrInsertConstant<ConstantInt>(1, isizeTy);
+            auto *gep = builder->createGEP(nullPtr, {one}, pointeeTy,
+                                           "sizeof.gep", expr.getLoc());
+            MIRValue *sizeVal = builder->createBitCast(
+                gep, isizeTy, "sizeof.int", expr.getLoc());
+            lastExprValue = builder->createDiv(byteDiff, sizeVal, "ptr.diff",
+                                               expr.getLoc());
+          } else {
+            lastExprValue = byteDiff;
+          }
+          return;
+        }
+      }
     }
 
     // Implicit Dereference for Managed Pointers
@@ -2999,87 +3416,33 @@ private:
       rhs = rescueVoidVal(rhs, lhs->getType());
     }
 
-    // POINTER ARITHMETIC INTERCEPTOR
-    bool lhsIsPtr = lhs->getType() &&
-                    (lhs->getType()->getKind() == hir::TypeKind::Pointer ||
-                     lhs->getType()->getKind() == hir::TypeKind::Reference);
-    bool rhsIsPtr = rhs->getType() &&
-                    (rhs->getType()->getKind() == hir::TypeKind::Pointer ||
-                     rhs->getType()->getKind() == hir::TypeKind::Reference);
+    // STRING CONCATENATION INTERCEPTOR
+    bool lhsIsStr =
+        lhs->getType() && lhs->getType()->getKind() == hir::TypeKind::String;
+    bool rhsIsStr =
+        rhs->getType() && rhs->getType()->getKind() == hir::TypeKind::String;
 
-    if (lhsIsPtr || rhsIsPtr) {
-      if (expr.getOp() == hir::BinaryOp::Add) {
-        // Pointer + Integer
-        MIRValue *ptr = lhsIsPtr ? lhs : rhs;
-        MIRValue *idx = lhsIsPtr ? rhs : lhs;
+    if ((lhsIsStr || rhsIsStr) && expr.getOp() == hir::BinaryOp::Add) {
+      auto *stringTy = const_cast<hir::HIRModule *>(hirModule)->getStringType();
 
-        const hir::HIRType *pointeeTy = nullptr;
-        if (auto *pTy =
-                llvm::dyn_cast_or_null<hir::PointerType>(ptr->getType())) {
-          pointeeTy = pTy->getPointee();
-        } else if (auto *rTy = llvm::dyn_cast_or_null<hir::ReferenceType>(
-                       ptr->getType())) {
-          pointeeTy = rTy->getInner();
-        }
+      MIRValue *strLhs = coerceToString(lhs, expr.getLoc());
+      MIRValue *strRhs = coerceToString(rhs, expr.getLoc());
 
-        lastExprValue =
-            builder->createGEP(ptr, {idx}, pointeeTy, "ptr.add", expr.getLoc());
-        return;
-      } else if (expr.getOp() == hir::BinaryOp::Sub) {
-        if (lhsIsPtr && !rhsIsPtr) {
-          // Pointer - Integer -> GEP with negative index
-          auto *zero =
-              mirModule->getOrInsertConstant<ConstantInt>(0, rhs->getType());
-          MIRValue *negIdx =
-              builder->createSub(zero, rhs, "neg.idx", expr.getLoc());
-
-          const hir::HIRType *pointeeTy = nullptr;
-          if (auto *pTy =
-                  llvm::dyn_cast_or_null<hir::PointerType>(lhs->getType())) {
-            pointeeTy = pTy->getPointee();
-          }
-
-          lastExprValue = builder->createGEP(lhs, {negIdx}, pointeeTy,
-                                             "ptr.sub", expr.getLoc());
-          return;
-        } else if (lhsIsPtr && rhsIsPtr) {
-          // Pointer - Pointer -> (int(ptr1) - int(ptr2)) / sizeof(T)
-          const hir::HIRType *isizeTy =
-              const_cast<hir::HIRModule *>(hirModule)->getIntType(64, true,
-                                                                  true);
-
-          MIRValue *lhsInt = builder->createBitCast(
-              lhs, isizeTy, "ptrtoint.lhs", expr.getLoc());
-          MIRValue *rhsInt = builder->createBitCast(
-              rhs, isizeTy, "ptrtoint.rhs", expr.getLoc());
-
-          MIRValue *byteDiff =
-              builder->createSub(lhsInt, rhsInt, "byte.diff", expr.getLoc());
-
-          const hir::HIRType *pointeeTy = nullptr;
-          if (auto *pTy =
-                  llvm::dyn_cast_or_null<hir::PointerType>(lhs->getType())) {
-            pointeeTy = pTy->getPointee();
-          }
-
-          if (pointeeTy && pointeeTy->getKind() != hir::TypeKind::Void) {
-            auto *nullPtr = mirModule->getOrInsertConstant<ConstantNull>(
-                const_cast<hir::HIRModule *>(hirModule)->getPointerType(
-                    pointeeTy, hir::Ownership::None));
-            auto *one = mirModule->getOrInsertConstant<ConstantInt>(1, isizeTy);
-            auto *gep = builder->createGEP(nullPtr, {one}, pointeeTy,
-                                           "sizeof.gep", expr.getLoc());
-            MIRValue *sizeVal = builder->createBitCast(
-                gep, isizeTy, "sizeof.int", expr.getLoc());
-
-            lastExprValue = builder->createDiv(byteDiff, sizeVal, "ptr.diff",
-                                               expr.getLoc());
-          } else {
-            lastExprValue = byteDiff; // Fallback for void* subtraction
-          }
-          return;
-        }
+      std::string concatName = "__moksha_string_concat";
+      MIRFunction *concatFunc = mirModule->getFunction(concatName);
+      if (!concatFunc) {
+        auto fn = std::make_unique<MIRFunction>(stringTy, concatName,
+                                                Linkage::External);
+        fn->addArgument(std::make_unique<MIRArgument>(fn.get(), stringTy, 0));
+        fn->addArgument(std::make_unique<MIRArgument>(fn.get(), stringTy, 1));
+        concatFunc = fn.get();
+        mirModule->addFunction(std::move(fn));
       }
+
+      lastExprValue =
+          builder->createCall(concatFunc, {strLhs, strRhs}, stringTy, "str.add",
+                              false, expr.getLoc());
+      return;
     }
 
     // Detect floating point types for correct opcode dispatch
@@ -3297,6 +3660,27 @@ private:
         newVal = builder->createAdd(loaded, one, "inc", expr.getLoc());
       } else {
         newVal = builder->createSub(loaded, one, "dec", expr.getLoc());
+      }
+
+      if (ptr && ptr->getType()) {
+        if (auto *pTy = llvm::dyn_cast<hir::PointerType>(ptr->getType())) {
+          if (pTy->getOwnership() != hir::Ownership::None) {
+            auto *rawTy =
+                const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                    pTy->getPointee(), hir::Ownership::None);
+            ptr = builder->createBitCast(ptr, rawTy, "store.dest.cast",
+                                         expr.getLoc());
+          }
+        } else if (auto *rTy =
+                       llvm::dyn_cast<hir::ReferenceType>(ptr->getType())) {
+          if (rTy->getOwnership() != hir::Ownership::None) {
+            auto *rawTy =
+                const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                    rTy->getInner(), hir::Ownership::None);
+            ptr = builder->createBitCast(ptr, rawTy, "store.dest.cast",
+                                         expr.getLoc());
+          }
+        }
       }
 
       // Store the mutated value back into memory
@@ -3665,7 +4049,7 @@ private:
             isUnionField = true;
           }
 
-          // --- [FIX] INHERITANCE FIELD OFFSET ACCUMULATION ---
+          // ---  INHERITANCE FIELD OFFSET ACCUMULATION ---
           size_t baseOffset = 0;
           if (currentCls) {
             const hir::HIRClass *c = currentCls;
@@ -3871,7 +4255,7 @@ private:
     if (isOptional) {
       MIRValue *loadedVal = lastExprValue;
 
-      // [FIX] Perform casting in the access block before branching!
+      //  Perform casting in the access block before branching!
       const hir::HIRType *resTy = expr.getType();
       if (!resTy || resTy->getKind() == hir::TypeKind::Void) {
         resTy = loadedVal->getType();
@@ -3908,20 +4292,69 @@ private:
       return;
     }
 
-    // --- [CRITICAL FIX] Prevent loading the entire array by value! ---
+    // --- [CRITICAL FIX] Correct Base Pointer Loading ---
     MIRValue *base = nullptr;
-    bool isArrayBase =
-        expr.getBase()->getType() &&
-        expr.getBase()->getType()->getKind() == hir::TypeKind::Array;
+    bool isArrayBase = false;
 
-    if (isArrayBase) {
-      // Strips the LoadInst and returns the raw Pointer Address!
-      base = evaluateAsLValue(expr.getBase());
+    // Evaluate the base to get its L-Value (memory address)
+    MIRValue *lvalueBase = evaluateAsLValue(expr.getBase());
+
+    if (lvalueBase && lvalueBase->getType() &&
+        lvalueBase->getType()->getKind() == hir::TypeKind::Pointer) {
+
+      auto *pointeeTy =
+          static_cast<const hir::PointerType *>(lvalueBase->getType())
+              ->getPointee();
+
+      if (pointeeTy && pointeeTy->getKind() == hir::TypeKind::Array) {
+        // If the L-Value points directly to an inline Array on the stack, we
+        // keep the L-Value to perform a 2-index GEP.
+        isArrayBase = true;
+        base = lvalueBase;
+      } else {
+        // If the L-Value points to a Pointer or a Slice, we MUST load it first
+        // to get the actual pointer value before indexing.
+        base = builder->createLoad(lvalueBase, "base.load", expr.getLoc());
+      }
     } else {
+      // Fallback if evaluateAsLValue returned an R-Value
       visit(expr.getBase());
       base = lastExprValue;
     }
 
+    // ---> L-Value to R-Value Conversion for Nullable Pointers <---
+    if (expr.isOptionalAccess() && base && base->getType() &&
+        base->getType()->getKind() == hir::TypeKind::Pointer) {
+      if (llvm::isa<AllocaInst>(base) || llvm::isa<GetElementPtrInst>(base) ||
+          llvm::isa<MIRGlobal>(base) || llvm::isa<CastInst>(base)) {
+        base = builder->createLoad(base, "opt.arr.load", expr.getLoc());
+      }
+    }
+
+    // ---> Optional Chaining Short-Circuit (?[ operator) <---
+    MIRBlock *checkBlock = nullptr;
+    MIRBlock *accessBlock = nullptr;
+    MIRBlock *mergeBlock = nullptr;
+
+    if (expr.isOptionalAccess()) {
+      checkBlock = builder->getInsertBlock();
+      accessBlock = newBlock("opt.idx.access");
+      mergeBlock = newBlock("opt.idx.end");
+
+      auto *nullConst =
+          mirModule->getOrInsertConstant<ConstantNull>(base->getType());
+      const hir::HIRType *boolTy =
+          const_cast<hir::HIRModule *>(hirModule)->getBoolType();
+
+      MIRValue *isNotNull =
+          builder->createICmp(CompareInst::Predicate::NE, base, nullConst,
+                              boolTy, "opt.idx.notnull", expr.getLoc());
+      builder->createCondBr(isNotNull, accessBlock, mergeBlock);
+
+      builder->setInsertPoint(accessBlock);
+    }
+
+    // Now evaluate the index ONLY if the base wasn't null!
     visit(expr.getIndex());
     MIRValue *idx = lastExprValue;
 
@@ -3958,28 +4391,69 @@ private:
             base, 0, elemPtrTy, "slice.data", expr.getLoc()));
       }
 
-      // --- [CRITICAL FIX] Two-Index GEP for Arrays vs One-Index for Pointers
-      // ---
+      // Two-Index GEP for Arrays vs One-Index for Pointers
       MIRValue *gep = nullptr;
       if (isArrayBase) {
         auto *i32Ty =
             const_cast<hir::HIRModule *>(hirModule)->getIntType(32, true);
         auto *zero = mirModule->getOrInsertConstant<ConstantInt>(0, i32Ty);
 
-        // Arrays require `{0, idx}` to prevent stepping out of bounds in LLVM!
         gep = builder->createGEP(base, {zero, idx}, expr.getType(), "index.ptr",
                                  expr.getLoc());
       } else {
-        // Standard decayed pointers only need `{idx}`
-        gep = builder->createGEP(base, {idx}, expr.getType(), "index.ptr",
+        // [CRITICAL FIX] Dynamically extract the true pointee type from the
+        // pointer to prevent bad memory offsets on decayed arrays.
+        const hir::HIRType *gepPointeeTy = expr.getType();
+        if (auto *ptrTy = llvm::dyn_cast<hir::PointerType>(base->getType())) {
+          gepPointeeTy = ptrTy->getPointee();
+        }
+        gep = builder->createGEP(base, {idx}, gepPointeeTy, "index.ptr",
                                  expr.getLoc());
       }
 
+      auto *expectedPtrTy =
+          const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+              expr.getType(), hir::Ownership::None);
+
+      if (gep->getType() != expectedPtrTy) {
+        gep = builder->createBitCast(gep, expectedPtrTy, "index.ptr.cast",
+                                     expr.getLoc());
+      }
+
+      // Keep only this single load at the end
       auto *loadInst = builder->createLoad(gep, "index.val", expr.getLoc());
       if (isVolatilePointer(gep))
         loadInst->setVolatile(true);
       applyBorrowKind(loadInst, expr.getType());
       lastExprValue = loadInst;
+    }
+
+    // ---> Merge and Phi Node <---
+    if (expr.isOptionalAccess()) {
+      MIRValue *loadedVal = lastExprValue;
+
+      const hir::HIRType *resTy = expr.getType();
+      if (!resTy || resTy->getKind() == hir::TypeKind::Void) {
+        resTy = loadedVal->getType();
+      }
+
+      MIRValue *castLoaded = loadedVal;
+      if (loadedVal->getType() != resTy) {
+        castLoaded = builder->createBitCast(loadedVal, resTy, "opt.idx.cast",
+                                            expr.getLoc());
+      }
+
+      MIRBlock *accessEndBlock = builder->getInsertBlock();
+      builder->createBr(mergeBlock);
+
+      builder->setInsertPoint(mergeBlock);
+      auto *phi = builder->createPhi(resTy, "opt.idx.phi", expr.getLoc());
+
+      auto *nullRes = mirModule->getOrInsertConstant<ConstantNull>(resTy);
+      phi->addIncoming(nullRes, checkBlock);
+      phi->addIncoming(castLoaded, accessEndBlock);
+
+      lastExprValue = phi;
     }
   }
 
@@ -4050,7 +4524,48 @@ private:
       }
     }
 
-    // [FIX] Dispatch to the appropriate cast opcode
+    // Route `cast<string>(x)` to the stringification engine
+    if (destTy->getKind() == hir::TypeKind::String) {
+      lastExprValue = coerceToString(val, expr.getLoc());
+      applyBorrowKind(lastExprValue, destTy);
+      return;
+    }
+
+    // Box raw synchronous values into Resolved Promises
+    if (destTy->getKind() == hir::TypeKind::Promise) {
+      std::string funcName = "moksha_rt_make_resolved_promise";
+      ensureBuiltinMIR(funcName);
+      MIRFunction *makePromFunc = mirModule->getFunction(funcName);
+
+      auto *voidTy = const_cast<hir::HIRModule *>(hirModule)->getVoidType();
+      auto *voidPtrTy = const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+          voidTy, hir::Ownership::None);
+
+      if (!makePromFunc) {
+        auto fn = std::make_unique<MIRFunction>(voidPtrTy, funcName,
+                                                Linkage::External);
+        fn->addArgument(std::make_unique<MIRArgument>(fn.get(), voidPtrTy, 0));
+        makePromFunc = fn.get();
+        mirModule->addFunction(std::move(fn));
+      }
+
+      MIRValue *arg = val;
+      if (arg->getType() != voidPtrTy) {
+        // BitCast will safely map integers to pointers in MLIR via IntToPtr
+        arg = builder->createBitCast(arg, voidPtrTy, "prom.arg.cast",
+                                     expr.getLoc());
+      }
+
+      MIRValue *rawProm =
+          builder->createCall(makePromFunc, {arg}, voidPtrTy, "resolved.prom",
+                              false, expr.getLoc());
+      lastExprValue =
+          builder->createBitCast(rawProm, destTy, "prom.cast", expr.getLoc());
+      applyBorrowKind(lastExprValue, destTy);
+      return;
+    }
+
+    // Dispatch to the appropriate cast opcode
     if (expr.getOp() == hir::CastOp::AnyCast) {
       lastExprValue = builder->insert(std::make_unique<CastInst>(
           Opcode::AnyCast, val, destTy, "cast.any", expr.getLoc()));
@@ -4060,7 +4575,11 @@ private:
           builder->createBitCast(val, destTy, "cast.fold", expr.getLoc());
     }
 
-    applyBorrowKind(lastExprValue, destTy);
+    if (val->getBorrowKind() != mir::BorrowKind::None) {
+      lastExprValue->setBorrowKind(val->getBorrowKind());
+    } else {
+      applyBorrowKind(lastExprValue, destTy);
+    }
   }
 
   void visitNewExpr(const hir::HIRNewExpr &expr) override {
@@ -4149,6 +4668,31 @@ private:
     } else {
       // Value Semantics (Stack Allocation)
       objPtr = builder->createAlloca(objTy, "new.obj.stack", expr.getLoc());
+    }
+
+    // PRE-ZERO WEAK FIELDS TO PREVENT ARC UNDERFLOW!
+    if (auto *stTy = llvm::dyn_cast_or_null<hir::StructType>(pointeeTy)) {
+      auto *i32Ty =
+          const_cast<hir::HIRModule *>(hirModule)->getIntType(32, true);
+      auto *zero = mirModule->getOrInsertConstant<ConstantInt>(0, i32Ty);
+
+      for (size_t i = 0; i < stTy->getFields().size(); ++i) {
+        const hir::HIRType *fieldTy = stTy->getFields()[i];
+
+        // Target only weak references
+        if (isWeakMemory(fieldTy)) {
+          auto *idx = mirModule->getOrInsertConstant<ConstantInt>(i, i32Ty);
+          MIRValue *fieldGep = builder->createGEP(
+              objPtr, {zero, idx}, fieldTy, "weak.zero.gep", expr.getLoc());
+
+          MIRValue *nullVal =
+              mirModule->getOrInsertConstant<ConstantNull>(fieldTy);
+          // Emit a standard StoreInst (NOT StoreWeak) to safely clear the
+          // garbage
+          builder->insert(
+              std::make_unique<StoreInst>(nullVal, fieldGep, expr.getLoc()));
+        }
+      }
     }
 
     // Bind VTable Pointer
@@ -4247,10 +4791,37 @@ private:
           args[0]->setBorrowKind(mir::BorrowKind::View);
         }
 
-        builder->createCall(
-            ctorFunc, std::move(args),
-            const_cast<hir::HIRModule *>(hirModule)->getVoidType(), "", false,
-            expr.getLoc());
+        // Exception-Safe Constructor Invocation
+        if (currentUnwindDest) {
+          MIRBlock *normalDest = newBlock("invoke.cont");
+          MIRBlock *cleanupDest = newBlock("invoke.cleanup");
+
+          builder->createInvoke(
+              ctorFunc, std::move(args), normalDest, cleanupDest,
+              const_cast<hir::HIRModule *>(hirModule)->getVoidType(), "",
+              expr.getLoc());
+
+          // Local unwind block for the constructor
+          builder->setInsertPoint(cleanupDest);
+
+          MIRBlock *savedUnwind = currentUnwindDest;
+          currentUnwindDest = nullptr;
+
+          size_t targetDepth =
+              tryScopeDepths.empty() ? 0 : tryScopeDepths.top();
+          for (size_t i = scopeStack.size(); i > targetDepth; --i) {
+            emitScopeCleanup(scopeStack[i - 1], expr.getLoc());
+          }
+          currentUnwindDest = savedUnwind;
+
+          builder->createBr(currentUnwindDest);
+          builder->setInsertPoint(normalDest);
+        } else {
+          builder->createCall(
+              ctorFunc, std::move(args),
+              const_cast<hir::HIRModule *>(hirModule)->getVoidType(), "", false,
+              expr.getLoc());
+        }
       }
     }
 
@@ -4259,8 +4830,6 @@ private:
       // Reference types return the pointer itself
       lastExprValue = objPtr;
     } else {
-      // Value types must LOAD the stack memory to evaluate to the actual
-      // struct data!
       lastExprValue = builder->insert(
           std::make_unique<LoadInst>(objPtr, "new.val", expr.getLoc()));
     }
@@ -4629,7 +5198,10 @@ private:
     }
 
     if (!getTerminator(builder->getInsertBlock())) {
-      if (returnTy && returnTy->getKind() != hir::TypeKind::Void) {
+      bool isVoidReturn =
+          !returnTy || returnTy->getKind() == hir::TypeKind::Void;
+
+      if (!isVoidReturn) {
         if (lastExprValue) {
           if (lastExprValue->getType() != returnTy) {
             lastExprValue = builder->createBitCast(lastExprValue, returnTy,
@@ -4700,6 +5272,9 @@ private:
     std::vector<MIRValue *> packedEnv;
     packedEnv.push_back(envAlloca);
 
+    // --- [NEW] Track if the closure itself is mutable ---
+    bool isClosureMut = (expr.getCaptureMode() == hir::CaptureMode::Mut);
+
     // Push tagged captures for precise NLL tracking!
     for (size_t i = 0; i < captures.size(); ++i) {
       MIRValue *capVal = captures[i].second;
@@ -4737,8 +5312,10 @@ private:
           }
         }
 
-        if (isMutated) {
+        // --- [UPDATED] Update the closure mutability state ---
+        if (isMutated || expr.getCaptureMode() == hir::CaptureMode::Mut) {
           taggedCap->setBorrowKind(mir::BorrowKind::Mut);
+          isClosureMut = true;
         } else {
           taggedCap->setBorrowKind(mir::BorrowKind::View);
         }
@@ -4753,6 +5330,13 @@ private:
 
     lastExprValue = builder->createMakeClosure(
         fnPtr, std::move(packedEnv), fatPtrStructTy, safeName, expr.getLoc());
+
+    // --- [NEW FIX] Apply the BorrowKind to the MakeClosureInst ---
+    if (isClosureMut) {
+      lastExprValue->setBorrowKind(mir::BorrowKind::Mut);
+    } else {
+      lastExprValue->setBorrowKind(mir::BorrowKind::View);
+    }
   }
 
   void visitThreadExpr(const hir::HIRThreadExpr &expr) override {
@@ -4772,7 +5356,7 @@ private:
       retTy = const_cast<hir::HIRModule *>(hirModule)->getVoidType();
     }
 
-    // 3. [FIX] Get a unique SSA name for the thread handle
+    // 3.  Get a unique SSA name for the thread handle
     MIRFunction *func = builder->getInsertBlock()->getParent();
     std::string callName = (retTy->getKind() == hir::TypeKind::Void)
                                ? ""
@@ -4795,7 +5379,7 @@ private:
   }
 
   void visitSizeOfExpr(const hir::HIRSizeOfExpr &expr) override {
-    // 1. [FIX] Access the target type directly using getTargetType()
+    // 1.  Access the target type directly using getTargetType()
     const hir::HIRType *targetTy = expr.getTargetType();
 
     if (!targetTy) {
@@ -4825,36 +5409,22 @@ private:
   }
 
   void visitAwaitExpr(const hir::HIRAwaitExpr &expr) override {
-    // 1. Evaluate the inner Task/Promise
+    // 1. Evaluate the promise being awaited (Use getExpr() or getOperand()
+    // based on your HIRExpr header)
     visit(expr.getExpr());
-    MIRValue *taskVal = lastExprValue;
-
-    if (!taskVal || (taskVal->getType() &&
-                     taskVal->getType()->getKind() == hir::TypeKind::Void)) {
-      diags.report(expr.getLoc(), DiagID::err_invalid_type)
-          << "Cannot await a void expression";
-      lastExprValue = nullptr;
+    MIRValue *promiseVal = lastExprValue;
+    if (!promiseVal)
       return;
-    }
 
-    // 2. Resolve Return Type
+    // 2. Resolve the unwrapped return type
     const hir::HIRType *retTy = expr.getType();
-    if (!retTy && taskVal) {
-      retTy = taskVal->getType();
-    }
     if (!retTy) {
       retTy = const_cast<hir::HIRModule *>(hirModule)->getVoidType();
     }
 
-    // 3. [FIX] Get a unique SSA name for the unwrapped promise result
-    MIRFunction *func = builder->getInsertBlock()->getParent();
-    std::string callName = (retTy->getKind() == hir::TypeKind::Void)
-                               ? ""
-                               : func->getUniqueName("await.result");
-
-    // 4. Emit native Await Instruction
-    lastExprValue =
-        builder->createAwait(taskVal, retTy, callName, expr.getLoc());
+    // 3. Emit the Await Instruction
+    lastExprValue = builder->insert(std::make_unique<AwaitInst>(
+        promiseVal, retTy, "await.result", expr.getLoc()));
   }
 
   void visitSuperExpr(const hir::HIRSuperExpr &expr) override {
@@ -4935,48 +5505,11 @@ private:
     for (const auto &part : expr.getParts()) {
       visit(part.get());
       MIRValue *val = lastExprValue;
-      const hir::HIRType *valTy = val->getType();
+      MIRValue *strVal = coerceToString(val, expr.getLoc());
+      builder->insert(std::make_unique<ARCInst>(Opcode::Retain, strVal, nullptr,
+                                                expr.getLoc()));
 
-      if (valTy->getKind() != hir::TypeKind::String) {
-        // --- FIX: Strongly Typed to_string Lowering ---
-        std::string typeName;
-        if (auto *intTy = llvm::dyn_cast<hir::HIRIntType>(valTy)) {
-          typeName = (intTy->isSigned() ? "i" : "u") +
-                     std::to_string(intTy->getWidth());
-        } else if (auto *floatTy = llvm::dyn_cast<hir::HIRFloatType>(valTy)) {
-          typeName = "f" + std::to_string(floatTy->getWidth());
-        } else if (valTy->getKind() == hir::TypeKind::Bool) {
-          typeName = "bool";
-        } else {
-          // Fallback for complex objects (Interfaces, Structs, etc.)
-          typeName = "ptr";
-          auto *voidTy = const_cast<hir::HIRModule *>(hirModule)->getVoidType();
-          auto *voidPtrTy =
-              const_cast<hir::HIRModule *>(hirModule)->getPointerType(
-                  voidTy, hir::Ownership::None);
-
-          val =
-              builder->createBitCast(val, voidPtrTy, "ptr.cast", expr.getLoc());
-          valTy = voidPtrTy;
-        }
-
-        std::string toStringName = "__moksha_" + typeName + "_to_string";
-        MIRFunction *toStringFunc = mirModule->getFunction(toStringName);
-
-        if (!toStringFunc) {
-          auto fn = std::make_unique<MIRFunction>(stringTy, toStringName,
-                                                  Linkage::External);
-          fn->addArgument(std::make_unique<MIRArgument>(fn.get(), valTy, 0));
-          toStringFunc = fn.get();
-          mirModule->addFunction(std::move(fn));
-        }
-
-        // Convert the non-string value to a string pointer!
-        val = builder->createCall(toStringFunc, {val}, stringTy,
-                                  typeName + ".to_str", false, expr.getLoc());
-      }
-
-      callArgs.push_back(val);
+      callArgs.push_back(strVal);
     }
 
     // 3. Call the updated variadic join function that strictly expects (i32
@@ -5022,7 +5555,7 @@ private:
       visit(expr.getPrompt());
       args.push_back(lastExprValue);
     } else {
-      // [FIX] If no prompt is provided in HIR, inject an empty string
+      //  If no prompt is provided in HIR, inject an empty string
       // constant so the MIR call matches the fixed function signature.
       args.push_back(mirModule->getOrInsertConstant<ConstantString>("", strTy));
     }
@@ -5036,14 +5569,24 @@ private:
     const hir::HIRType *rawArrayTy = expr.getType();
     const hir::HIRType *rawElemTy = nullptr;
 
-    // 1. Extract the element type
-    if (auto *arrTyInfo = llvm::dyn_cast_or_null<hir::ArrayType>(rawArrayTy)) {
+    bool isSlice = false;
+    // 1. Extract the element type & Detect Slices
+    if (auto *sliceTyInfo =
+            llvm::dyn_cast_or_null<hir::SliceType>(rawArrayTy)) {
+      rawElemTy = sliceTyInfo->getElementType();
+      isSlice = true;
+    } else if (auto *arrTyInfo =
+                   llvm::dyn_cast_or_null<hir::ArrayType>(rawArrayTy)) {
       rawElemTy = arrTyInfo->getElementType();
     } else if (!expr.getElements().empty()) {
       rawElemTy = expr.getElements()[0]->getType();
+    } else {
+      rawElemTy = const_cast<hir::HIRModule *>(hirModule)->getAnyType();
     }
 
-    const hir::HIRType *elemTy = resolveType(rawElemTy);
+    // [CRITICAL FIX 1] Do not prematurely resolve/decay the element type.
+    // Keep it exactly as the AST intended (e.g. ArrayType).
+    const hir::HIRType *elemTy = rawElemTy;
 
     if (!elemTy) {
       lastExprValue =
@@ -5059,6 +5602,15 @@ private:
     MIRValue *one = mirModule->getOrInsertConstant<ConstantInt>(1, i32Ty);
     MIRValue *zero = mirModule->getOrInsertConstant<ConstantInt>(0, i32Ty);
 
+    // --- Calculate sizeof(element) ---
+    MIRValue *nullPtr = mirModule->getOrInsertConstant<ConstantNull>(
+        const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+            elemTy, hir::Ownership::None));
+    MIRValue *sizeGep =
+        builder->createGEP(nullPtr, {one}, elemTy, "sizeof.gep", expr.getLoc());
+    MIRValue *sizeofInt =
+        builder->createBitCast(sizeGep, i32Ty, "sizeof.int", expr.getLoc());
+
     // --- Two-Pass Evaluation (Calculate Dynamic Length) ---
     struct EvaluatedElement {
       bool isSpread;
@@ -5069,25 +5621,23 @@ private:
     std::vector<EvaluatedElement> evaluatedElements;
 
     MIRValue *totalNumElementsVal = zero;
+    bool hasSpread = false;
 
     for (size_t i = 0; i < expr.getElements().size(); ++i) {
       auto *elementExpr = expr.getElements()[i].get();
 
       if (auto *spread = llvm::dyn_cast<hir::HIRSpreadExpr>(elementExpr)) {
+        hasSpread = true;
         visit(spread->getIterable());
         MIRValue *sourceVal = lastExprValue;
         const hir::HIRType *sourceTy = spread->getIterable()->getType();
-
         MIRValue *spreadLenVal = nullptr;
 
         if (auto *arrTyInfo =
                 llvm::dyn_cast_or_null<hir::ArrayType>(sourceTy)) {
-          // Static Array: Size is known at compile time
           spreadLenVal = mirModule->getOrInsertConstant<ConstantInt>(
               arrTyInfo->getSize(), i32Ty);
         } else if (sourceTy->getKind() == hir::TypeKind::Slice) {
-          // Dynamic Slice: Extract the length from the Fat Pointer struct
-          // (index 1)
           spreadLenVal = builder->insert(std::make_unique<ExtractValueInst>(
               sourceVal, 1, i32Ty, "slice.len.extract", expr.getLoc()));
         } else {
@@ -5099,128 +5649,146 @@ private:
             Opcode::Add, totalNumElementsVal, spreadLenVal, "total.add",
             expr.getLoc()));
       } else {
-        // Standard Element
         visit(elementExpr);
         MIRValue *elemVal = lastExprValue;
+
+        // [CRITICAL FIX 2] Nested Array Literal Loading
+        // If the inner literal returned a pointer to its array, load it by
+        // value.
+        if (elemVal && elemVal->getType() &&
+            elemVal->getType()->getKind() == hir::TypeKind::Pointer) {
+          auto *ptrTy =
+              static_cast<const hir::PointerType *>(elemVal->getType());
+          if (ptrTy->getPointee()->getKind() == hir::TypeKind::Array) {
+            elemVal =
+                builder->createLoad(elemVal, "nested.arr.load", expr.getLoc());
+          }
+        }
+
         evaluatedElements.push_back({false, elemVal, one, elemTy});
         totalNumElementsVal = builder->insert(std::make_unique<BinaryInst>(
             Opcode::Add, totalNumElementsVal, one, "total.add", expr.getLoc()));
       }
     }
 
-    // 2. Calculate Allocation Size: sizeof(elemTy) * totalNumElementsVal
-    MIRValue *nullPtr = mirModule->getOrInsertConstant<ConstantNull>(
-        const_cast<hir::HIRModule *>(hirModule)->getPointerType(
-            elemTy, hir::Ownership::None));
-
-    MIRValue *sizeGep =
-        builder->createGEP(nullPtr, {one}, elemTy, "sizeof.gep", expr.getLoc());
-    MIRValue *sizeofInt =
-        builder->createBitCast(sizeGep, i32Ty, "sizeof.int", expr.getLoc());
-
-    MIRValue *totalSize = builder->insert(std::make_unique<BinaryInst>(
-        Opcode::Mul, sizeofInt, totalNumElementsVal, "array.size",
-        expr.getLoc()));
-
-    // 3. Allocate Array Memory
-    std::string allocName = "__moksha_alloc";
-    ensureBuiltinMIR(allocName);
-    MIRFunction *allocFunc = mirModule->getFunction(allocName);
-    if (!allocFunc) {
-      auto fn = std::make_unique<MIRFunction>(voidPtrTy, allocName,
-                                              Linkage::External);
-      fn->addArgument(std::make_unique<MIRArgument>(fn.get(), i32Ty, 0));
-      allocFunc = fn.get();
-      mirModule->addFunction(std::move(fn));
+    // [CRITICAL FIX 3] Global Initialization Scope Detection
+    bool inGlobalInit = false;
+    if (builder->getInsertBlock() && builder->getInsertBlock()->getParent()) {
+      if (builder->getInsertBlock()->getParent()->getName() ==
+          "__moksha_module_init") {
+        inGlobalInit = true;
+      }
     }
 
-    MIRValue *rawAlloc = builder->createCall(allocFunc, {totalSize}, voidPtrTy,
-                                             "array.raw", false, expr.getLoc());
+    bool needsHeap = isSlice || hasSpread || inGlobalInit;
 
-    // [FIX] Explicitly synthesize the full fixed-size ArrayType!
-    auto *actualArrayTy = const_cast<hir::HIRModule *>(hirModule)->getArrayType(
-        elemTy, expr.getElements().size());
-    auto *fullArrayPtrTy =
-        const_cast<hir::HIRModule *>(hirModule)->getPointerType(
-            actualArrayTy, hir::Ownership::None);
+    MIRValue *rawAlloc = nullptr;
+    MIRValue *fullArrayPtr = nullptr;
+    MIRValue *arrayElemPtr = nullptr;
 
-    // Primary bitcast guarantees EscapeAnalysisPass sees the full [N x T]
-    // footprint.
-    MIRValue *fullArrayPtr = builder->createBitCast(
-        rawAlloc, fullArrayPtrTy, "array.full.ptr", expr.getLoc());
+    const hir::HIRType *actualArrayTy = nullptr;
 
-    auto *elemPtrTy = const_cast<hir::HIRModule *>(hirModule)->getPointerType(
-        elemTy, hir::Ownership::None);
+    if (needsHeap) {
+      MIRValue *totalSize = builder->insert(std::make_unique<BinaryInst>(
+          Opcode::Mul, sizeofInt, totalNumElementsVal, "array.size",
+          expr.getLoc()));
 
-    // CHAIN from fullArrayPtr to hide rawAlloc from EscapeAnalysisPass!
-    MIRValue *arrayElemPtr = builder->createBitCast(
-        fullArrayPtr, elemPtrTy, "array.elem.ptr", expr.getLoc());
+      std::string allocName = "__moksha_alloc";
+      ensureBuiltinMIR(allocName);
+      MIRFunction *allocFunc = mirModule->getFunction(allocName);
+      if (!allocFunc) {
+        auto fn = std::make_unique<MIRFunction>(voidPtrTy, allocName,
+                                                Linkage::External);
+        fn->addArgument(std::make_unique<MIRArgument>(fn.get(), i32Ty, 0));
+        allocFunc = fn.get();
+        mirModule->addFunction(std::move(fn));
+      }
 
-    // --- Dynamic Index Tracker ---
+      rawAlloc = builder->createCall(allocFunc, {totalSize}, voidPtrTy,
+                                     "array.raw", false, expr.getLoc());
+
+      // Calculate actualArrayTy just for typing
+      uint64_t fixedSize = expr.getElements().size();
+      actualArrayTy = const_cast<hir::HIRModule *>(hirModule)->getArrayType(
+          elemTy, fixedSize);
+
+      auto *fullPtrTy = const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+          actualArrayTy, hir::Ownership::None);
+      fullArrayPtr = builder->createBitCast(rawAlloc, fullPtrTy,
+                                            "array.full.ptr", expr.getLoc());
+
+      auto *elemPtrTy = const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+          elemTy, hir::Ownership::None);
+      arrayElemPtr = builder->createBitCast(rawAlloc, elemPtrTy,
+                                            "array.elem.ptr", expr.getLoc());
+
+    } else {
+      uint64_t fixedSize = expr.getElements().size();
+      actualArrayTy = const_cast<hir::HIRModule *>(hirModule)->getArrayType(
+          elemTy, fixedSize);
+
+      auto *actualArrayPtrTy =
+          const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+              actualArrayTy, hir::Ownership::None);
+
+      rawAlloc = builder->insert(
+          std::make_unique<AllocaInst>(actualArrayPtrTy, actualArrayTy,
+                                       "array.raw.stack", expr.getLoc(), 0));
+
+      fullArrayPtr = rawAlloc;
+      auto *elemPtrTy = const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+          elemTy, hir::Ownership::None);
+      arrayElemPtr = builder->createBitCast(fullArrayPtr, elemPtrTy,
+                                            "array.elem.ptr", expr.getLoc());
+    }
+
     MIRValue *dynIndex = zero;
 
-    // --- Custom array copy ---
     std::string memcpyName = "__moksha_array_copy";
+    ensureBuiltinMIR(memcpyName);
     MIRFunction *memcpyFunc = mirModule->getFunction(memcpyName);
     if (!memcpyFunc) {
-      // Use voidTy instead of voidPtrTy as it doesn't return a value
       auto fn =
           std::make_unique<MIRFunction>(voidTy, memcpyName, Linkage::External);
-      fn->addArgument(
-          std::make_unique<MIRArgument>(fn.get(), voidPtrTy, 0)); // dest
-      fn->addArgument(
-          std::make_unique<MIRArgument>(fn.get(), voidPtrTy, 1)); // src
-      fn->addArgument(
-          std::make_unique<MIRArgument>(fn.get(), i32Ty, 2)); // n bytes
+      fn->addArgument(std::make_unique<MIRArgument>(fn.get(), voidPtrTy, 0));
+      fn->addArgument(std::make_unique<MIRArgument>(fn.get(), voidPtrTy, 1));
+      fn->addArgument(std::make_unique<MIRArgument>(fn.get(), i32Ty, 2));
       memcpyFunc = fn.get();
       mirModule->addFunction(std::move(fn));
     }
-
-    // Extract exact pointer type to bypass strict pointer equality checks
     const hir::HIRType *exactVoidPtrTy =
         memcpyFunc->getRawArguments()[0]->getType();
 
-    // 4. Populate the array
     for (const auto &evalEl : evaluatedElements) {
       if (evalEl.isSpread) {
-        // A. Calculate destination pointer
         MIRValue *destElemPtr = builder->createGEP(
             arrayElemPtr, {dynIndex}, elemTy, "spread.dest.ptr", expr.getLoc());
         MIRValue *destVoidPtr = builder->createBitCast(
             destElemPtr, exactVoidPtrTy, "dest.void", expr.getLoc());
 
-        // B. Get source data pointer
         MIRValue *srcDataPtr = nullptr;
         if (evalEl.type->getKind() == hir::TypeKind::Slice) {
-          // Dynamic Slice: Extract data pointer from Fat Pointer struct
-          // (index 0)
+          auto *elemPtrTy =
+              const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                  elemTy, hir::Ownership::None);
           srcDataPtr = builder->insert(std::make_unique<ExtractValueInst>(
               evalEl.value, 0, elemPtrTy, "slice.ptr.extract", expr.getLoc()));
         } else {
-          // Static Array: The value is ALREADY a decayed pointer!
-          srcDataPtr = evalEl.value;
+          srcDataPtr = evalEl.value; // It's a pointer to the array start
         }
 
         MIRValue *srcVoidPtr = builder->createBitCast(
             srcDataPtr, exactVoidPtrTy, "src.void", expr.getLoc());
-
-        // C. Calculate bytes to copy (length * sizeof(element))
         MIRValue *bytesToCopy = builder->insert(
             std::make_unique<BinaryInst>(Opcode::Mul, sizeofInt, evalEl.length,
                                          "spread.bytes", expr.getLoc()));
 
-        // D. Call Memcpy (Return type is voidTy, so name must be empty "")
         builder->createCall(memcpyFunc, {destVoidPtr, srcVoidPtr, bytesToCopy},
                             voidTy, "", false, expr.getLoc());
-
-        // E. Update dynIndex += length
         dynIndex = builder->insert(std::make_unique<BinaryInst>(
             Opcode::Add, dynIndex, evalEl.length, "idx.next", expr.getLoc()));
-
       } else {
-        // Standard Element Evaluation
         MIRValue *elemVal = evalEl.value;
-
         if (elemVal->getType() != elemTy) {
           if (llvm::dyn_cast_or_null<ConstantNull>(elemVal)) {
             elemVal = mirModule->getOrInsertConstant<ConstantNull>(elemTy);
@@ -5232,45 +5800,27 @@ private:
 
         MIRValue *elemPtr = builder->createGEP(arrayElemPtr, {dynIndex}, elemTy,
                                                "elem.ptr", expr.getLoc());
-
         builder->insert(
             std::make_unique<StoreInst>(elemVal, elemPtr, expr.getLoc()));
-
-        // dynIndex += 1
         dynIndex = builder->insert(std::make_unique<BinaryInst>(
             Opcode::Add, dynIndex, one, "idx.next", expr.getLoc()));
       }
     }
 
-    // 5. Return the array as an aggregate VALUE
-    const hir::HIRType *targetTy =
-        expectedLambdaReturnType ? expectedLambdaReturnType : rawArrayTy;
-
-    if (targetTy->getKind() == hir::TypeKind::Slice ||
-        rawArrayTy->getKind() == hir::TypeKind::Slice) {
-      const hir::HIRType *sliceTy =
-          (targetTy->getKind() == hir::TypeKind::Slice) ? targetTy : rawArrayTy;
-      sliceTy = resolveType(sliceTy);
-
-      // Create a Fat Pointer Struct: { data_ptr, length }
+    if (isSlice) {
+      const hir::HIRType *sliceTy = resolveType(rawArrayTy);
       MIRValue *emptyStruct =
           mirModule->getOrInsertConstant<ConstantNull>(sliceTy);
-
       MIRValue *insertedData =
           builder->insert(std::make_unique<InsertValueInst>(
               emptyStruct, arrayElemPtr, 0, "slice.ptr", expr.getLoc()));
-
-      // Use the dynamically calculated total length!
       MIRValue *insertedLen = builder->insert(std::make_unique<InsertValueInst>(
           insertedData, totalNumElementsVal, 1, "slice.len", expr.getLoc()));
-
       lastExprValue = insertedLen;
     } else {
-      // Standard Fixed-Array Pointer Logic: Arrays decay to pointers!
-      const hir::HIRType *decayedTy = resolveType(rawArrayTy);
-      // [FIX] CHAIN from fullArrayPtr, not rawAlloc!
-      lastExprValue = builder->createBitCast(fullArrayPtr, decayedTy,
-                                             "array.decay.ptr", expr.getLoc());
+      // [CRITICAL FIX 4] Return the pointer to the array exactly as it is, do
+      // not decay it here!
+      lastExprValue = fullArrayPtr;
     }
   }
 
@@ -5327,11 +5877,32 @@ private:
     if (!ty)
       ty = const_cast<hir::HIRModule *>(hirModule)->getStringType();
 
-    // Evaluate the escape sequences before inserting into MIR
+    // 1. Create the correct *i8 (pointer to 8-bit integer) type
+    auto *i8Ty = const_cast<hir::HIRModule *>(hirModule)->getIntType(8, true);
+    auto *i8PtrTy = const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+        i8Ty, hir::Ownership::None);
+
     std::string unescaped = unescapeString(expr.getValue());
 
-    lastExprValue =
-        mirModule->getOrInsertConstant<ConstantString>(unescaped, ty);
+    // 2. String literals must decay to *i8, not 'string', before being boxed
+    MIRValue *rawConst =
+        mirModule->getOrInsertConstant<ConstantString>(unescaped, i8PtrTy);
+
+    std::string allocName = "__moksha_cstr_to_string";
+    ensureBuiltinMIR(allocName);
+    MIRFunction *cstrToStrFunc = mirModule->getFunction(allocName);
+
+    if (!cstrToStrFunc) {
+      auto fn = std::make_unique<MIRFunction>(ty, allocName, Linkage::External);
+      // 3. The argument must be *i8, not the managed string type
+      fn->addArgument(std::make_unique<MIRArgument>(fn.get(), i8PtrTy, 0));
+      cstrToStrFunc = fn.get();
+      mirModule->addFunction(std::move(fn));
+    }
+
+    // Safely box the literal into an ARC object
+    lastExprValue = builder->createCall(cstrToStrFunc, {rawConst}, ty,
+                                        "str.lit.heap", false, expr.getLoc());
   }
 
   void visitNullLiteral(const hir::HIRNullLiteral &expr) override {
@@ -5378,7 +5949,7 @@ private:
       if (MIRFunction *func = mirModule->getFunction(name)) {
         lastExprValue = func;
       } else {
-        // [FIX] Unwrap pointer/reference types before attempting to cast
+        //  Unwrap pointer/reference types before attempting to cast
         const hir::HIRType *actualTy = expr.getType();
         if (actualTy) {
           if (auto *ptrTy =
@@ -5714,7 +6285,7 @@ private:
                 }
               }
               if (match) {
-                callee = func.get();
+                callee = func;
                 calleeName = fnName;
                 break;
               }
@@ -5728,7 +6299,7 @@ private:
           MIRValue *loadedThis =
               builder->createLoad(thisAddr, "this.val", expr.getLoc());
 
-          // [FIX] Cast callee to MIRFunction* so we can access
+          //  Cast callee to MIRFunction* so we can access
           // getRawArguments()
           auto *calleeFunc = static_cast<MIRFunction *>(callee);
 
@@ -5744,9 +6315,10 @@ private:
 
       // --- Functional Cast Interceptor ---
       const hir::HIRType *targetTy = nullptr;
+
+      // Signed Integers
       if (calleeName == "char")
-        targetTy =
-            const_cast<hir::HIRModule *>(hirModule)->getIntType(8, false);
+        targetTy = const_cast<hir::HIRModule *>(hirModule)->getIntType(8, true);
       else if (calleeName == "short")
         targetTy =
             const_cast<hir::HIRModule *>(hirModule)->getIntType(16, true);
@@ -5756,12 +6328,28 @@ private:
       else if (calleeName == "long")
         targetTy =
             const_cast<hir::HIRModule *>(hirModule)->getIntType(64, true);
-      else if (calleeName == "usize")
-        targetTy = const_cast<hir::HIRModule *>(hirModule)->getIntType(
-            64, false, true);
       else if (calleeName == "isize")
         targetTy =
             const_cast<hir::HIRModule *>(hirModule)->getIntType(64, true, true);
+
+      // Unsigned Integers (NEW)
+      else if (calleeName == "uchar" || calleeName == "unsigned_char")
+        targetTy =
+            const_cast<hir::HIRModule *>(hirModule)->getIntType(8, false);
+      else if (calleeName == "ushort" || calleeName == "unsigned_short")
+        targetTy =
+            const_cast<hir::HIRModule *>(hirModule)->getIntType(16, false);
+      else if (calleeName == "uint" || calleeName == "unsigned_int")
+        targetTy =
+            const_cast<hir::HIRModule *>(hirModule)->getIntType(32, false);
+      else if (calleeName == "ulong" || calleeName == "unsigned_long")
+        targetTy =
+            const_cast<hir::HIRModule *>(hirModule)->getIntType(64, false);
+      else if (calleeName == "usize")
+        targetTy = const_cast<hir::HIRModule *>(hirModule)->getIntType(
+            64, false, true);
+
+      // Floating Point & Decimals (NEW)
       else if (calleeName == "quarter")
         targetTy = const_cast<hir::HIRModule *>(hirModule)->getFloatType(8);
       else if (calleeName == "half")
@@ -5770,18 +6358,32 @@ private:
         targetTy = const_cast<hir::HIRModule *>(hirModule)->getFloatType(32);
       else if (calleeName == "double")
         targetTy = const_cast<hir::HIRModule *>(hirModule)->getFloatType(64);
+      else if (calleeName == "decimal")
+        targetTy = const_cast<hir::HIRModule *>(hirModule)->getDecimalType(
+            10, 2); // Safe default fallback
+
+      // Standard Primitives
       else if (calleeName == "bool")
         targetTy = const_cast<hir::HIRModule *>(hirModule)->getBoolType();
       else if (calleeName == "string")
         targetTy = const_cast<hir::HIRModule *>(hirModule)->getStringType();
 
+      // Execute the Cast
       if (targetTy) {
         if (!expr.getArgs().empty()) {
           visit(expr.getArgs()[0].get());
           MIRValue *valToCast = lastExprValue;
-          lastExprValue = builder->createBitCast(
-              valToCast, targetTy, "cast." + calleeName, expr.getLoc());
-          return; // Exit early: it's a cast, not a call
+
+          // Route functional casts safely
+          if (targetTy->getKind() == hir::TypeKind::String) {
+            lastExprValue = coerceToString(valToCast, expr.getLoc());
+          } else {
+            // For numeric functional casts like `uint(x)`, emit a safe AnyCast
+            lastExprValue = builder->insert(std::make_unique<CastInst>(
+                Opcode::AnyCast, valToCast, targetTy, "cast." + calleeName,
+                expr.getLoc()));
+          }
+          return; // Exit early: it's a cast, not a standard function call
         }
       }
 
@@ -5863,8 +6465,7 @@ private:
             monoQueue.push(task);
           }
 
-          calleeName = mangledName; // Swap callee name so the fallback
-                                    // generates the correct 'declare'
+          calleeName = mangledName;
         }
 
         ensureBuiltinMIR(calleeName); // Your custom helper
@@ -5909,8 +6510,9 @@ private:
             // Trap takes 0 arguments, do nothing.
           } else {
             unsigned idx = 0;
-            for (const auto &arg : expr.getArgs()) {
-              const hir::HIRType *argTy = arg->getType();
+            for (const auto &astArg : expr.getArgs()) {
+              const hir::HIRType *argTy = astArg->getType();
+
               if (!argTy || argTy->getKind() == hir::TypeKind::Void) {
                 auto *voidTy =
                     const_cast<hir::HIRModule *>(hirModule)->getVoidType();
@@ -5985,6 +6587,9 @@ private:
       // Dynamic Generic Sanitizer
       if (!className.empty() && className[0] == '*')
         className = className.substr(1);
+      // Strip Nullability from Class Name
+      if (!className.empty() && className.back() == '?')
+        className.pop_back();
       std::replace(className.begin(), className.end(), '<', '_');
       std::replace(className.begin(), className.end(), '>', '_');
       while (!className.empty() && className.back() == '_')
@@ -6006,6 +6611,9 @@ private:
       calleeName = mangleName(calleeName, argTys);
       const hir::HIRType *callRetTy = expr.getType();
       std::string retStr = callRetTy ? callRetTy->toString() : "void";
+      // Strip Nullability from Return Type
+      if (!retStr.empty() && retStr.back() == '?')
+        retStr.pop_back();
       std::replace(retStr.begin(), retStr.end(), '*', 'p');
       calleeName += "_ret_" + retStr;
 
@@ -6159,7 +6767,7 @@ private:
       if (!llvm::dyn_cast_or_null<hir::PointerType>(closurePtr->getType())) {
         auto *spill = builder->createAlloca(closurePtr->getType(),
                                             "closure.spill", expr.getLoc());
-        spill->setBorrowKind(mir::BorrowKind::View); // [FIX] Prevent artificial
+        spill->setBorrowKind(mir::BorrowKind::View); //  Prevent artificial
                                                      // mutable borrows!
         builder->insert(
             std::make_unique<StoreInst>(closurePtr, spill, expr.getLoc()));
@@ -6242,7 +6850,7 @@ private:
       }
       MIRValue *env = builder->createLoad(envGep, "env.load", expr.getLoc());
 
-      // [FIX] Evaluate and Coerce Arguments for the Closure Call!
+      //  Evaluate and Coerce Arguments for the Closure Call!
       std::vector<MIRValue *> callArgs;
       callArgs.push_back(env); // Environment is always argument 0
 
@@ -6277,7 +6885,7 @@ private:
             builder->createInvoke(fn, std::move(callArgs), normalDest,
                                   cleanupDest, callRetTy, "", expr.getLoc());
 
-        // [FIX] Cache the invoke result before cleanup evaluation!
+        //  Cache the invoke result before cleanup evaluation!
         MIRValue *invokeVal = lastExprValue;
 
         // Local unwind block for closures
@@ -6296,7 +6904,7 @@ private:
         builder->createBr(currentUnwindDest);
         builder->setInsertPoint(normalDest);
 
-        // [FIX] Restore the invoke result so outer expressions get the right
+        //  Restore the invoke result so outer expressions get the right
         // value!
         lastExprValue = invokeVal;
       } else {
@@ -6315,7 +6923,7 @@ private:
     const auto &params =
         mirF ? mirF->getRawArguments() : std::vector<MIRArgument *>();
 
-    // [FIX] Coerce the hidden 'this' or 'env' argument if necessary
+    //  Coerce the hidden 'this' or 'env' argument if necessary
     if (mirF && !args.empty() && !params.empty()) {
       const hir::HIRType *expectedTy = params[0]->getType();
       if (args[0]->getType() != expectedTy) {
@@ -6349,6 +6957,20 @@ private:
                                         expr.getLoc());
       }
       args.push_back(argVal);
+    }
+
+    if ((calleeName == "print" || calleeName == "println") &&
+        args.size() == hiddenArgOffset) {
+      auto *strTy = const_cast<hir::HIRModule *>(hirModule)->getStringType();
+      auto *anyTy = const_cast<hir::HIRModule *>(hirModule)->getAnyType();
+
+      MIRValue *emptyStr =
+          mirModule->getOrInsertConstant<ConstantString>("", strTy);
+
+      MIRValue *anyEmpty = builder->insert(std::make_unique<CastInst>(
+          Opcode::AnyCast, emptyStr, anyTy, "empty.any", expr.getLoc()));
+
+      args.push_back(anyEmpty);
     }
 
     // If we resolved a static HIR function, check if we are missing arguments
@@ -6411,7 +7033,7 @@ private:
                                             cleanupDest, callRetTy, callName,
                                             expr.getLoc());
 
-      // [FIX] Cache the invoke result!
+      //  Cache the invoke result!
       MIRValue *invokeVal = lastExprValue;
 
       // Local unwind block for standard calls
@@ -6429,13 +7051,20 @@ private:
       builder->createBr(currentUnwindDest);
       builder->setInsertPoint(normalDest);
 
-      // [FIX] Restore the invoke result!
+      //  Restore the invoke result!
       lastExprValue = invokeVal;
     } else {
       lastExprValue = builder->createCall(callee, std::move(args), callRetTy,
                                           callName, isVarArg, expr.getLoc());
     }
     applyBorrowKind(lastExprValue, callRetTy);
+    // Re-wrap Optional Return Types
+    if (lastExprValue && callRetTy && lastExprValue->getType() != callRetTy) {
+      if (lastExprValue->getType()->toString() != callRetTy->toString()) {
+        lastExprValue = builder->createBitCast(lastExprValue, callRetTy,
+                                               "opt.cast", expr.getLoc());
+      }
+    }
   }
 
   void visit(const hir::HIRStmt *stmt) {

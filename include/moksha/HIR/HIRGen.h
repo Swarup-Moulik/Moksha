@@ -129,6 +129,7 @@ public:
   void visitDecimalType(const DecimalType *type) override;
   void visitClosureType(const ClosureType *type) override;
   void visitWeakType(const WeakType *type) override;
+  void visitPromiseType(const PromiseType *type) override;
 
 private:
   ASTContext &ctx;

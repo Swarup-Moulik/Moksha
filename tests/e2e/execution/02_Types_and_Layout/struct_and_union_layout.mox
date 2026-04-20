@@ -1,0 +1,48 @@
+println("--- [E2E] struct_and_union_layout.mox ---")
+
+// --- 1. Standard Structs ---
+struct StandardHeader {
+    int version;       // 4 bytes
+    unsigned int id;   // 4 bytes
+}
+
+// --- 2. Requested Packed Metadata ---
+packed struct metadata {
+    unsigned int sensor_id; // 4 bytes
+    int timestamp;          // 4 bytes
+    unsigned char active;   // 1 byte
+}
+
+// --- 3. Unions (Memory Overlay) ---
+union ValueOverlay {
+    int int_val;
+    float float_val;
+}
+
+struct DevicePacket {
+    StandardHeader h;
+    metadata m;
+    ValueOverlay v;
+}
+
+void test_physical_layout() {
+    // 1. Initializing Standard Structs
+    mut StandardHeader header;
+    header.version = 1;
+    header.id = 100;
+    println(header.id); // Expected: 100
+
+    // 2. Accessing Packed Metadata members
+    mut metadata meta;
+    meta.sensor_id = 42;
+    meta.active = 1_u8;
+    println(meta.sensor_id); // Expected: 42
+
+    // 3. Union Field Overlay Logic
+    mut ValueOverlay data;
+    data.int_val = 0x3F800000; // Bit pattern for 1.0f
+    float check = data.float_val;
+    println(check); // Expected: 1.0
+}
+
+test_physical_layout();

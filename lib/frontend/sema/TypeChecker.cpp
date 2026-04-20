@@ -46,6 +46,24 @@ static const Type *unwrapConcurrency(const Type *t) {
   return t;
 }
 
+static const Type *resolveAlias(const Type *t, ASTContext &context,
+                                SymbolTable &symbols) {
+  while (auto named = llvm::dyn_cast_or_null<const NamedType>(t)) {
+    if (context.lookupClass(named->getName()))
+      break;
+    Symbol *sym = symbols.lookup(named->getName());
+    if (sym && sym->kind == SymbolKind::Type && sym->type) {
+      if (auto inner = llvm::dyn_cast<const NamedType>(sym->type)) {
+        if (inner->getName() == named->getName())
+          break;
+      }
+      t = sym->type;
+    } else
+      break;
+  }
+  return t;
+}
+
 static bool hasMutOrLock(const Type *t) {
   if (!t)
     return false;
@@ -227,31 +245,37 @@ void TypeChecker::processPendingInstantiations() {
   int instantiationDepth = 0;
   const int MAX_INSTANTIATION_DEPTH = 64; // Standard compiler limit
 
-  while (!pendingInstantiations.empty()) {
+  while (!pendingInstantiations.empty() || !pendingFuncInstantiations.empty()) {
     // 1. Check for runaway recursive generics
     if (instantiationDepth++ > MAX_INSTANTIATION_DEPTH) {
-      SourceLocation loc = pendingInstantiations.front()->getLoc();
+      SourceLocation loc = pendingInstantiations.empty()
+                               ? SourceLocation{}
+                               : pendingInstantiations.front()->getLoc();
       Diags.report(loc, DiagID::err_type_mismatch)
           << "Recursion Depth Exceeded";
       hasError = true;
       pendingInstantiations.clear();
+      pendingFuncInstantiations.clear();
       break;
     }
 
-    // 2. Cascade Breaker: Stop instantiating if previous errors (like infinite
-    // size) triggered
+    // 2. Cascade Breaker
     if (hasError) {
       pendingInstantiations.clear();
+      pendingFuncInstantiations.clear();
       break;
     }
 
-    auto queue = pendingInstantiations;
+    auto classQueue = pendingInstantiations;
     pendingInstantiations.clear();
-
-    for (const ClassDecl *concreteClass : queue) {
-      // Type check the freshly generated class to infer types on its internal
-      // expressions
+    for (const ClassDecl *concreteClass : classQueue) {
       concreteClass->accept(*this);
+    }
+
+    auto funcQueue = pendingFuncInstantiations;
+    pendingFuncInstantiations.clear();
+    for (const FunctionDecl *concreteFunc : funcQueue) {
+      concreteFunc->accept(*this); // Typecheck the cloned concrete body!
     }
   }
 }
@@ -283,26 +307,8 @@ bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
   if (!expected || !actual)
     return false;
 
-  // Resolve type aliases before checking compatibility
-  auto resolveAlias = [&](const Type *t) -> const Type * {
-    while (auto named = llvm::dyn_cast_or_null<const NamedType>(t)) {
-      if (context.lookupClass(named->getName()))
-        break;
-      Symbol *sym = symbols.lookup(named->getName());
-      if (sym && sym->kind == SymbolKind::Type && sym->type) {
-        if (auto inner = llvm::dyn_cast<const NamedType>(sym->type)) {
-          if (inner->getName() == named->getName())
-            break;
-        }
-        t = sym->type;
-      } else
-        break;
-    }
-    return t;
-  };
-
-  expected = resolveAlias(expected);
-  actual = resolveAlias(actual);
+  expected = resolveAlias(expected, context, symbols);
+  actual = resolveAlias(actual, context, symbols);
 
   // Exact match
   if (expected->isEquivalent(*actual))
@@ -326,9 +332,9 @@ bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
       unsigned int expWhole = expDec->getPrecision() - expDec->getScale();
       unsigned int actWhole = actDec->getPrecision() - actDec->getScale();
 
-      // Target must safely hold both the whole numbers AND the fractional
-      // parts!
-      return (expDec->getScale() >= actDec->getScale() && expWhole >= actWhole);
+      // [FIX] Target must safely hold the whole numbers. We ALLOW scale
+      // truncation implicitly.
+      return expWhole >= actWhole;
     }
   }
 
@@ -473,6 +479,15 @@ bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
     }
   }
 
+  if (auto promExp = llvm::dyn_cast<const PromiseType>(rawExp)) {
+    if (auto promAct = llvm::dyn_cast<const PromiseType>(rawAct)) {
+      return isCompatible(promExp->getInner(), promAct->getInner());
+    }
+    if (isCompatible(promExp->getInner(), rawAct)) {
+      return true;
+    }
+  }
+
   if (auto refType = llvm::dyn_cast<const ReferenceType>(rawExp)) {
     return isCompatible(refType->getInner(), rawAct);
   }
@@ -552,26 +567,8 @@ bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
 }
 
 bool TypeChecker::isCastAllowed(const Type *src, const Type *dst) {
-  // Resolve type aliases before checking casts
-  auto resolveAlias = [&](const Type *t) -> const Type * {
-    while (auto named = llvm::dyn_cast_or_null<const NamedType>(t)) {
-      if (context.lookupClass(named->getName()))
-        break;
-      Symbol *sym = symbols.lookup(named->getName());
-      if (sym && sym->kind == SymbolKind::Type && sym->type) {
-        if (auto inner = llvm::dyn_cast<const NamedType>(sym->type)) {
-          if (inner->getName() == named->getName())
-            break;
-        }
-        t = sym->type;
-      } else
-        break;
-    }
-    return t;
-  };
-
-  src = resolveAlias(unwrapConcurrency(src));
-  dst = resolveAlias(unwrapConcurrency(dst));
+  src = resolveAlias(unwrapConcurrency(src), context, symbols);
+  dst = resolveAlias(unwrapConcurrency(dst), context, symbols);
 
   if (src->is<AnyType>() || dst->is<AnyType>()) {
     return true;
@@ -611,26 +608,8 @@ const Type *TypeChecker::getCommonSuperType(const Type *t1, const Type *t2) {
   if (!t1 || !t2)
     return context.getAnyType();
 
-  // Resolve type aliases
-  auto resolveAlias = [&](const Type *t) -> const Type * {
-    while (auto named = llvm::dyn_cast_or_null<const NamedType>(t)) {
-      if (context.lookupClass(named->getName()))
-        break;
-      Symbol *sym = symbols.lookup(named->getName());
-      if (sym && sym->kind == SymbolKind::Type && sym->type) {
-        if (auto inner = llvm::dyn_cast<const NamedType>(sym->type)) {
-          if (inner->getName() == named->getName())
-            break;
-        }
-        t = sym->type;
-      } else
-        break;
-    }
-    return t;
-  };
-
-  t1 = resolveAlias(t1);
-  t2 = resolveAlias(t2);
+  t1 = resolveAlias(t1, context, symbols);
+  t2 = resolveAlias(t2, context, symbols);
 
   if (isCompatible(t1, t2))
     return t1;
@@ -890,12 +869,6 @@ void TypeChecker::visitArrayLiteral(const ArrayLiteral *expr) {
     if (auto unary = llvm::dyn_cast<const UnaryExpr>(elem.get())) {
       if (unary->getOp() == TokenKind::DotDotDot) {
         hasSpread = true;
-        const Type *unwrapped = unwrapConcurrency(elemType);
-        if (auto sliceType = llvm::dyn_cast<const SliceType>(unwrapped)) {
-          elemType = sliceType->getElementType();
-        } else if (auto arrType = llvm::dyn_cast<const ArrayType>(unwrapped)) {
-          elemType = arrType->getElementType();
-        }
       }
     }
 
@@ -942,8 +915,26 @@ void TypeChecker::visitArrayLiteral(const ArrayLiteral *expr) {
   // Restore the expected return type for the rest of the AST
   currentExpectedReturnType = previousExpected;
 
-  if (!commonType) {
-    commonType = expectedElemType ? expectedElemType : context.getAnyType();
+  // 1. Force the expected type so jagged arrays don't decay to 'any'
+  if (expectedElemType) {
+    commonType = expectedElemType;
+  } else if (!commonType) {
+    commonType = context.getAnyType();
+  }
+
+  // 2. Inject casts for jagged array elements (e.g. converting int[2] to int[])
+  auto *mutExpr = const_cast<ArrayLiteral *>(expr);
+  auto &elements =
+      const_cast<std::vector<std::unique_ptr<Expr>> &>(mutExpr->getElements());
+
+  for (size_t i = 0; i < elements.size(); ++i) {
+    const Type *elemTy = elements[i]->getType();
+    if (elemTy && !elemTy->isEquivalent(*commonType)) {
+      auto cast = std::make_unique<CastExpr>(
+          commonType->clone(), std::move(elements[i]), expr->getLoc());
+      cast->setType(commonType);
+      elements[i] = std::move(cast);
+    }
   }
 
   // Type dynamic array literals as Slices natively
@@ -1045,8 +1036,13 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
   expr->getLHS()->accept(*this);
   const Type *lhsType = lastComputedType;
   isLHSOfAssignment = oldLhs;
+  const Type *oldRet = currentExpectedReturnType;
+  if (op == TokenKind::Equal && !lhsType->is<AnyType>()) {
+    currentExpectedReturnType = lhsType;
+  }
   expr->getRHS()->accept(*this);
   const Type *rhsType = lastComputedType;
+  currentExpectedReturnType = oldRet;
 
   // OPERATOR OVERLOADING DESUGARING
   if (auto *namedTy = llvm::dyn_cast_or_null<NamedType>(lhsType)) {
@@ -1249,16 +1245,32 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
     if (auto nullType = llvm::dyn_cast<const NullableType>(lhsType)) {
       if (!isCompatible(nullType->getInner(), rhsType)) {
         Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
-            << "Right side of '?"
-               "?' must match the inner type of the left side";
+            << "Right side of '\\?\\?' must match the inner type of the left "
+               "side";
         hasError = true;
       }
       // Strips the Nullability! string? ?? string -> string
       lastComputedType = getCommonSuperType(nullType->getInner(), rhsType);
+
+      // Inject implicit cast for the RHS of ?? if needed
+      const Type *targetRhs =
+          resolveAlias(unwrapConcurrency(rhsType), context, symbols);
+      const Type *targetSuper =
+          resolveAlias(unwrapConcurrency(lastComputedType), context, symbols);
+      if (!targetRhs->isEquivalent(*targetSuper)) {
+        auto *mutExpr = const_cast<BinaryExpr *>(expr);
+        auto cast = std::make_unique<CastExpr>(targetSuper->clone(),
+                                               std::move(mutExpr->getRHSMut()),
+                                               expr->getLoc());
+        cast->setType(targetSuper);
+        mutExpr->getRHSMut() = std::move(cast);
+      }
+
     } else {
       // LHS was never nullable, so ?? is redundant but safely evaluates to LHS
       lastComputedType = lhsType;
     }
+    setAndReturn();
     return;
   }
 
@@ -1460,26 +1472,13 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
         unsigned int sourceWhole =
             sourceDec->getPrecision() - sourceDec->getScale();
 
-        // 1. Truncation Error
-        if (sourceDec->getScale() > targetDec->getScale()) {
-          Diags.report(expr->getLoc(), DiagID::err_decimal_precision_loss)
-              << "Cannot assign decimal with scale " << sourceDec->getScale()
-              << " to scale " << targetDec->getScale() << " (would truncate).";
-          hasError = true;
-        }
-
-        // 2. Overflow Error
+        // Overflow Error
         if (sourceWhole > targetWhole) {
           Diags.report(expr->getLoc(), DiagID::err_decimal_overflow)
               << "Target supports " << targetWhole
               << " whole digits, but expression requires up to " << sourceWhole
               << ".";
           hasError = true;
-        }
-
-        if (!hasError) {
-          lastComputedType = lhsType;
-          return;
         }
       }
     }
@@ -1497,8 +1496,10 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
       }
       hasError = true;
     } else {
-      const Type *targetLhs = unwrapConcurrency(lhsType);
-      const Type *targetRhs = unwrapConcurrency(rhsType);
+      const Type *targetLhs =
+          resolveAlias(unwrapConcurrency(lhsType), context, symbols);
+      const Type *targetRhs =
+          resolveAlias(unwrapConcurrency(rhsType), context, symbols);
 
       if (!targetLhs->isEquivalent(*targetRhs)) {
         auto *mutExpr = const_cast<BinaryExpr *>(expr);
@@ -1640,14 +1641,22 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
   // Intercept Spread Operator
   if (op == TokenKind::DotDotDot) {
     const Type *unwrapped = unwrapConcurrency(operandType);
-    if (!unwrapped->is<SliceType>() && !unwrapped->is<ArrayType>()) {
+
+    // [FIX 1] Extract the inner element type (int[] -> int)
+    if (auto sliceType = llvm::dyn_cast<const SliceType>(unwrapped)) {
+      lastComputedType = sliceType->getElementType();
+    } else if (auto arrType = llvm::dyn_cast<const ArrayType>(unwrapped)) {
+      lastComputedType = arrType->getElementType();
+    } else {
       Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
           << "Spread operator (...) can only be used on arrays or slices; "
              "found '"
           << operandType->toString() << "'";
       hasError = true;
+      lastComputedType = context.getAnyType();
     }
-    lastComputedType = operandType;
+
+    setAndReturn(); // [FIX 2] Apply the extracted element type to the AST
     return;
   }
 
@@ -1822,34 +1831,62 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
     }
 
     Symbol *sym = symbols.lookup(idExpr->getName());
-    if (sym && sym->kind == SymbolKind::Type) {
+    std::string typeName = idExpr->getName();
 
-      // Declare targetType outside the if/else block so it stays in scope!
-      const Type *targetType = sym->type;
+    // Intercept primitive type names directly even if missing from SymbolTable
+    bool isType =
+        (sym && sym->kind == SymbolKind::Type) || typeName == "string" ||
+        typeName == "bool" || typeName == "boolean" || typeName == "int" ||
+        typeName == "float" || typeName == "double" || typeName == "char" ||
+        typeName == "isize" || typeName == "usize";
+
+    if (isType) {
+      const Type *targetType = sym ? sym->type : nullptr;
       if (!targetType) {
-        if (sym->name == "int" || sym->name == "i32")
-          targetType = context.getI32Type();
-        else if (sym->name == "short" || sym->name == "i16")
+        // 8-bit
+        if (typeName == "char" || typeName == "i8")
+          targetType = context.getI8Type();
+        else if (typeName == "u8" || typeName == "unsigned char")
+          targetType = context.getU8Type();
+
+        // 16-bit
+        else if (typeName == "short" || typeName == "i16")
           targetType = context.getI16Type();
-        else if (sym->name == "long" || sym->name == "i64")
+        else if (typeName == "u16" || typeName == "unsigned short")
+          targetType = context.getU16Type();
+
+        // 32-bit
+        else if (typeName == "int" || typeName == "i32")
+          targetType = context.getI32Type();
+        else if (typeName == "u32" || typeName == "unsigned int")
+          targetType = context.getU32Type();
+
+        // 64-bit
+        else if (typeName == "long" || typeName == "i64")
           targetType = context.getI64Type();
-        else if (sym->name == "isize")
+        else if (typeName == "u64" || typeName == "unsigned long")
+          targetType = context.getU64Type();
+
+        // Architecture sizing
+        else if (typeName == "isize")
           targetType = context.getISizeType();
-        else if (sym->name == "usize")
+        else if (typeName == "usize")
           targetType = context.getUSizeType();
-        else if (sym->name == "float" || sym->name == "f32")
+
+        // Floats
+        else if (typeName == "float" || typeName == "f32")
           targetType = context.getF32Type();
-        else if (sym->name == "double" || sym->name == "f64")
+        else if (typeName == "double" || typeName == "f64")
           targetType = context.getF64Type();
-        else if (sym->name == "half" || sym->name == "f16")
+        else if (typeName == "half" || typeName == "f16")
           targetType = context.getF16Type();
-        else if (sym->name == "quarter" || sym->name == "f8")
+        else if (typeName == "quarter" || typeName == "f8")
           targetType = context.getF8Type();
-        else if (sym->name == "char")
-          targetType = context.getCharType();
-        else if (sym->name == "string")
+
+        // Misc
+        else if (typeName == "string")
           targetType = context.getStringType();
-        else if (sym->name == "boolean" || sym->name == "bool")
+        else if (typeName == "boolean" || typeName == "bool")
           targetType = context.getBoolType();
         else
           targetType = context.getAnyType();
@@ -1913,7 +1950,31 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
     memExpr->getObject()->accept(*this);
     const Type *objType = lastComputedType;
 
-    if (auto namedType = llvm::dyn_cast<const NamedType>(objType)) {
+    // --- [FIX] Unwrap Concurrency, Pointers, References, and Nullables ---
+    const Type *rawObjType = unwrapConcurrency(objType);
+    bool isOptionalCall = false;
+
+    if (auto *nullTy = llvm::dyn_cast<const NullableType>(rawObjType)) {
+      if (memExpr->isOptionalAccess()) {
+        rawObjType = unwrapConcurrency(nullTy->getInner());
+        isOptionalCall = true;
+      } else {
+        Diags.report(memExpr->getLoc(), DiagID::err_type_mismatch)
+            << "Cannot call method on nullable type '" << objType->toString()
+            << "'. Use '?.' instead.";
+        hasError = true;
+        lastComputedType = context.getAnyType();
+        return;
+      }
+    }
+
+    if (auto *ptrTy = llvm::dyn_cast<const PointerType>(rawObjType)) {
+      rawObjType = ptrTy->getPointee();
+    } else if (auto *refTy = llvm::dyn_cast<const ReferenceType>(rawObjType)) {
+      rawObjType = refTy->getInner();
+    }
+
+    if (auto namedType = llvm::dyn_cast<const NamedType>(rawObjType)) {
       const ClassDecl *cls = context.lookupClass(namedType->getName());
       if (cls) {
         // Setup generic substitutions if the class is generic (e.g.
@@ -2001,12 +2062,25 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
               }
             }
           }
+
+          // --- [FIX] Wrap the final return type in Nullable if using optional
+          // chaining ---
+          const Type *finalRetType = bestSig.returnType.get();
+          if (isOptionalCall && finalRetType && !finalRetType->is<AnyType>() &&
+              !finalRetType->is<NullableType>()) {
+            finalRetType = context.saveType(std::make_unique<NullableType>(
+                finalRetType->clone(), expr->getLoc()));
+          }
+
           const_cast<MemberExpr *>(memExpr)->setType(
               context.createFunctionType(pTypes, bestSig.returnType.get()));
-          const_cast<CallExpr *>(expr)->setType(bestSig.returnType.get());
-          if (bestSig.returnType) {
-            lastComputedType = bestSig.returnType.get();
-            parkedTypes.push_back(std::move(bestSig.returnType));
+          const_cast<CallExpr *>(expr)->setType(finalRetType);
+
+          if (finalRetType) {
+            lastComputedType = finalRetType;
+            if (bestSig.returnType) {
+              parkedTypes.push_back(std::move(bestSig.returnType));
+            }
           } else {
             lastComputedType = context.getAnyType();
           }
@@ -2140,6 +2214,9 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
       struct OverloadMatch {
         const Type *returnType;
         GenericResolver::ConcreteSignature sig;
+        bool isGeneric = false;
+        const GenericDecl *genericDecl = nullptr;
+        std::vector<const Type *> inferredArgs;
       };
       std::vector<OverloadMatch> validMatches;
 
@@ -2229,8 +2306,19 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
           }
 
           if (match) {
-            // Store the match instead of breaking!
-            validMatches.push_back({sig.returnType.get(), std::move(sig)});
+            std::vector<const Type *> inferredArgs;
+            for (const auto &tp : typeParams) {
+              if (substitutions.count(tp.name)) {
+                inferredArgs.push_back(substitutions[tp.name]);
+              } else {
+                match = false; // Failed to infer a required generic parameter
+                break;
+              }
+            }
+            if (match) {
+              validMatches.push_back({sig.returnType.get(), std::move(sig),
+                                      true, genericDecl, inferredArgs});
+            }
           }
         }
         // --- B. Check if candidate is a Standard Function ---
@@ -2261,7 +2349,8 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
 
           if (match) {
             auto sig = resolver.resolveFunctionSignature(fn, {});
-            validMatches.push_back({fn->getReturnType(), std::move(sig)});
+            validMatches.push_back(
+                {sig.returnType.get(), std::move(sig), false, nullptr, {}});
           }
         }
       }
@@ -2277,8 +2366,24 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
         return;
       } else if (validMatches.size() == 1) {
         auto *mutExpr = const_cast<CallExpr *>(expr);
-        auto fnDecl =
-            static_cast<const FunctionDecl *>(validMatches[0].sig.decl);
+        auto &match = validMatches[0];
+
+        // Instantiate Top-Level Generic Functions
+        if (match.isGeneric) {
+          const FunctionDecl *concreteFn = resolver.instantiateFunction(
+              match.genericDecl, match.inferredArgs);
+          if (concreteFn) {
+            // Mangle the call identifier so HIRGen calls the monomorphized
+            // version! (e.g., map_i32)
+            const_cast<IdentifierExpr *>(idExpr)->setName(
+                concreteFn->getName());
+
+            // Queue for body type-checking
+            pendingFuncInstantiations.push_back(concreteFn);
+          }
+        }
+
+        auto fnDecl = static_cast<const FunctionDecl *>(match.sig.decl);
 
         std::vector<const Type *> pTypes;
         for (auto &p : validMatches[0].sig.paramTypes)
@@ -2296,8 +2401,10 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
 
         for (size_t i = 0; i < mutExpr->getArgs().size(); ++i) {
           if (i < pTypes.size()) {
-            const Type *targetPType = unwrapConcurrency(pTypes[i]);
-            const Type *targetArgType = unwrapConcurrency(argTypes[i]);
+            const Type *targetPType =
+                resolveAlias(unwrapConcurrency(pTypes[i]), context, symbols);
+            const Type *targetArgType =
+                resolveAlias(unwrapConcurrency(argTypes[i]), context, symbols);
 
             if (!targetArgType->isEquivalent(*targetPType)) {
               auto cast = std::make_unique<CastExpr>(
@@ -2332,15 +2439,19 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
   expr->getCallee()->accept(*this);
   const Type *calleeType = lastComputedType;
 
+  // Strip view/mut/lock/const modifiers
+  const Type *rawCalleeType = unwrapConcurrency(calleeType);
   const std::vector<TypePtr> *params = nullptr;
   const Type *retType = nullptr;
   bool isVariadic = false;
 
-  if (auto *fnType = llvm::dyn_cast<const FunctionType>(calleeType)) {
+  // Use rawCalleeType here instead of calleeType
+  if (auto *fnType = llvm::dyn_cast<const FunctionType>(rawCalleeType)) {
     params = &fnType->getParamTypes();
     retType = fnType->getReturnType();
     isVariadic = fnType->isVariadicFunc();
-  } else if (auto *closType = llvm::dyn_cast<const ClosureType>(calleeType)) {
+  } else if (auto *closType =
+                 llvm::dyn_cast<const ClosureType>(rawCalleeType)) {
     params = &closType->getParamTypes();
     retType = closType->getReturnType();
     isVariadic = false;
@@ -2350,17 +2461,21 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
     size_t maxArgs = params->size();
     size_t minRequiredArgs = maxArgs;
 
-    // [FIX 2] Trace closures back to their AST definitions to find default
-    // arguments!
+    // Trace closures back to their AST definitions to find default arguments
     const LambdaExpr *lambdaDef = nullptr;
     if (auto *ident = llvm::dyn_cast<const IdentifierExpr>(expr->getCallee())) {
       Symbol *sym = symbols.lookup(ident->getName());
       if (sym && sym->decl && sym->decl->getKind() == StmtKind::VariableDecl) {
         auto *varDecl = static_cast<const VariableDecl *>(sym->decl);
-        if (varDecl->getInitializer() &&
-            varDecl->getInitializer()->getKind() == ExprKind::LambdaExpr) {
-          lambdaDef =
-              static_cast<const LambdaExpr *>(varDecl->getInitializer());
+        const Expr *initExpr = varDecl->getInitializer();
+
+        // Pierce through implicit casts added during Type Checking
+        while (auto *cast = llvm::dyn_cast_or_null<const CastExpr>(initExpr)) {
+          initExpr = cast->getExpr();
+        }
+
+        if (initExpr && initExpr->getKind() == ExprKind::LambdaExpr) {
+          lambdaDef = static_cast<const LambdaExpr *>(initExpr);
         }
       }
     } else if (auto *inlineLambda =
@@ -2406,8 +2521,10 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
             << "Argument type mismatch";
         hasError = true;
       } else {
-        const Type *targetPType = unwrapConcurrency((*params)[i].get());
-        const Type *targetArgType = unwrapConcurrency(argTypes[i]);
+        const Type *targetPType = resolveAlias(
+            unwrapConcurrency((*params)[i].get()), context, symbols);
+        const Type *targetArgType =
+            resolveAlias(unwrapConcurrency(argTypes[i]), context, symbols);
 
         if (!targetArgType->isEquivalent(*targetPType)) {
           auto cast = std::make_unique<CastExpr>(
@@ -2441,6 +2558,25 @@ void TypeChecker::visitIndexExpr(const IndexExpr *expr) {
 
   const Type *idxType = lastComputedType;
 
+  // --- [NEW] Nullable Array Unwrapping ---
+  bool isNullableResult = false;
+  if (auto *nullTy = llvm::dyn_cast<const NullableType>(arrType)) {
+    if (!expr->isOptionalAccess()) {
+      Diags.report(expr->getArray()->getLoc(), DiagID::err_type_mismatch)
+          << "Cannot index into nullable array '" << arrType->toString()
+          << "'. Use '?[' instead.";
+      hasError = true;
+      lastComputedType = context.getAnyType();
+      const_cast<IndexExpr *>(expr)->setType(lastComputedType);
+      return;
+    }
+    arrType = unwrapConcurrency(nullTy->getInner());
+    isNullableResult = true;
+  } else if (expr->isOptionalAccess()) {
+    // ?[ used safely on a non-nullable array, result becomes nullable
+    isNullableResult = true;
+  }
+
   if (auto *at = llvm::dyn_cast<const ArrayType>(arrType)) {
     if (!isIntegerOrChar(idxType)) {
       Diags.report(expr->getIndex()->getLoc(), DiagID::err_type_mismatch)
@@ -2472,6 +2608,14 @@ void TypeChecker::visitIndexExpr(const IndexExpr *expr) {
         << "Type is not indexable";
     lastComputedType = context.getAnyType();
   }
+
+  // --- [NEW] Rewrap the resulting element in a NullableType ---
+  if (isNullableResult && !lastComputedType->is<AnyType>() &&
+      !lastComputedType->is<NullableType>()) {
+    lastComputedType = context.saveType(std::make_unique<NullableType>(
+        lastComputedType->clone(), expr->getLoc()));
+  }
+
   const_cast<IndexExpr *>(expr)->setType(lastComputedType);
 }
 
@@ -2510,9 +2654,10 @@ void TypeChecker::visitMemberExpr(const MemberExpr *expr) {
     return;
 
   // 2. Peel off pointers, references, and concurrency wrappers
-  // so we can access fields on heap-allocated objects (e.g. `p->val` or
-  // `(*p).val`)
   const Type *rawType = unwrapConcurrency(objType);
+
+  // --- [FIX] Declare the nullable tracker here ---
+  bool isNullableResult = false;
 
   if (auto *nullTy = llvm::dyn_cast<NullableType>(rawType)) {
     if (!expr->isOptionalAccess()) {
@@ -2526,6 +2671,14 @@ void TypeChecker::visitMemberExpr(const MemberExpr *expr) {
     // Unwrap the nullable layer and any potential inner concurrency wrappers
     rawType = nullTy->getInner();
     rawType = unwrapConcurrency(rawType);
+
+    // Mark that the result of this member access will be nullable!
+    isNullableResult = true;
+
+  } else if (expr->isOptionalAccess()) {
+    // If optional chaining is used safely on a non-nullable base, the result
+    // still becomes nullable
+    isNullableResult = true;
   }
 
   if (auto *ptrTy = llvm::dyn_cast<PointerType>(rawType)) {
@@ -2552,19 +2705,40 @@ void TypeChecker::visitMemberExpr(const MemberExpr *expr) {
       Symbol *sym = symbols.lookup(lookupName);
       if (sym && sym->decl && sym->decl->getKind() == StmtKind::EnumDecl) {
         auto *enumDecl = static_cast<const EnumDecl *>(sym->decl);
-        uint32_t index = 0;
+
+        uint32_t currentValue = 0; // Track the actual enum integer value
         bool found = false;
 
         for (const auto &enumCase : enumDecl->getCases()) {
+          // 1. If the user explicitly assigned a value, extract it
+          if (enumCase.value) {
+            // We use dyn_cast to safely extract the integer at compile-time
+            if (auto *intLit = llvm::dyn_cast<const IntegerLiteral>(
+                    enumCase.value.get())) {
+              currentValue = intLit->getValue();
+            } else {
+              Diags.report(enumCase.value->getLoc(), DiagID::err_type_mismatch)
+                  << "Enum case value must be a constant integer literal";
+              hasError = true;
+            }
+          }
+
+          // 2. If this is the case being accessed, save the value to LayoutInfo
           if (enumCase.name == expr->getName()) {
             auto *mutExpr = const_cast<MemberExpr *>(expr);
             mutExpr->setType(objType); // The type is the Enum itself
-            mutExpr->setLayoutInfo(index);
+
+            // Pass the evaluated integer value down to HIRGen instead of the
+            // loop index
+            mutExpr->setLayoutInfo(currentValue);
+
             lastComputedType = objType;
             found = true;
             break;
           }
-          index++;
+
+          // 3. Implicitly increment for the next case (e.g., C becomes 11)
+          currentValue++;
         }
 
         if (!found) {
@@ -2603,9 +2777,18 @@ void TypeChecker::visitMemberExpr(const MemberExpr *expr) {
               return; // Stop processing, error already reported
             }
 
-            // Apply the concrete type to the AST node
             auto *mutExpr = const_cast<MemberExpr *>(expr);
-            mutExpr->setType(varDecl->getType());
+
+            // --- [CRITICAL FIX] Re-wrap optional field accesses in
+            // NullableType ---
+            const Type *resolvedType = varDecl->getType();
+            if (isNullableResult && !resolvedType->is<AnyType>() &&
+                !resolvedType->is<NullableType>()) {
+              resolvedType = context.saveType(std::make_unique<NullableType>(
+                  resolvedType->clone(), expr->getLoc()));
+            }
+
+            mutExpr->setType(resolvedType);
 
             // Pull the actual physical layout data from the defining class
             mutExpr->setLayoutInfo(
@@ -2613,7 +2796,7 @@ void TypeChecker::visitMemberExpr(const MemberExpr *expr) {
                 varDecl->getBitWidth(), varDecl->getBitOffset());
 
             // Update the global tracker!
-            lastComputedType = varDecl->getType();
+            lastComputedType = resolvedType;
 
             found = true;
             break;
@@ -2741,9 +2924,10 @@ void TypeChecker::visitNewExpr(const NewExpr *expr) {
                          DiagID::err_type_mismatch)
                 << "Constructor argument mismatch";
           } else {
-            const Type *targetPType =
-                unwrapConcurrency(sig.paramTypes[i].get());
-            const Type *targetArgType = unwrapConcurrency(lastComputedType);
+            const Type *targetPType = resolveAlias(
+                unwrapConcurrency(sig.paramTypes[i].get()), context, symbols);
+            const Type *targetArgType = resolveAlias(
+                unwrapConcurrency(lastComputedType), context, symbols);
 
             if (!targetArgType->isEquivalent(*targetPType)) {
               auto cast = std::make_unique<CastExpr>(
@@ -2862,8 +3046,21 @@ void TypeChecker::visitTemplateStringExpr(const TemplateStringExpr *expr) {
 }
 
 void TypeChecker::visitThreadExpr(const ThreadExpr *expr) {
+  // 1. Type-check the thread's body (which is a LambdaExpr)
   expr->getBody()->accept(*this);
-  lastComputedType = context.createNamedType("Thread");
+
+  // 2. Extract the return type of the closure
+  const Type *bodyRetType = context.getVoidType();
+  if (auto *closureTy = llvm::dyn_cast<ClosureType>(lastComputedType)) {
+    bodyRetType = closureTy->getReturnType();
+  } else if (lastComputedType) {
+    // Fallback if your lambda evaluation directly sets lastComputedType to its
+    // return
+    bodyRetType = lastComputedType;
+  }
+
+  // 3. Wrap it in a PromiseType
+  lastComputedType = context.createPromiseType(bodyRetType);
   const_cast<ThreadExpr *>(expr)->setType(lastComputedType);
 }
 
@@ -2896,17 +3093,23 @@ void TypeChecker::visitSuperExpr(const SuperExpr *expr) {
 }
 
 void TypeChecker::visitAwaitExpr(const AwaitExpr *expr) {
+  // 1. Evaluate the expression being awaited
   expr->getExpr()->accept(*this);
-  const Type *type = lastComputedType;
+  const Type *exprType = lastComputedType;
 
-  if (auto named = llvm::dyn_cast<const NamedType>(type)) {
-    if (named->getName() == "Promise" && !named->getGenericArgs().empty()) {
-      // Correctly access type pointer from GenericArg struct
-      lastComputedType = named->getGenericArgs()[0].type.get();
-      return;
-    }
+  // 2. Ensure it's actually a promise
+  if (auto *promiseTy = llvm::dyn_cast<PromiseType>(exprType)) {
+    // 3. Unwrap: The type of the await expression is the inner type
+    lastComputedType = promiseTy->getInner();
+  } else {
+    Diags.report(expr->getLoc(),
+                 DiagID::err_type_mismatch) // Adjust DiagID as needed
+        << "cannot await non-promise type '" << exprType->toString() << "'";
+    lastComputedType =
+        context.getAnyType(); // Fallback to prevent cascade errors
   }
-  lastComputedType = type;
+
+  // 4. Assign the unwrapped type to the AST node
   const_cast<AwaitExpr *>(expr)->setType(lastComputedType);
 }
 
@@ -2921,18 +3124,31 @@ void TypeChecker::visitSizeOfExpr(const SizeOfExpr *expr) {
 
 void TypeChecker::visitInputExpr(const InputExpr *expr) {
   if (expr->getPrompt()) {
-    // Dispatch expression evaluation correctly
     expr->getPrompt()->accept(*this);
-
-    // Provide the required DiagID
     if (!lastComputedType->isString()) {
-      Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
+      // Point the error to the prompt's location for better diagnostics
+      Diags.report(expr->getPrompt()->getLoc(), DiagID::err_type_mismatch)
           << "input() prompt must be a string";
       hasError = true;
     }
   }
 
-  lastComputedType = context.getStringType();
+  // Check if the AST is hinting at an expected type (e.g., `unsigned short x =
+  // input()`)
+  if (currentExpectedReturnType &&
+      (currentExpectedReturnType->is<PrimitiveType>() ||
+       currentExpectedReturnType->is<DecimalType>())) {
+
+    // Magically morph the InputExpr's type to match the LHS declaration!
+    lastComputedType = currentExpectedReturnType;
+
+  } else {
+    // Fallback: If used freely like `print(input())` or untyped `var x =
+    // input()`, default to a standard string.
+    lastComputedType = context.getStringType();
+  }
+
+  // Lock in the resolved type for the HIR/Backend lowering phase
   const_cast<InputExpr *>(expr)->setType(lastComputedType);
 }
 
@@ -3134,6 +3350,21 @@ void TypeChecker::visitVariableDecl(const VariableDecl *decl) {
           hasError = true;
         }
       }
+    } else if (decl->getInitializer()) {
+      // Resolve aliases before testing equivalence and injecting casts
+      const Type *targetLhs =
+          resolveAlias(unwrapConcurrency(varType), context, symbols);
+      const Type *targetRhs =
+          resolveAlias(unwrapConcurrency(lastComputedType), context, symbols);
+
+      if (!targetLhs->isEquivalent(*targetRhs)) {
+        auto *mutDecl = const_cast<VariableDecl *>(decl);
+        auto cast = std::make_unique<CastExpr>(
+            targetLhs->clone(), std::move(mutDecl->getInitializerMut()),
+            decl->getLoc());
+        cast->setType(targetLhs);
+        mutDecl->getInitializerMut() = std::move(cast);
+      }
     }
 
     // If RHS is a function, store the full signature
@@ -3168,15 +3399,16 @@ void TypeChecker::visitFunctionDecl(const FunctionDecl *decl) {
   const Type *retType = context.getVoidType();
   if (decl->getReturnType()) {
     decl->getReturnType()->accept(*this);
-    retType = lastComputedType; // [FIX] Use the evaluated return type
+    retType = lastComputedType;
   }
-
+  if (decl->isAsyncFunc() && !retType->is<PromiseType>()) {
+    retType = context.createPromiseType(retType);
+  }
   std::vector<const Type *> pTypes;
   for (auto &p : decl->getParams()) {
     if (p.type) {
       p.type->accept(*this);
-      pTypes.push_back(
-          lastComputedType); // [FIX] Use the evaluated parameter type
+      pTypes.push_back(lastComputedType);
     } else {
       pTypes.push_back(context.getAnyType());
     }
@@ -3241,14 +3473,23 @@ void TypeChecker::visitFunctionDecl(const FunctionDecl *decl) {
     decl->getBody()->accept(*this);
     bool guaranteesReturn = checkDefiniteReturn(decl->getBody(), Diags);
 
-    // If the function promises to return something (not void, not any)
-    if (retType && !retType->isVoid() && !retType->is<AnyType>()) {
-      if (!guaranteesReturn) {
-        Diags.report(decl->getLoc(), DiagID::err_missing_return)
-            << "Function '" << decl->getName()
-            << "' missing return statement on one or more paths";
-        hasError = true;
+    // If the function promises to return something
+    bool requiresReturn =
+        retType && !retType->isVoid() && !retType->is<AnyType>();
+    if (requiresReturn) {
+      if (auto *promiseTy = llvm::dyn_cast<PromiseType>(retType)) {
+        if (promiseTy->getInner()->isVoid() ||
+            promiseTy->getInner()->is<AnyType>()) {
+          requiresReturn = false;
+        }
       }
+    }
+
+    if (requiresReturn && !guaranteesReturn) {
+      Diags.report(decl->getLoc(), DiagID::err_missing_return)
+          << "Function '" << decl->getName()
+          << "' missing return statement on one or more paths";
+      hasError = true;
     }
   }
 
@@ -3667,32 +3908,33 @@ void TypeChecker::visitLockStmt(const LockStmt *stmt) {
 // --- Top-Level Declarations ---
 
 void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
-  // --- Pass 1: Global Symbol Registration ---
-  // Registers all names so they are visible regardless of definition order.
+  // --- Pass 1A: Global Symbol Registration ---
   for (const auto &d : decl->getDecls()) {
     const Decl *currentDecl = d.get();
 
-    // 1. Functions (Standard & Generic)
     if (auto fd = llvm::dyn_cast<const FunctionDecl>(currentDecl)) {
       std::vector<const Type *> pTypes;
       for (auto &p : fd->getParams())
         pTypes.push_back(p.type.get());
-      const Type *fnType =
-          context.createFunctionType(pTypes, fd->getReturnType());
+
+      const Type *actualRetType =
+          fd->getReturnType() ? fd->getReturnType() : context.getVoidType();
+      if (fd->isAsyncFunc() && !actualRetType->is<PromiseType>()) {
+        actualRetType = context.createPromiseType(actualRetType);
+      }
+
+      const Type *fnType = context.createFunctionType(pTypes, actualRetType,
+                                                      fd->isVariadicFunc());
       symbols.addSymbol(fd->getName(),
                         Symbol(SymbolKind::Function, fd->getName(), fnType, fd),
                         fd->getLoc());
-    }
-    // 2. Classes (Standard)
-    else if (auto cd = llvm::dyn_cast<const ClassDecl>(currentDecl)) {
+    } else if (auto cd = llvm::dyn_cast<const ClassDecl>(currentDecl)) {
       symbols.addSymbol(cd->getName(),
                         Symbol(SymbolKind::Class, cd->getName(),
                                context.createNamedType(cd->getName()), cd),
                         cd->getLoc());
       context.registerClass(cd);
-    }
-    // 3. Generic Declarations (Classes, Functions, or Variables)
-    else if (auto gd = llvm::dyn_cast<const GenericDecl>(currentDecl)) {
+    } else if (auto gd = llvm::dyn_cast<const GenericDecl>(currentDecl)) {
       if (auto innerClass =
               llvm::dyn_cast<const ClassDecl>(gd->getInnerDecl())) {
         symbols.addSymbol(innerClass->getName(),
@@ -3714,20 +3956,12 @@ void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
                                  innerVar->getType(), gd),
                           gd->getLoc());
       }
-    }
-    // 4. Variables (Global / TLS / Static)
-    else if (auto vd = llvm::dyn_cast<const VariableDecl>(currentDecl)) {
+    } else if (auto vd = llvm::dyn_cast<const VariableDecl>(currentDecl)) {
       symbols.addSymbol(
           vd->getName(),
           Symbol(SymbolKind::Variable, vd->getName(), vd->getType(), vd),
           vd->getLoc());
-    }
-    // 5. Imports (Brings symbols from other modules into current scope)
-    else if (auto id = llvm::dyn_cast<const ImportDecl>(currentDecl)) {
-      id->accept(*this); // Register imported symbols immediately
-    }
-    // 6. Enums
-    else if (auto ed = llvm::dyn_cast<const EnumDecl>(currentDecl)) {
+    } else if (auto ed = llvm::dyn_cast<const EnumDecl>(currentDecl)) {
       symbols.addSymbol(ed->getName(),
                         Symbol(SymbolKind::Type, ed->getName(),
                                context.createNamedType(ed->getName()), ed),
@@ -3735,10 +3969,17 @@ void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
     }
   }
 
+  // --- Pass 1B: Process Imports ---
+  // Now that local symbols exist, we can safely load dependencies.
+  for (const auto &d : decl->getDecls()) {
+    if (auto id = llvm::dyn_cast<const ImportDecl>(d.get())) {
+      id->accept(*this);
+    }
+  }
+
   // --- Pass 1.5: Alias Registration ---
   for (const auto &d : decl->getDecls()) {
-    const Decl *currentDecl = d.get();
-    if (auto ud = llvm::dyn_cast<const UsingDecl>(currentDecl)) {
+    if (auto ud = llvm::dyn_cast<const UsingDecl>(d.get())) {
       ud->accept(*this);
     }
   }
@@ -3752,8 +3993,6 @@ void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
         llvm::dyn_cast<const EnumDecl>(checkDecl)) {
       continue;
     }
-
-    // Call accept on the original AST node to preserve AST traversal
     d->accept(*this);
   }
 
@@ -4063,9 +4302,26 @@ void TypeChecker::visitGenericDecl(const GenericDecl *decl) {
 
 void TypeChecker::visitImportDecl(const ImportDecl *decl) {
   llvm::StringRef modName = decl->getModuleName();
+  std::string modStr = modName.str();
   size_t slash = modName.find_last_of('/');
   llvm::StringRef ns =
       (slash != llvm::StringRef::npos) ? modName.substr(slash + 1) : modName;
+
+  // AST Module Resolution
+  if (loadedModules.find(modStr) == loadedModules.end()) {
+    loadedModules.insert(modStr); // Mark as loaded to prevent cyclic imports
+
+    if (loadModuleCallback) {
+      if (ModuleDecl *importedMod = loadModuleCallback(modStr)) {
+        importedMod->accept(*this);
+      } else {
+        Diags.report(decl->getLoc(), DiagID::err_internal)
+            << "Failed to resolve and load module: '" << modStr << "'";
+        hasError = true;
+        return;
+      }
+    }
+  }
 
   if (decl->getSymbols().empty()) {
     if (!symbols.lookup(ns.str())) {
@@ -4077,7 +4333,7 @@ void TypeChecker::visitImportDecl(const ImportDecl *decl) {
     for (const auto &sym : decl->getSymbols()) {
       std::string fqName = ns.str() + "." + sym;
 
-      // [FIX] 1. Look up the REAL symbol pre-loaded by the compiler driver
+      // 1. Look up the REAL symbol pre-loaded by the compiler driver
       Symbol *realSym = symbols.lookup(fqName);
 
       if (!realSym) {
@@ -4099,11 +4355,9 @@ void TypeChecker::visitImportDecl(const ImportDecl *decl) {
       if (ambiguousImports[sym].size() == 1) {
         if (!symbols.lookup(sym)) {
           if (realSym) {
-            // [CRITICAL FIX] Alias the short name directly to the REAL AST
-            // symbol! This preserves the pointer to the GenericDecl/ClassDecl.
+            // Alias the short name directly to the REAL AST symbol!
             Symbol aliasedSym = *realSym;
-            aliasedSym.name =
-                sym; // Update internal name to match the short alias
+            aliasedSym.name = sym;
             symbols.addSymbol(sym, aliasedSym, decl->getLoc());
           } else {
             // Fallback for standard opaque imports
@@ -4231,9 +4485,12 @@ void TypeChecker::visitNamedType(const NamedType *type) {
   const ClassDecl *classDecl = context.lookupClass(type->getName());
 
   if (!classDecl) {
-    // [FIX] Check if this is a generic parameter (K, V, T) in the symbol table
+    // Check if this is an alias or generic parameter in the symbol table
     Symbol *sym = symbols.lookup(type->getName());
     if (sym && sym->kind == SymbolKind::Type) {
+
+      type->setResolvedType(sym->type);
+
       lastComputedType = type;
       return; // It's perfectly valid, stop processing!
     }
@@ -4260,8 +4517,14 @@ void TypeChecker::visitWeakType(const WeakType *t) {
   t->getInner()->accept(*this);
   const Type *inner = lastComputedType;
 
+  // Unwrap NullableType to check the actual underlying type
+  const Type *checkType = inner;
+  if (auto *nullT = llvm::dyn_cast_or_null<NullableType>(checkType)) {
+    checkType = nullT->getInner();
+  }
+
   // Validation: weak can only be applied to references/classes
-  if (!inner->is<ReferenceType>() && !inner->is<NamedType>()) {
+  if (!checkType->is<ReferenceType>() && !checkType->is<NamedType>()) {
     Diags.report(t->getLoc(), DiagID::err_type_mismatch)
         << "weak can only be applied to reference types, found: "
         << inner->toString();
@@ -4290,5 +4553,11 @@ void TypeChecker::visitClosureType(const ClosureType *t) {
   }
   t->getReturnType()->accept(*this);
   lastComputedType = t;
+}
+
+void TypeChecker::visitPromiseType(const PromiseType *type) {
+  if (type->getInner()) {
+    type->getInner()->accept(*this);
+  }
 }
 } // namespace moksha

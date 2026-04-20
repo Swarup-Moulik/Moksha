@@ -7,10 +7,12 @@ target_link_libraries(moksha-opt
     PRIVATE
     mokshaSettings
     MokshaMLIR
+    MLIROptLib
+    MLIRLLVMDialect
+    MLIRFuncDialect
+    MLIRControlFlowDialect
     MLIRIR
-    MLIRInitAllDialects
-    MLIRInitAllPasses
-    MLIRTools
+    MLIRSupport
 )
 
 # ==============================================================================

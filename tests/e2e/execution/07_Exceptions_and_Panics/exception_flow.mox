@@ -1,0 +1,39 @@
+println("--- [E2E] exception_flow.mox ---")
+
+int riskyCall(int x) {
+    println(`riskyCall(${x})`);
+    throw 1;
+}
+
+int safeCall(int x) {
+    println(`safeCall(${x})`);
+    return x;
+}
+
+void run_flow() {
+    try {
+        defer println("Deferred 1");
+
+        // Pipe syntax passing 'int' into 'safeCall' then 'riskyCall'
+        10 |> safeCall() |> riskyCall();
+
+    } catch (int e) {
+        try {
+            defer println("Deferred 2");
+            riskyCall(0);
+        } catch (int inner) {
+            println("Recovered");
+        }
+    } finally {
+        safeCall(1);
+    }
+}
+
+run_flow();
+// Expected: safeCall(10)
+// Expected: riskyCall(10)
+// Expected: Deferred 1
+// Expected: riskyCall(0)
+// Expected: Deferred 2
+// Expected: Recovered
+// Expected: safeCall(1)

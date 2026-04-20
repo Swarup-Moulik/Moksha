@@ -1,0 +1,25 @@
+println("--- [E2E] switch_patterns.mox ---")
+
+enum DeviceState { IDLE, BUSY, ERROR, DISCONNECTED }
+
+void handle_device(DeviceState state) {
+    // Verifies exhaustiveness checking and jump-tables
+    switch (state) {
+        case DeviceState.IDLE:
+            println("Device is ready");
+            break;
+
+        case DeviceState.BUSY:
+        case DeviceState.ERROR:
+            // Verifies that empty cases fall through correctly
+            println("Action required");
+            break;
+
+        case DeviceState.DISCONNECTED:
+            println("Disconnected");
+            break;
+    }
+}
+
+handle_device(DeviceState.IDLE);  // Expected: Device is ready
+handle_device(DeviceState.ERROR); // Expected: Action required

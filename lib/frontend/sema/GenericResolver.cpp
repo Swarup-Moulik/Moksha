@@ -39,6 +39,9 @@ std::optional<GenericError> GenericResolver::validateGenericArgs(
         currAnyCheck = static_cast<const MutType *>(currAnyCheck)->getInner();
       } else if (currAnyCheck->getKind() == TypeKind::Lock) {
         currAnyCheck = static_cast<const LockType *>(currAnyCheck)->getInner();
+      } else if (currAnyCheck->getKind() == TypeKind::Promise) {
+        currAnyCheck =
+            static_cast<const PromiseType *>(currAnyCheck)->getInner();
       } else {
         break;
       }
@@ -60,6 +63,8 @@ std::optional<GenericError> GenericResolver::validateGenericArgs(
           curr = static_cast<const PointerType *>(curr)->getPointee();
         } else if (curr->getKind() == TypeKind::Reference) {
           curr = static_cast<const ReferenceType *>(curr)->getInner();
+        } else if (curr->getKind() == TypeKind::Promise) {
+          curr = static_cast<const PromiseType *>(curr)->getInner();
         } else {
           break;
         }
@@ -187,6 +192,11 @@ TypePtr GenericResolver::substituteType(
     return std::make_unique<WeakType>(
         substituteType(wk->getInner(), substitutions), wk->getLoc());
   }
+  case TypeKind::Promise: {
+    auto *prom = static_cast<const PromiseType *>(type);
+    return std::make_unique<PromiseType>(
+        substituteType(prom->getInner(), substitutions), prom->getLoc());
+  }
   default:
     // Primitives, Any, Null, Decimal, Enum etc.
     return type->clone();
@@ -199,7 +209,17 @@ GenericResolver::ConcreteSignature GenericResolver::resolveFunctionSignature(
 
   ConcreteSignature sig;
   sig.decl = funcDecl;
-  sig.returnType = substituteType(funcDecl->getReturnType(), substitutions);
+
+  // 1. Ensure we have a valid return type (default to void)
+  const Type *retTy = funcDecl->getReturnType() ? funcDecl->getReturnType()
+                                                : context.getVoidType();
+  sig.returnType = substituteType(retTy, substitutions);
+
+  // 2. Automatically wrap in Promise if the function is async
+  if (funcDecl->isAsyncFunc() && !sig.returnType->is<PromiseType>()) {
+    sig.returnType = std::make_unique<PromiseType>(std::move(sig.returnType),
+                                                   funcDecl->getLoc());
+  }
 
   for (const auto &param : funcDecl->getParams()) {
     sig.paramTypes.push_back(substituteType(param.type.get(), substitutions));
@@ -295,6 +315,54 @@ GenericResolver::instantiateClass(const GenericDecl *genericTemplate,
   const ClassDecl *registeredDecl = mutClass;
   context.registerInstantiatedClass(std::move(concreteClass));
   instantiatedClasses[mangledName] = registeredDecl;
+
+  return registeredDecl;
+}
+
+const FunctionDecl *GenericResolver::instantiateFunction(
+    const GenericDecl *genericTemplate,
+    const std::vector<const Type *> &typeArgs) {
+
+  auto *innerFunc =
+      llvm::dyn_cast<FunctionDecl>(genericTemplate->getInnerDecl());
+  if (!innerFunc)
+    return nullptr;
+
+  std::string mangledName = getMangledName(innerFunc->getName(), typeArgs);
+
+  // Check if we already instantiated this specific generic combination
+  if (instantiatedFunctions.count(mangledName)) {
+    return instantiatedFunctions[mangledName];
+  }
+
+  llvm::StringMap<const Type *> substitutions;
+  const auto &params = genericTemplate->getTypeParams();
+  for (size_t i = 0; i < params.size() && i < typeArgs.size(); ++i) {
+    substitutions[params[i].name] = typeArgs[i];
+  }
+
+  // Clone the AST node
+  std::unique_ptr<Decl> clonedDecl = innerFunc->clone();
+  std::unique_ptr<FunctionDecl> concreteFunc(
+      static_cast<FunctionDecl *>(clonedDecl.release()));
+
+  // Mangle name and substitute return type
+  concreteFunc->setName(mangledName);
+  concreteFunc->setReturnType(
+      substituteType(innerFunc->getReturnType(), substitutions));
+
+  // Substitute parameter types
+  auto &mutParams =
+      const_cast<std::vector<FunctionDecl::Param> &>(concreteFunc->getParams());
+  for (auto &p : mutParams) {
+    p.type = substituteType(p.type.get(), substitutions);
+  }
+
+  const FunctionDecl *registeredDecl = concreteFunc.get();
+
+  // Register in AST Context so LowerASTToHIR can find it later!
+  context.registerInstantiatedFunction(std::move(concreteFunc));
+  instantiatedFunctions[mangledName] = registeredDecl;
 
   return registeredDecl;
 }

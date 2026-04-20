@@ -73,8 +73,10 @@ target_include_directories(mokshaSettings INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
 )
 
-# Let LLVM/MLIR targets propagate their own flags & definitions
-# (do NOT manually inject LLVM_INCLUDE_DIRS or LLVM_DEFINITIONS)
+# Force the C++ compiler to map LLVM Pass IDs directly to the DLL memory space.
+if(MINGW OR WIN32)
+  target_compile_definitions(mokshaSettings INTERFACE LLVM_LINK_LLVM_DYLIB)
+endif()
 
 # ============================================================
 # Warnings (strict but sane)

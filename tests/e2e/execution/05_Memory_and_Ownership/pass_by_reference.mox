@@ -1,0 +1,35 @@
+println("--- [E2E] pass_by_reference.mox ---")
+
+// Pass by Value (Default)
+void modifyValue(int val) {
+    val = 100;
+}
+
+// Pass by Reference
+void modifyRef(ref int ptr) {
+    ptr = 100;
+}
+
+// Multiple Reference Parameters
+void swap(ref int a, ref int b) {
+    int temp = a;
+    a = b;
+    b = temp;
+}
+
+void test_references() {
+    int x = 10;
+    int y = 20;
+
+    modifyValue(x);
+    println(x); // Expected: 10 (unchanged)
+
+    modifyRef(x);
+    println(x); // Expected: 100 (changed)
+
+    swap(x, y);
+    println(x); // Expected: 20
+    println(y); // Expected: 100
+}
+
+test_references();

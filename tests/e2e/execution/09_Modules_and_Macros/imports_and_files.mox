@@ -1,0 +1,19 @@
+println("--- [E2E] imports_and_files.mox ---")
+
+// Import specific symbols from the local "test.mox" file
+import { test_multiplier, calculate_magic, TestConfig } from "test"
+
+void run_import_test() {
+    // 1. Test importing a global variable
+    println(test_multiplier); // Expected: 5
+
+    // 2. Test importing and calling a function
+    int result = calculate_magic(10, 20);
+    println(result); // Expected: 150  ((10 + 20) * 5)
+
+    // 3. Test importing and instantiating a class
+    TestConfig config = new TestConfig(42);
+    println(config.version); // Expected: 42
+}
+
+run_import_test();

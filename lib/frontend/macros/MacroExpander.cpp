@@ -81,6 +81,8 @@ public:
       return std::make_unique<ClosureType>(cloneType(c->getReturnType()),
                                            std::move(newParams), loc);
     }
+    if (auto *p = dyn_cast<PromiseType>(t))
+      return std::make_unique<PromiseType>(cloneType(p->getInner()), loc);
     if (auto *c = dyn_cast<ConstType>(t))
       return std::make_unique<ConstType>(cloneType(c->getInner()), loc);
     if (auto *v = dyn_cast<VolatileType>(t))
@@ -154,7 +156,17 @@ public:
     if (auto *inp = dyn_cast<InputExpr>(e)) {
       return std::make_unique<InputExpr>(cloneExpr(inp->getPrompt()), loc);
     }
-    return nullptr; // Simplified for brevity; keep your other expr clones!
+    if (auto *aw = dyn_cast<AwaitExpr>(e)) {
+      return std::make_unique<AwaitExpr>(cloneExpr(aw->getExpr()), loc);
+    }
+    if (auto *th = dyn_cast<ThreadExpr>(e)) {
+      auto clonedBody = cloneExpr(th->getBody());
+      std::unique_ptr<LambdaExpr> lambdaBody(
+          static_cast<LambdaExpr *>(clonedBody.release()));
+      return std::make_unique<ThreadExpr>(th->isWeakThread(),
+                                          std::move(lambdaBody), loc);
+    }
+    return nullptr;
   }
 
   std::unique_ptr<Decl> cloneDecl(const Decl *d) {
@@ -303,6 +315,23 @@ void MacroExpander::visitBlockStmt(const BlockStmt *stmt) {
               newStmts.push_back(std::move(es));
             }
             expanded = true;
+          } else {
+            for (auto &arg : const_cast<CallExpr *>(call)->getArgsMut()) {
+              if (auto *argCall = dyn_cast<CallExpr>(arg.get())) {
+                if (auto *argId =
+                        dyn_cast<IdentifierExpr>(argCall->getCallee())) {
+                  if (const Macro *mArg = macros.lookup(argId->getName())) {
+                    auto exStmts = mArg->expand(argCall->getArgs(), ctx);
+                    if (exStmts.size() == 1) {
+                      if (auto *expandedExprStmt =
+                              dyn_cast<ExpressionStmt>(exStmts[0].get())) {
+                        arg = expandedExprStmt->getExpr()->clone();
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -416,5 +445,23 @@ void MacroExpander::visitInputExpr(const InputExpr *expr) {
 
 void MacroExpander::visitSliceType(const SliceType *type) {
   type->getElementType()->accept(*this);
+}
+
+void MacroExpander::visitPromiseType(const PromiseType *type) {
+  if (type->getInner()) {
+    type->getInner()->accept(*this);
+  }
+}
+
+void MacroExpander::visitAwaitExpr(const AwaitExpr *expr) {
+  if (expr->getExpr()) {
+    expr->getExpr()->accept(*this);
+  }
+}
+
+void MacroExpander::visitThreadExpr(const ThreadExpr *expr) {
+  if (expr->getBody()) {
+    expr->getBody()->accept(*this);
+  }
 }
 } // namespace moksha

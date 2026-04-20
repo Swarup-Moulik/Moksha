@@ -1,0 +1,36 @@
+println("--- [E2E] destructor_unwind_order.mox ---")
+
+ref class Tracer {
+    public int id;
+    constructor(int id) {
+        this.id = id;
+        println(`Created ${this.id}`);
+    }
+    destructor() {
+        println(`Destroyed ${this.id}`);
+    }
+}
+
+void test_unwind_order() {
+    try {
+        Tracer t1 = new Tracer(1);
+        Tracer t2 = new Tracer(2);
+        Tracer t3 = new Tracer(3);
+
+        // Exception thrown!
+        // The AST must generate cleanup blocks that print LIFO
+        throw 99;
+
+    } catch (int e) {
+        println("Caught exception");
+    }
+}
+
+test_unwind_order();
+// Expected: Created 1
+// Expected: Created 2
+// Expected: Created 3
+// Expected: Destroyed 3
+// Expected: Destroyed 2
+// Expected: Destroyed 1
+// Expected: Caught exception

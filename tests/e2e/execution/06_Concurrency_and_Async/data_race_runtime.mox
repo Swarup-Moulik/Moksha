@@ -1,0 +1,23 @@
+println("--- [E2E] data_race_runtime.mox ---")
+
+void risky_thread_work() {
+    println("Performing risky work safely");
+}
+
+void test_runtime_locks() {
+    lock int shared_state = 100;
+    *lock int p = &shared_state;
+
+    // The MIR lowering phase must wrap this critical section in runtime mutex calls.
+    lock (p) {
+        *p = 200;
+        risky_thread_work(); // Expected: Performing risky work safely
+    } // Standard unlock happens here
+
+    // Read the value inside a new lock to verify mutation
+    lock (p) {
+        println(*p); // Expected: 200
+    }
+}
+
+test_runtime_locks();

@@ -1,0 +1,30 @@
+println("--- [E2E] atomics.mox ---")
+
+void test_atomics_full() {
+    unsigned int data = 0_u32;
+    *mut unsigned int ptr = &data;
+
+    // Verifies built-in function resolution and type compatibility
+    atomic_store(ptr, 100_u32);
+    unsigned int val = atomic_load(ptr);
+    println(val); // Expected: 100
+
+    // Testing old value return semantics
+    unsigned int old = atomic_add(ptr, 10_u32);
+    println(old); // Expected: 100
+    println(atomic_load(ptr)); // Expected: 110
+
+    // Testing Compare-and-Swap (CAS)
+    unsigned int current = atomic_cas(ptr, 110_u32, 200_u32);
+    println(current); // Expected: 110
+    println(atomic_load(ptr)); // Expected: 200
+
+    // Memory Fences (Lowered to LLVM fences in backend)
+    atomic_fence_acquire();
+    atomic_fence_release();
+    atomic_fence_seqcst();
+
+    println("Fences successfully emitted"); // Expected: Fences successfully emitted
+}
+
+test_atomics_full();

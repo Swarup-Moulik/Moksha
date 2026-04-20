@@ -87,6 +87,7 @@ enum class TokenKind {
   KwPublic,
   KwPrivate,
   KwProtected,
+  KwPromise,
   KwConst,
   KwCast,
   KwStatic,

@@ -1,0 +1,22 @@
+println("--- [E2E] linkage_and_abi.mox ---")
+
+// Weak symbols (Allowing user-overrides for drivers)
+weak void default_irq_handler() {
+    println("Default IRQ Handler executed");
+}
+
+// Verifies 'used' attribute (prevents DCE in optimizer)
+used section(".metadata") static int kernel_version = 1;
+
+// Verifies complex section names (linker script compatibility)
+section(".init.text") void arch_init() {
+    println("Architecture initialized");
+}
+
+void test_linkage() {
+    default_irq_handler(); // Expected: Default IRQ Handler executed
+    arch_init();           // Expected: Architecture initialized
+    println(kernel_version); // Expected: 1
+}
+
+test_linkage();

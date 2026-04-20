@@ -30,6 +30,7 @@ public:
   virtual void visitDecimalType(const DecimalType *type) = 0;
   virtual void visitClosureType(const ClosureType *type) = 0;
   virtual void visitWeakType(const WeakType *type) = 0;
+  virtual void visitPromiseType(const PromiseType *type) = 0;
 
   // --- Expressions ---
   virtual void visitIntegerLiteral(const IntegerLiteral *expr) = 0;

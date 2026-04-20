@@ -1,0 +1,16 @@
+println("--- [E2E] early_return_cfg.mox ---")
+
+int test_return(bool abort) {
+    int state = 0;
+
+    if (abort) {
+        state = 1;
+        return state; // Branch straight to function epilogue
+    }
+
+    state = 2;
+    return state;
+}
+
+println(test_return(true));  // Expected: 1
+println(test_return(false)); // Expected: 2

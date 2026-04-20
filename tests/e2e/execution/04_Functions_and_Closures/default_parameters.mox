@@ -1,0 +1,36 @@
+println("--- [E2E] default_parameters.mox ---")
+
+string greet(string name, string greeting = "Hello") {
+    return greeting + ", " + name;
+}
+
+void configureWindow(int width = 800, int height = 600, string title = "Moksha App") {
+    println(`Window: ${title} (${width}x${height})`);
+}
+
+void testDefaults() {
+    string myName = "Alice";
+
+    println(greet(myName));              // Expected: Hello, Alice
+    println(greet(myName, "Welcome"));   // Expected: Welcome, Alice
+
+    configureWindow();                   // Expected: Window: Moksha App (800x600)
+    configureWindow(1024);               // Expected: Window: Moksha App (1024x600)
+}
+
+void testLambdaDefaults() {
+    closure(int) -> closure(int) -> int makeMultiplier = (int factor = 2) => {
+        return (int n) => {
+            return n * factor;
+        };
+    };
+
+    closure(int) -> int doubleFunc = makeMultiplier();
+    closure(int) -> int tripleFunc = makeMultiplier(3);
+
+    println(doubleFunc(5)); // Expected: 10
+    println(tripleFunc(5)); // Expected: 15
+}
+
+testDefaults();
+testLambdaDefaults();

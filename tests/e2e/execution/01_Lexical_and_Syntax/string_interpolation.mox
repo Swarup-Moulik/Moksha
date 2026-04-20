@@ -1,0 +1,12 @@
+println("--- [E2E] string_interpolation.mox ---")
+
+string name = "Moksha"
+int ver = 1
+
+// Basic Interpolation
+string msg = `Welcome to ${name} version ${ver}`
+println(msg)
+
+// Expression Interpolation
+string calc = `Result: ${10 + 20}`
+println(calc)

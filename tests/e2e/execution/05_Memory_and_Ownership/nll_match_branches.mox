@@ -1,0 +1,24 @@
+println("--- [E2E] nll_match_branches.mox ---")
+
+void test_switch_borrow(int state) {
+    int shared_data = 100;
+
+    switch (state) {
+        case 1: {
+            *mut int m1 = &shared_data;
+            *m1 = 1;
+            break;
+        }
+        case 2: {
+            // Perfectly safe! NLL proves m1 cannot exist in this branch.
+            *mut int m2 = &shared_data;
+            *m2 = 2;
+            break;
+        }
+    }
+
+    println(shared_data);
+}
+
+test_switch_borrow(1); // Expected: 1
+test_switch_borrow(2); // Expected: 2

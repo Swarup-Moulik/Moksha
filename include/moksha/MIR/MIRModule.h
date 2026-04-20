@@ -1,14 +1,18 @@
 #pragma once
 
 #include "moksha/MIR/MIRFunction.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/raw_ostream.h"
-#include <iosfwd> // Added
+#include <iosfwd>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace moksha {
+namespace hir {
+class HIRClass;
+}
 namespace mir {
 
 class MIRGlobal;
@@ -43,16 +47,15 @@ public:
   // Function Management
   void addFunction(std::unique_ptr<MIRFunction> func);
   MIRFunction *getFunction(const std::string &name) const;
-  const std::vector<std::unique_ptr<MIRFunction>> &getFunctions() const {
-    return functions;
-  }
+  llvm::ArrayRef<MIRFunction *> getFunctions() const;
 
   // Global Variable Management
   void addGlobal(std::unique_ptr<MIRGlobal> global);
   MIRGlobal *getGlobal(const std::string &name) const;
-  const std::vector<std::unique_ptr<MIRGlobal>> &getGlobals() const {
-    return globals;
-  }
+  llvm::ArrayRef<MIRGlobal *> getGlobals() const;
+
+  void addClass(std::unique_ptr<hir::HIRClass> cls);
+  llvm::ArrayRef<hir::HIRClass *> getClasses() const;
 
   std::vector<std::unique_ptr<MIRGlobal>> &getGlobalsMut() { return globals; }
   std::unordered_map<std::string, MIRGlobal *> &getGlobalMapMut() {
@@ -86,8 +89,17 @@ public:
 private:
   std::string name;
 
+  mutable bool functionsDirty = true;
+  mutable bool globalsDirty = true;
+  mutable bool classesDirty = true;
+
+  mutable std::vector<MIRGlobal *> globalCache;
+  mutable std::vector<MIRFunction *> functionCache;
+  mutable std::vector<hir::HIRClass *> classCache;
+
   std::vector<std::unique_ptr<MIRFunction>> functions;
   std::vector<std::unique_ptr<MIRGlobal>> globals;
+  std::vector<std::unique_ptr<hir::HIRClass>> classes;
 
   std::unordered_map<std::string, MIRFunction *> functionMap;
   std::unordered_map<std::string, MIRGlobal *> globalMap;

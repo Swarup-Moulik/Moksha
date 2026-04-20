@@ -57,9 +57,14 @@ public:
   const ClassDecl *instantiateClass(const GenericDecl *genericTemplate,
                                     const std::vector<const Type *> &typeArgs);
 
+  const FunctionDecl *
+  instantiateFunction(const GenericDecl *genericTemplate,
+                      const std::vector<const Type *> &typeArgs);
+
 private:
   ASTContext &context;
   llvm::StringMap<const ClassDecl *> instantiatedClasses;
+  llvm::StringMap<const FunctionDecl *> instantiatedFunctions;
 };
 
 } // namespace moksha

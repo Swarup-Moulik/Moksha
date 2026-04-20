@@ -147,3 +147,15 @@ void SliceType::Profile(llvm::FoldingSetNodeID &ID) const {
   ID.AddInteger(static_cast<int>(kind));
   ID.AddPointer(elementType);
 }
+
+// ============================================================================
+// [PromiseType]
+// ============================================================================
+void HIRPromiseType::Profile(llvm::FoldingSetNodeID &ID) const {
+  ID.AddInteger(static_cast<int>(kind));
+  ID.AddPointer(innerType);
+}
+
+std::string HIRPromiseType::toString() const {
+  return "promise<" + innerType->toString() + ">";
+}

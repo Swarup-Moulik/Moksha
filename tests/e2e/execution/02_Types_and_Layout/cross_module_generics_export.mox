@@ -1,0 +1,5 @@
+// Just the definition, no execution needed here.
+public generic Box<T> {
+    public T val;
+    constructor(T v) { this.val = v; }
+}

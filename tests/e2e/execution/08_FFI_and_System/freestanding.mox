@@ -1,0 +1,32 @@
+println("--- [E2E] freestanding.mox ---")
+
+// --- MOCKS FOR THE LINKER ---
+// Define a dummy stack_top so the linker finds a symbol
+int stack_top = 0;
+
+// Define a dummy kernel_main so the 'call' instruction resolves
+extern "C" void kernel_main() {
+    println("Kernel main called!");
+}
+
+// Verifies custom entry point for bootloaders
+extern "C" naked void _start() {
+    // Use LEA with %rip-relative addressing (Position Independent Code safe)
+    asm("lea stack_top(%rip), %rsp");
+    asm("call kernel_main");
+}
+
+// Verifies no-std style manual panic implementation
+extern "C" noreturn void custom_panic(string msg) {
+    println("KERNEL PANIC: " + msg);
+    // Bypassing real halt for E2E
+    // while(true) { asm("hlt"); }
+}
+
+void test_freestanding() {
+    // We just verify the compiler successfully generates LLVM IR for the naked stub
+    // and noreturn logic without invoking it and halting the OS.
+    println("Freestanding stubs compiled successfully");
+}
+
+test_freestanding();

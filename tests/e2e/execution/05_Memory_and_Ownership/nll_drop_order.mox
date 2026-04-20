@@ -1,0 +1,25 @@
+println("--- [E2E] nll_drop_order.mox ---")
+
+class Resource {
+    public int id;
+    constructor(int id) { this.id = id; }
+    destructor() {
+        println(`Dropping Resource ${this.id}`);
+    }
+}
+
+void test_drop_order() {
+    // We declare 'a' first, then 'b'.
+    // The AST must drop them in strict LIFO order (b, then a).
+    Resource a = new Resource(1);
+    Resource b = new Resource(2);
+
+    // Take an immutable borrow of 'a'
+    *view Resource v = &a;
+    println(`Borrowed Resource ${(*v).id}`);
+}
+
+test_drop_order();
+// Expected: Borrowed Resource 1
+// Expected: Dropping Resource 2
+// Expected: Dropping Resource 1

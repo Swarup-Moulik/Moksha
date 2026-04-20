@@ -1,0 +1,21 @@
+println("--- [E2E] input_expr.mox ---")
+
+void testInputVariations() {
+    // 1. With a string prompt
+    string name = input("What is your name? ");
+    println(`Registered name: ${name}`);
+
+    // 2. Without a prompt
+    println("Enter raw data:");
+    int rawData = input();
+    println(`Raw data: ${rawData}`);
+
+    // 3. Inline expression usage (testing string concatenation)
+    string greeting = "Hello, " + input("Enter nickname: ") + "!";
+    println(greeting);
+
+    // 4. Passing as an argument
+    println(input("Press Enter to continue..."));
+}
+
+testInputVariations();

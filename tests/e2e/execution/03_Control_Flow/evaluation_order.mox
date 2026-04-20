@@ -1,0 +1,18 @@
+println("--- [E2E] evaluation_order.mox ---")
+
+int track(int val) {
+    print(val + ", ");
+    return val;
+}
+
+void consume(int a, int b, int c) {}
+void consume_two(int a, int b) {}
+
+// Must print 1, then 2, then 3 strictly.
+// If it prints 3, 2, 1, the AST visitor is walking right-to-left.
+consume(track(1), track(2), track(3));
+println();
+
+// Pipe evaluation order
+// track(10) MUST evaluate before track(20) is evaluated
+track(10) |> consume_two(track(20));

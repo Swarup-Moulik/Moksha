@@ -60,7 +60,7 @@ bool Mem2RegPass::runOnModule(MIRModule &M) {
   bool changed = false;
   for (auto &func : M.getFunctions()) {
     if (!func->isDeclaration()) {
-      changed |= runOnFunction(func.get(), M);
+      changed |= runOnFunction(func, M);
     }
   }
   return changed;
@@ -340,6 +340,30 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
   // ------------------------------------------------------------------------
   // Phase 5: Cleanup Dead Instructions
   // ------------------------------------------------------------------------
+  for (auto &blockPtr : F->getBlocks()) {
+    for (auto &instPtr : blockPtr->getInstructions()) {
+      if (auto *load = llvm::dyn_cast_or_null<LoadInst>(instPtr.get())) {
+        if (auto *alloca =
+                llvm::dyn_cast_or_null<AllocaInst>(load->getPointer())) {
+          if (promotableSet.count(alloca)) {
+            MIRValue *undefVal =
+                M.getOrInsertConstant<ConstantUndef>(load->getType());
+            replaceAllUsesInFunction(F, load, undefVal);
+            toDelete.push_back(load);
+          }
+        }
+      } else if (auto *store =
+                     llvm::dyn_cast_or_null<StoreInst>(instPtr.get())) {
+        if (auto *alloca =
+                llvm::dyn_cast_or_null<AllocaInst>(store->getPointer())) {
+          if (promotableSet.count(alloca)) {
+            toDelete.push_back(store);
+          }
+        }
+      }
+    }
+  }
+
   std::unordered_set<MIRInst *> deadSet(toDelete.begin(), toDelete.end());
 
   for (auto &blockPtr : F->getBlocks()) {

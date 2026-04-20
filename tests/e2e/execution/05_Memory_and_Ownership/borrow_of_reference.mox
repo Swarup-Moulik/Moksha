@@ -1,0 +1,19 @@
+println("--- [E2E] borrow_of_reference.mox ---")
+
+void test_chain() {
+    int data = 10;
+    *mut int m1 = &data;
+
+    // Reborrow from the reference itself
+    *view int v = &*m1;
+
+    int read = *v;
+    println(read); // Expected: 10
+
+    // 'v' dies here, releasing the view borrow.
+
+    *m1 = 20; // Safe to use m1 again!
+    println(data); // Expected: 20
+}
+
+test_chain();

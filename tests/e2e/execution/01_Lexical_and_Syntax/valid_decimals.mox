@@ -1,0 +1,97 @@
+println("--- [E2E] valid_decimals.mox ---")
+
+// 1. Basic Widening (Assignment)
+void test_safe_assignments(decimal<5, 2> small_amount) {
+    decimal<9, 2> account_balance = small_amount;
+    decimal<10, 4> highly_precise = small_amount;
+
+    println(account_balance);
+    println(highly_precise);
+}
+
+// 2. Mathematical Scaling
+void test_safe_math(decimal<5, 2> a, decimal<4, 1> b) {
+    decimal<6, 2> sum = a + b;
+    decimal<6, 2> diff = a - b;
+    decimal<9, 3> product = a * b;
+
+    println(sum);
+    println(diff);
+    println(product);
+}
+
+// 3. Advanced Math (Division and Modulo)
+void test_advanced_math(decimal<6, 2> a, decimal<4, 1> b) {
+    decimal<7, 2> quotient = a / b;
+    decimal<6, 2> remainder = a % b;
+
+    println(quotient);
+    println(remainder);
+}
+
+// 4. Unary Negation
+void test_unary(decimal<5, 2> a) {
+    decimal<5, 2> negated = -a;
+    println(negated);
+
+    // Double negation should return to original
+    println(-negated);
+}
+
+// 5. Comparisons (Testing different scales: <5, 2> vs <4, 1>)
+void test_comparisons(decimal<5, 2> a, decimal<4, 1> b) {
+    println(a == b); // false
+    println(a != b); // true
+    println(a > b);  // true
+    println(a >= b); // true
+    println(a < b);  // false
+    println(a <= b); // false
+
+    // Test equality with different compile-time scales but same mathematical value
+    decimal<4, 1> c = 123.4d; // Truncated for testing
+    decimal<6, 3> d = 123.400d;
+    println(c == d); // true
+}
+
+// 6. Decimal Division by Zero
+void test_div_by_zero(decimal<5, 2> a) {
+    decimal<4, 1> zero = 0.0d;
+
+    // Testing the safe fallback implemented in math.c
+    decimal<7, 2> div_zero = a / zero;
+    decimal<6, 2> mod_zero = a % zero;
+
+    println("Decimal Div by zero:");
+    println(div_zero); // Expected: 0 (Graceful fallback)
+    println("Decimal Mod by zero:");
+    println(mod_zero); // Expected: 0 (Graceful fallback)
+}
+
+// Drive the tests with actual data
+decimal<5, 2> val1 = 123.45d;
+decimal<4, 1> val2 = 12.3d;
+
+println("--- Assignments ---");
+test_safe_assignments(val1);
+
+println("--- Basic Math ---");
+test_safe_math(val1, val2);
+
+println("--- Div & Mod ---");
+test_advanced_math(val1, val2);
+
+println("--- Unary ---");
+test_unary(val1);
+
+println("--- Comparisons ---");
+test_comparisons(val1, val2);
+
+println("--- Div By Zero ---");
+test_div_by_zero(val1);
+
+println("--- Precision Test ---");
+if(0.1d + 0.2d == 0.3d) {
+    println("0.1 + 0.2 is 0.3 mannnn");
+} else {
+    println("0.1 + 0.2 is NOT 0.3 mannnn");
+}

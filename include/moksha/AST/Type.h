@@ -31,7 +31,8 @@ enum class TypeKind {
   Const,
   Decimal,
   Closure,
-  Weak
+  Weak,
+  Promise
 };
 
 enum class Variance { Invariant, Covariant, Contravariant };
@@ -434,11 +435,14 @@ public:
   bool isRefClass() const override { return isRefClassFlag; }
   void setRefClass(bool isRef) { isRefClassFlag = isRef; }
   void setName(std::string newName) { name = std::move(newName); }
+  void setResolvedType(const Type *t) const { resolvedType = t; }
+  const Type *getResolvedType() const { return resolvedType; }
 
 private:
   std::string name;
   std::vector<GenericArg> genericArgs;
   bool isRefClassFlag = false;
+  mutable const Type *resolvedType = nullptr;
 };
 
 class NullableType : public Type {
@@ -690,6 +694,34 @@ public:
   static bool classof(const Type *T) {
     return T->getKind() == TypeKind::Decimal;
   }
+};
+
+class PromiseType : public Type {
+public:
+  static constexpr TypeKind classKind = TypeKind::Promise;
+  PromiseType(TypePtr inner, SourceLocation loc)
+      : Type(TypeKind::Promise, loc), innerType(std::move(inner)) {}
+
+  void accept(ASTVisitor &v) const override;
+  std::unique_ptr<Type> clone() const override {
+    return std::make_unique<PromiseType>(innerType->clone(), loc);
+  }
+  bool isEquivalent(const Type &other) const override {
+    if (!other.is<PromiseType>())
+      return false;
+    return innerType->isEquivalent(
+        *static_cast<const PromiseType &>(other).getInner());
+  }
+  std::string toString() const override {
+    return "promise<" + innerType->toString() + ">";
+  }
+  const Type *getInner() const { return innerType.get(); }
+  static bool classof(const Type *T) {
+    return T->getKind() == TypeKind::Promise;
+  }
+
+private:
+  TypePtr innerType;
 };
 
 } // namespace moksha

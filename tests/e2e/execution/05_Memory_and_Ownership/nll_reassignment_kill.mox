@@ -1,0 +1,18 @@
+println("--- [E2E] nll_reassignment_kill.mox ---")
+
+void test_reassignment() {
+    int x = 10;
+    int y = 20;
+
+    *view int ptr = &x; // Borrow x
+    ptr = &y;           // Reassign pointer to y. Borrow on x is now DEAD!
+
+    // This MUST succeed because 'x' is no longer borrowed by 'ptr'
+    *mut int mut_x = &x;
+    *mut_x = 99;
+
+    println(x);     // Expected: 99
+    println(*ptr);  // Expected: 20
+}
+
+test_reassignment();

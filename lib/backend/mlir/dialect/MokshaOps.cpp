@@ -41,5 +41,17 @@ bool ReleaseOp::isRelease() { return true; }
   return getValue();
 }
 
+// ============================================================================
+// Custom Logic for AsyncOpInterface
+// ============================================================================
+
+bool SpawnOp::isBlocking() {
+  return false; // Spawning tasks returns immediately
+}
+
+bool AwaitOp::isBlocking() {
+  return true; // Await suspends/blocks execution
+}
+
 } // namespace IR
 } // namespace moksha

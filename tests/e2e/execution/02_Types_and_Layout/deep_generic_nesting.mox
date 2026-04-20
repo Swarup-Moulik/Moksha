@@ -1,0 +1,28 @@
+println("--- [E2E] deep_generic_nesting.mox ---")
+
+generic Map<K, V> {
+    public K key;
+    public V val;
+    constructor(K k, V v) { this.key = k; this.val = v; }
+}
+
+generic List<T> {
+    public T item;
+    constructor(T i) { this.item = i; }
+}
+
+// 1. Parser and Typechecker must handle deep nesting
+Map<string, List<Map<int, string>>> deeplyNested =
+    new Map<string, List<Map<int, string>>>(
+        "root",
+        new List<Map<int, string>>(new Map<int, string>(16, "leaf"))
+    );
+
+println(deeplyNested.key);             // Expected: root
+println(deeplyNested.val.item.val);    // Expected: leaf
+
+// 2. Parser must differentiate right-shift `>>` from generic closures `>>`
+int targetValue = deeplyNested.val.item.key; // 16
+int shiftResult = targetValue >> 2;          // 16 >> 2 = 4
+
+println(shiftResult); // Expected: 4

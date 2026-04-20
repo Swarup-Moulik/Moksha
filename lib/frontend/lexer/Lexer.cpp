@@ -807,6 +807,7 @@ Token Lexer::scanIdentifier() {
                        .Case("public", TokenKind::KwPublic)
                        .Case("private", TokenKind::KwPrivate)
                        .Case("protected", TokenKind::KwProtected)
+                       .Case("promise", TokenKind::KwPromise)
                        .Case("const", TokenKind::KwConst)
                        .Case("cast", TokenKind::KwCast)
                        .Case("static", TokenKind::KwStatic)

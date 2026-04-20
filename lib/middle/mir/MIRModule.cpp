@@ -1,7 +1,10 @@
 #include "moksha/MIR/MIRModule.h"
+#include "moksha/HIR/HIRFunction.h"
+#include "moksha/HIR/HIRStmt.h"
 #include "moksha/HIR/HIRType.h"
 #include "moksha/MIR/MIRFunction.h"
 #include "moksha/MIR/MIRGlobal.h"
+#include "llvm/ADT/ArrayRef.h"
 #include <iostream>
 #include <unordered_map>
 
@@ -39,30 +42,62 @@ MIRModule::~MIRModule() = default;
 
 // Populate the functionMap
 void MIRModule::addFunction(std::unique_ptr<MIRFunction> func) {
-  if (func) {
-    functionMap[func->getName()] = func.get();
-    functions.push_back(std::move(func));
-  }
+  functionMap[func->getName()] = func.get(); // <-- ADD THIS LINE
+  functions.push_back(std::move(func));
+  functionsDirty = true;
 }
 
 // Use the functionMap for O(1) lookups
-MIRFunction *MIRModule::getFunction(const std::string &name) const {
-  auto it = functionMap.find(name);
-  return it != functionMap.end() ? it->second : nullptr;
+llvm::ArrayRef<MIRFunction *> MIRModule::getFunctions() const {
+  if (functionsDirty) { // [NEW] Only rebuild if the array changed
+    functionCache.clear();
+    functionCache.reserve(functions.size()); // Prevent reallocation
+    for (const auto &f : functions) {
+      functionCache.push_back(f.get());
+    }
+    functionsDirty = false;
+  }
+  return functionCache;
 }
 
 // Populate the globalMap
 void MIRModule::addGlobal(std::unique_ptr<MIRGlobal> global) {
-  if (global) {
-    globalMap[global->getName()] = global.get();
-    globals.push_back(std::move(global));
+  globalMap[global->getName()] = global.get();
+  globals.push_back(std::move(global));
+  globalsDirty = true;
+}
+// Use the globalMap for O(1) lookups
+llvm::ArrayRef<MIRGlobal *> MIRModule::getGlobals() const {
+  if (globalsDirty) { // [NEW] Only rebuild if the array changed
+    globalCache.clear();
+    globalCache.reserve(globals.size()); // Prevent reallocation
+    for (const auto &g : globals) {
+      globalCache.push_back(g.get());
+    }
+    globalsDirty = false;
   }
+  return globalCache;
 }
 
-// Use the globalMap for O(1) lookups
-MIRGlobal *MIRModule::getGlobal(const std::string &name) const {
-  auto it = globalMap.find(name);
-  return it != globalMap.end() ? it->second : nullptr;
+// ============================================================================
+// [Class Management]
+// ============================================================================
+
+void MIRModule::addClass(std::unique_ptr<hir::HIRClass> cls) {
+  classes.push_back(std::move(cls));
+  classesDirty = true; // [NEW] Mark cache as dirty
+}
+
+llvm::ArrayRef<hir::HIRClass *> MIRModule::getClasses() const {
+  if (classesDirty) { // [NEW] Only rebuild if the array changed
+    classCache.clear();
+    classCache.reserve(classes.size()); // Prevent reallocation
+    for (const auto &c : classes) {
+      classCache.push_back(c.get());
+    }
+    classesDirty = false;
+  }
+  return classCache;
 }
 
 void MIRModule::dump(llvm::raw_ostream &os) const {
@@ -112,6 +147,20 @@ const hir::HIRType *MIRModule::getArrayType(const hir::HIRType *elemTy,
   derivedTypes.push_back(std::move(newArrayTy));
 
   return rawPtr;
+}
+
+// ============================================================================
+// [O(1) Lookups]
+// ============================================================================
+
+MIRFunction *MIRModule::getFunction(const std::string &name) const {
+  auto it = functionMap.find(name);
+  return it != functionMap.end() ? it->second : nullptr;
+}
+
+MIRGlobal *MIRModule::getGlobal(const std::string &name) const {
+  auto it = globalMap.find(name);
+  return it != globalMap.end() ? it->second : nullptr;
 }
 
 } // namespace mir

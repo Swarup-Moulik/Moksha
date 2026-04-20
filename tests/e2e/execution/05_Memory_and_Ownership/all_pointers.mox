@@ -1,0 +1,109 @@
+println("--- [E2E] all_pointers.mox ---");
+
+void test_active_pointers() {
+    // 1. Basic Mut Pointers
+    int data = 42;
+    *mut int ptr = &data;
+    *ptr = 100;
+    println(data); // Expected: 100
+
+    // 2. View Pointers
+    *view int v_ptr = &data;
+    println(*v_ptr); // Expected: 100
+
+    // 3. Multi-Level Pointers
+    int deep_data = 999;
+    *mut int l1 = &deep_data;
+    *mut *mut int l2 = &l1;
+    **l2 = 888;
+    println(deep_data); // Expected: 888
+
+    // 4. Function Pointers
+    // Using Moksha's closure syntax as function pointers
+    closure(int, int) -> int add = (int a, int b) => { return a + b; };
+    *view closure(int, int) -> int fn_ptr = &add;
+
+    // Deref and call
+    int res = (*fn_ptr)(10, 20);
+    println(res); // Expected: 30
+}
+
+void test_all_pointers() {
+    println("--- Testing Extensive Pointer Types ---");
+
+    // --- 1. Void and Boolean ---
+    *void void_ptr = null;
+    *bool bool_ptr = null;
+    println(void_ptr);
+    println(bool_ptr);
+
+    // --- 2. Character and Strings ---
+    *char char_ptr = null;
+    *unsigned char uchar_ptr = null;
+    *string str_ptr = null;
+    println(char_ptr);
+    println(uchar_ptr);
+    println(str_ptr);
+
+    // --- 3. Standard Signed Integers ---
+    *short short_ptr = null;
+    *int int_ptr = null;
+    *long long_ptr = null;
+    println(short_ptr);
+    println(int_ptr);
+    println(long_ptr);
+
+    // --- 4. Standard Unsigned Integers ---
+    *unsigned short ushort_ptr = null;
+    *unsigned int uint_ptr = null;
+    *unsigned long ulong_ptr = null;
+    println(ushort_ptr);
+    println(uint_ptr);
+    println(ulong_ptr);
+
+    // --- 5. Floating Point Numbers ---
+    *float float_ptr = null;
+    *double double_ptr = null;
+    println(float_ptr);
+    println(double_ptr);
+
+    // --- 6. Opaque / Dynamic Types ---
+    *any any_ptr = null;
+    println(any_ptr);
+
+    // --- 7. Multi-Level Pointers (Testing prefix capability nesting) ---
+    // Mutable pointer to a read-only pointer to an int
+    *mut *view int double_int_ptr = null;
+
+    // Deep raw pointer
+    * * *void triple_void_ptr = null;
+
+    // Synchronized pointer to a mutable string pointer
+    *lock *mut string thread_safe_str_ptr = null;
+    println(double_int_ptr);
+    println(triple_void_ptr);
+    println(thread_safe_str_ptr);
+
+    // --- 8. Arrays of Pointers (*T[]) ---
+    // Array of 10 read-only int pointers
+    *int[10] array_of_int_ptrs = null;
+
+    // Array of 5 mutable float pointers
+    *mut float[5] array_of_mut_float_ptrs = null;
+    println(array_of_int_ptrs);
+    println(array_of_mut_float_ptrs);
+
+    // --- 9. Pointers to Arrays (* (T[])) ---
+    // Read-only pointer to an array of 10 ints
+    *int[10] ptr_to_int_array = null;
+
+    // Mutable pointer to a 256-byte character buffer
+    *mut char[256] ptr_to_mut_char_buffer = null;
+    println(ptr_to_int_array);
+    println(ptr_to_mut_char_buffer);
+
+    println("All extensive pointer types compiled and printed directly!");
+}
+
+test_active_pointers();
+test_all_pointers();

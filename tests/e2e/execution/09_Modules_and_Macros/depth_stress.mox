@@ -1,0 +1,24 @@
+println("--- [E2E] depth_stress.mox ---")
+
+// Mock functions for the pipeline test
+int processInt(int x) { return x; }
+any processAny(any x) { return x; }
+
+void test_depth() {
+    // 1. Scope depth stress (20 levels)
+    { { { { { { { { { { { { { { { { { { { {
+        int deepVar = 42;
+        println(deepVar); // Expected: 42
+    } } } } } } } } } } } } } } } } } } } }
+
+    // 2. Expression depth stress
+    // Tests if recursive descent parser blows the stack
+    int x = 1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + 0)))))))));
+    println(x); // Expected: 10
+
+    // 3. Chained Pipe depth stress
+    x |> processInt() |> processAny() |> processAny() |> processAny() |> processAny() |> println();
+    // Expected: 10
+}
+
+test_depth();

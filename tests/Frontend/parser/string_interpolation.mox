@@ -1,8 +1,0 @@
-string name = "Moksha"
-int ver = 1
-
-// Basic Interpolation
-string msg = `Welcome to ${name} version ${ver}`
-
-// Expression Interpolation
-string calc = `Result: ${10 + 20}`

@@ -1,0 +1,24 @@
+println("--- [E2E] nll_struct_field_borrows.mox ---")
+
+struct Point {
+    int x;
+    int y;
+}
+
+void test_fields() {
+    Point p;
+    p.x = 0;
+    p.y = 0;
+
+    // NLL must allow simultaneous mutable borrows of DIFFERENT struct fields
+    *mut int mx = &p.x;
+    *mut int my = &p.y;
+
+    *mx = 10;
+    *my = 20;
+
+    println(p.x); // Expected: 10
+    println(p.y); // Expected: 20
+}
+
+test_fields();

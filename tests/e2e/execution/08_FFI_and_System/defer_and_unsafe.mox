@@ -1,0 +1,28 @@
+println("--- [E2E] defer_and_unsafe.mox ---")
+
+void test_defer_logic() {
+    int x = 10;
+
+    // Defers are executed in LIFO (Last-In, First-Out) order
+    defer { println(`Deferred 1: ${x}`); }
+    defer { println(`Deferred 2: ${x}`); }
+
+    x = x + 10;
+    println(`Normal execution: ${x}`);
+}
+
+void test_systems() {
+    int val = 42;
+    unsafe {
+        *mut int ptr = &val;
+        *ptr = 99;
+    }
+    println(val); // Expected: 99
+}
+
+test_defer_logic();
+// Expected: Normal execution: 20
+// Expected: Deferred 2: 20
+// Expected: Deferred 1: 20
+
+test_systems();

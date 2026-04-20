@@ -1,0 +1,24 @@
+println("--- [E2E] arc_destructor_interaction.mox ---")
+
+ref class Mutex {
+    public int id;
+    constructor(int id) { this.id = id; }
+    destructor() { println(`Mutex ${this.id} released system lock`); }
+}
+
+void test_no_elision() {
+    Mutex m = new Mutex(42);
+    {
+        // Because Mutex has a custom destructor with side effects,
+        // ARCAnalyzer CANNOT elide the retain/release pair here.
+        // Copying it creates a second strong reference.
+        Mutex copy = m;
+    }
+    // Block ends -> 'copy' is released, but 'm' still has 1 retain count,
+    // so the destructor does NOT fire yet.
+    println("Scope exited, Mutex still alive");
+}
+
+test_no_elision();
+// Expected: Scope exited, Mutex still alive
+// Expected: Mutex 42 released system lock

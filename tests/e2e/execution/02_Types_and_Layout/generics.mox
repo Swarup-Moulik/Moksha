@@ -1,0 +1,16 @@
+println("--- [E2E] generics.mox ---")
+
+generic Box<T> {
+    T value;
+    void update(T newValue) {
+        this.value = newValue;
+    }
+}
+
+Box<int> intBox = new Box<int>();
+intBox.update(100);
+println(intBox.value); // Expected: 100
+
+Box<string> strBox = new Box<string>();
+strBox.update("Generics Work!");
+println(strBox.value); // Expected: Generics Work!

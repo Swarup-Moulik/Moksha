@@ -68,6 +68,8 @@ std::vector<MIRValue *> getOperands(MIRInst *inst) {
   } else if (auto *ins = llvm::dyn_cast<InsertValueInst>(inst)) {
     ops.push_back(ins->getAggregate());
     ops.push_back(ins->getValue());
+  } else if (auto *cast = llvm::dyn_cast<CastInst>(inst)) {
+    ops.push_back(cast->getValue());
   }
 
   return ops;

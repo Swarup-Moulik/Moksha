@@ -1,0 +1,28 @@
+println("--- [E2E] isr_safety.mox ---")
+
+// 'pure' guarantees no side effects, allowing the MIR optimizer to fold/memoize
+pure int compute_hash(int input_data) {
+    return (input_data * 16777619) ^ 2166136261;
+}
+
+// 'inline' aggressively pushes this into the caller's MIR block
+inline int quick_status_check() {
+    return 1;
+}
+
+// ISRs compiled to test LLVM x86_intrcc lowering (bypassed at runtime)
+interrupt void handle_keyboard_isr() {
+    // Intentionally empty for safe linkage
+}
+
+naked noreturn void cpu_halt() {
+    asm("cli");
+    asm("1: hlt; jmp 1b");
+}
+
+void test_isr_safety() {
+    println(compute_hash(42));       // Expected: Computed Hash Output
+    println(quick_status_check());   // Expected: 1
+}
+
+test_isr_safety();

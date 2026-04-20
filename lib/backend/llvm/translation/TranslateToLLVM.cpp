@@ -9,6 +9,7 @@
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
@@ -24,13 +25,13 @@ class MokshaDialectLLVMIRTranslationInterface
 public:
   using LLVMTranslationDialectInterface::LLVMTranslationDialectInterface;
 
-  // Modern LLVM 22 Signature
+  // MLIR 22 Unified Signature for ALL operations
   mlir::LogicalResult
   amendOperation(mlir::Operation *op,
                  llvm::ArrayRef<llvm::Instruction *> instructions,
                  mlir::NamedAttribute attribute,
                  mlir::LLVM::ModuleTranslation &state) const override {
-    return mlir::success(); // Safely ignore the moksha attribute
+    return mlir::success(); // Safely ignore custom attributes
   }
 };
 
@@ -45,9 +46,6 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
       ->getOrLoadDialect<moksha::IR::MokshaDialect>()
       ->addInterfaces<MokshaDialectLLVMIRTranslationInterface>();
 
-  llvm::InitializeNativeTarget();
-  llvm::InitializeNativeTargetAsmPrinter();
-
   std::string tripleStr = llvm::sys::getDefaultTargetTriple();
   llvm::Triple targetTriple(tripleStr); // Create the LLVM Triple object!
 
@@ -55,41 +53,65 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
       "llvm.target_triple",
       mlir::StringAttr::get(mlirModule->getContext(), tripleStr));
 
+  // Extract Host CPU & Features
+  std::string cpu = llvm::sys::getHostCPUName().str();
+  std::string featureStr;
+
+  // Modern LLVM returns the map directly instead of taking an out-parameter
+  llvm::StringMap<bool> hostFeatures = llvm::sys::getHostCPUFeatures();
+
+  if (!hostFeatures.empty()) {
+    for (auto &f : hostFeatures) {
+      if (!featureStr.empty())
+        featureStr += ",";
+      featureStr += (f.second ? "+" : "-") + f.first().str();
+    }
+  } else {
+    featureStr = "+f16c,+avx";
+  }
+
+  llvm::errs() << "[DEBUG] Setting Target Machine & Data Layout...\n";
   std::string error;
   if (auto target = llvm::TargetRegistry::lookupTarget(tripleStr, error)) {
     llvm::TargetOptions opt;
-    // Pass the 'targetTriple' object here instead of the string!
-    if (auto tm = target->createTargetMachine(targetTriple, "generic", "", opt,
-                                              std::nullopt)) {
+    // [FIX] Pass 'cpu' and 'featureStr' instead of "generic" and ""
+    if (auto tm = target->createTargetMachine(targetTriple, cpu, featureStr,
+                                              opt, std::nullopt)) {
       std::string dl = tm->createDataLayout().getStringRepresentation();
       mlirModule->setAttr("llvm.data_layout",
                           mlir::StringAttr::get(mlirModule->getContext(), dl));
     }
   }
 
-  llvm::errs() << "\n=== [Debug] FINAL CONVERTED MLIR (Right Before LLVM "
-                  "Translator) ===\n";
-  mlirModule.print(llvm::errs());
-  llvm::errs() << "\n=========================================================="
-                  "=========\n";
+  llvm::errs() << "[DEBUG] Entering MLIR to LLVM IR Core Translator...\n";
 
-  // 3. Perform the translation
-  llvm::errs() << "[Debug] Entering translateModuleToLLVMIR...\n";
   std::unique_ptr<llvm::Module> llvmModule =
       mlir::translateModuleToLLVMIR(mlirModule, llvmContext);
+
+  llvm::errs() << "[DEBUG] MLIR to LLVM IR Translation Successful!\n";
 
   if (!llvmModule) {
     llvm::errs() << "[FATAL] Translation returned nullptr.\n";
     return nullptr;
   }
-  llvm::errs() << "[Debug] LLVM IR Translation completed successfully!\n";
+
+  llvm::errs() << "[DEBUG] Applying Post-Process Fixes...\n";
+
+  llvm::StringRef persFnName = "__gcc_personality_v0";
+  if (targetTriple.isOSWindows()) {
+    if (targetTriple.isGNUEnvironment()) {
+      persFnName = "__gcc_personality_seh0";
+    } else {
+      persFnName = "__CxxFrameHandler3";
+    }
+  }
 
   // --- [FIX 1] Define the standard C/C++ personality function ---
   llvm::Type *i32Ty = llvm::Type::getInt32Ty(llvmContext);
   llvm::FunctionType *persType =
       llvm::FunctionType::get(i32Ty, true); // Variadic
   llvm::FunctionCallee persFuncCallee =
-      llvmModule->getOrInsertFunction("__gcc_personality_v0", persType);
+      llvmModule->getOrInsertFunction(persFnName, persType);
   llvm::Constant *persFunc =
       llvm::cast<llvm::Constant>(persFuncCallee.getCallee());
 
@@ -101,7 +123,13 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
     if (!llvmFunc)
       return;
 
+    llvmFunc->addFnAttr("target-cpu", cpu);
+    llvmFunc->addFnAttr("target-features", featureStr);
+
     // --- Standard LLVM Keyword Bindings ---
+    if (mlirFunc->hasAttr("moksha.async")) {
+      llvmFunc->addFnAttr(llvm::Attribute::PresplitCoroutine);
+    }
     if (mlirFunc->hasAttr("moksha.interrupt")) {
       llvmFunc->addFnAttr("interrupt"); // Arch-specific string attr
     }
@@ -215,6 +243,7 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
     llvm::appendToUsed(*llvmModule, usedValues);
   }
 
+  llvm::errs() << "[DEBUG] TranslateToLLVM Complete!\n";
   return llvmModule;
 }
 
