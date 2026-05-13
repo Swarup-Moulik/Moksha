@@ -1,0 +1,21 @@
+println("--- [E2E] higher_order_and_recursion.mox ---")
+
+// 1. Passing a closure as an argument
+int apply(int x, closure(int) -> int f) {
+    return f(x);
+}
+
+// 2. Recursive closure
+void test_recursion() {
+    closure(int) -> int fact = (int n) => { return 0; };
+
+    // Late-binding self-reference
+    fact = &mut (int n) => {
+        if (n <= 1) return 1;
+        return n * fact(n - 1);
+    };
+
+    println(apply(5, fact)); // Expected: 120
+}
+
+test_recursion();

@@ -1,0 +1,13 @@
+// 1. Integer Overflow
+// If your lexer or AST blindly uses stoull(), this will throw an exception.
+// It should be caught and flagged as an overflow error.
+int massive = 999999999999999999999999999999999999999999999i64;
+
+// 2. Malformed Base Literals
+int bad_hex = 0x1A3G5; // 'G' is not a valid hex digit
+int bad_bin = 0b10121; // '2' is not a valid binary digit
+
+// 3. Malformed Floats
+float bad_exp1 = 1.0e;   // Missing digits after exponent
+float bad_exp2 = 1.0e+;  // Missing digits after sign
+float double_dot = 1.2.3; // Multiple decimal points

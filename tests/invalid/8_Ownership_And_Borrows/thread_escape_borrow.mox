@@ -1,0 +1,12 @@
+void test_thread_escape() {
+    int stack_val = 100;
+
+    // ERROR EXPECTED: Cannot borrow local variable 'stack_val' inside a thread block.
+    // The thread might outlive the current stack frame, causing a dangling pointer.
+    new thread(() => {
+        mut *mut int async_ptr = &stack_val;
+        *async_ptr = 200;
+    });
+
+    // Function ends, `stack_val` is destroyed, but the thread might still be running!
+}

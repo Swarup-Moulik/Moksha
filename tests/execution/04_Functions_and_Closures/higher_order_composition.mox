@@ -1,0 +1,31 @@
+println("--- [E2E] higher_order_composition.mox ---")
+
+// Multi-layer capture dependency
+void test_nested_capture_layers() {
+    int a = 10;
+    closure() -> closure() -> int outer = () => {
+        int b = 20;
+        return () => {
+            return a + b; // Captures 'a' from function, 'b' from outer lambda
+        };
+    };
+
+    closure() -> int f = outer();
+    println(f()); // Expected: 30
+}
+
+// Closure Composition [cite: 21]
+closure(int) -> int compose(closure(int) -> int f) {
+    return (int x) => {
+        return f(x) + 1;
+    };
+}
+
+void test_composition() {
+    closure(int) -> int add2 = (int x) => { return x + 2; };
+    closure(int) -> int result = compose(add2);
+    println(result(5)); // Expected: 8
+}
+
+test_nested_capture_layers();
+test_composition();

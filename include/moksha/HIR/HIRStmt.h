@@ -48,7 +48,6 @@ public:
     TryCatch,
     Throw,
     VarDecl,
-    AsmStmt,
     Unknown
   };
 
@@ -116,12 +115,12 @@ public:
 class LockStmt : public HIRStmt {
 public:
   LockStmt(std::unique_ptr<HIRExpr> mutex, std::unique_ptr<HIRStmt> body,
-           SourceLocation loc);
-  ~LockStmt() override; // Defined in .cpp
+           bool isAsync, SourceLocation loc);
 
+  ~LockStmt() override;
   [[nodiscard]] const HIRExpr *getMutex() const { return mutex.get(); }
   [[nodiscard]] const HIRStmt *getBody() const { return body.get(); }
-
+  [[nodiscard]] bool isAsyncLock() const { return isAsync; }
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
@@ -130,6 +129,7 @@ public:
 private:
   std::unique_ptr<HIRExpr> mutex;
   HIRStmtPtr body;
+  bool isAsync;
 };
 
 // ============================================================================
@@ -342,33 +342,42 @@ private:
   HIRStmtPtr deferredStmt;
 };
 
+struct HIRCatchClause {
+  std::string varName;
+  const HIRType *varType;
+  std::unique_ptr<HIRStmt> body;
+  SourceLocation loc;
+};
+
 class TryCatchStmt : public HIRStmt {
 public:
-  TryCatchStmt(HIRStmtPtr tryBody, std::unique_ptr<HIRExpr> catchVar,
-               HIRStmtPtr catchBody, HIRStmtPtr finallyBody,
-               SourceLocation loc);
-  ~TryCatchStmt() override; // Defined in .cpp
+  TryCatchStmt(std::unique_ptr<HIRStmt> tryBlock,
+               std::vector<HIRCatchClause> catches,
+               std::unique_ptr<HIRStmt> finallyBlock, SourceLocation loc)
+      : HIRStmt(Kind::TryCatch, loc), tryBlock(std::move(tryBlock)),
+        catches(std::move(catches)), finallyBlock(std::move(finallyBlock)) {}
 
-  [[nodiscard]] const HIRStmt *getTryBody() const;
-  [[nodiscard]] const HIRExpr *getCatchVar() const;
-  [[nodiscard]] const HIRStmt *getCatchBody() const;
-  [[nodiscard]] const HIRStmt *getFinallyBody() const;
+  ~TryCatchStmt() override = default;
 
-  [[nodiscard]] bool hasCatch() const;
-  [[nodiscard]] bool hasFinally() const;
-
+  [[nodiscard]] const HIRStmt *getTryBlock() const { return tryBlock.get(); }
+  [[nodiscard]] const std::vector<HIRCatchClause> &getCatches() const {
+    return catches;
+  }
+  [[nodiscard]] const HIRStmt *getFinallyBlock() const {
+    return finallyBlock.get();
+  }
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
+
   static bool classof(const HIRStmt *S) {
     return S->getKind() == Kind::TryCatch;
   }
 
 private:
-  HIRStmtPtr tryBody;
-  std::unique_ptr<HIRExpr> catchVar;
-  HIRStmtPtr catchBody;
-  HIRStmtPtr finallyBody;
+  std::unique_ptr<HIRStmt> tryBlock;
+  std::vector<HIRCatchClause> catches;
+  std::unique_ptr<HIRStmt> finallyBlock;
 };
 
 class HIRThrowStmt : public HIRStmt {
@@ -419,6 +428,9 @@ public:
   bool isThreadLocalVar() const { return isThreadLocal; }
   void setThreadLocal(bool v) { isThreadLocal = v; }
 
+  bool isWeakVar() const { return isWeakLinkage; }
+  void setWeakVar(bool w) { isWeakLinkage = w; }
+
   int getAlignment() const { return alignment; }
   void setAlignment(int v) { alignment = v; }
 
@@ -449,6 +461,7 @@ private:
   bool isMutable = false;
   bool isThreadLocal = false;
   bool isVolatile = false;
+  bool isWeakLinkage = false;
   int alignment = 0;
   bool isStatic = false;
   bool isUsed = false;
@@ -484,28 +497,6 @@ private:
   std::unique_ptr<HIRVarDeclStmt> indexVar;
   std::unique_ptr<HIRExpr> collection;
   HIRStmtPtr body;
-};
-
-class HIRAsmStmt : public HIRStmt {
-public:
-  HIRAsmStmt(std::string assemblyStr, std::string constraints,
-             SourceLocation loc)
-      : HIRStmt(Kind::AsmStmt, loc), assemblyStr(std::move(assemblyStr)),
-        constraints(std::move(constraints)) {}
-
-  const std::string &getAssemblyStr() const { return assemblyStr; }
-  const std::string &getConstraints() const { return constraints; }
-
-  void accept(HIRVisitor &v) override;
-  void accept(ConstHIRVisitor &v) const override;
-  void dump(llvm::raw_ostream &os, int indent = 0) const override;
-  static bool classof(const HIRStmt *S) {
-    return S->getKind() == Kind::AsmStmt;
-  }
-
-private:
-  std::string assemblyStr;
-  std::string constraints;
 };
 
 } // namespace hir

@@ -1,0 +1,43 @@
+// --- 1. Strict Array Homogeneity ---
+// INVARIANT: Array literals are strictly homogeneous. The compiler infers the type
+// from the first element and enforces it strictly without implicit lossy casting.
+void test_array_typing() {
+    int[] list = [1, 2, "three"];
+    // [TypeError]: Expected int, found string. No implicit union inference.
+}
+
+// --- 2. Fixed-Size Array Semantics ---
+// INVARIANT: Fixed-size arrays require exact length matches at compile-time.
+// No implicit truncation, no implicit zero-padding.
+void test_fixed_arrays() {
+    int[2] vec1 = [1, 2, 3];
+    // [TypeError]: Size mismatch. Expected 2 elements, got 3. No truncation.
+
+    int[5] vec2 = [1, 2];
+    // [TypeError]: Size mismatch. Expected 5 elements, got 2. No implicit padding.
+}
+
+// --- 3. Bitfield Base Constraints ---
+// INVARIANT: Bitfield widths cannot exceed the ABI-defined size of their base type.
+struct BadBitfield {
+    unsigned char small_val : 12;
+    // [TypeError]: Width 12 exceeds 8-bit base type unsigned char.
+
+    int large_val : 33;
+    // [TypeError]: Width 33 exceeds 32-bit base type int.
+}
+
+// --- 4. Tagless Union Aliasing ---
+// INVARIANT: Unions are tagless memory overlays. Writing to one field and
+// reading from another with a different memory representation is Undefined Behavior.
+union RawData {
+    int int_val;
+    float float_val;
+}
+void test_union_safety() {
+    RawData v;
+    v.int_val = 10;
+    float f = v.float_val;
+    // [UnsafeOperation / UB]: Reading an inactive field in a tagless union
+    // must require an explicit `unsafe` block or emit a strict warning/error.
+}

@@ -53,15 +53,19 @@ private:
   const ClassDecl
       *currentClassDecl; // Added: Tracks current class for 'this'/'super'
   bool hasError;
-  int loopDepth; // Track if we are inside a loop
+  int loopDepth = 0;      // Track if we are inside a loop
+  int syncLockDepth = 0;  // Track OS locks
+  int asyncLockDepth = 0; // Track Coroutine locks
   bool inStaticContext = false;
   bool inInterruptContext = false;
   bool inConstructorContext = false;
   bool inAsyncContext = false;
+  bool inUnsafeContext = false;
   std::vector<TypePtr> parkedTypes; // Safely stores inferred generic types
   std::map<std::string, std::vector<std::string>> ambiguousImports;
   bool detectInfiniteSize(const Type *t, std::set<std::string> &visited);
   std::set<std::string> activeLocks;
+  std::vector<std::vector<std::set<const Decl *>>> loopBreakStates;
 
   // --- Helpers ---
   bool isCompatible(const Type *expected, const Type *actual);
@@ -95,6 +99,7 @@ private:
   void visitIndexExpr(const IndexExpr *expr) override;
   void visitMemberExpr(const MemberExpr *expr) override;
   void visitCastExpr(const CastExpr *expr) override;
+  void visitBitcastExpr(const BitcastExpr *) override;
   void visitTernaryExpr(const TernaryExpr *expr) override;
   void visitNewExpr(const NewExpr *expr) override;
   void visitLambdaExpr(const LambdaExpr *expr) override;
@@ -105,6 +110,7 @@ private:
   void visitAwaitExpr(const AwaitExpr *expr) override;
   void visitSizeOfExpr(const SizeOfExpr *expr) override;
   void visitInputExpr(const InputExpr *expr) override;
+  void visitAsmExpr(const AsmExpr *expr) override;
   void visitClosureType(const ClosureType *type) override;
 
   // Statements
@@ -124,7 +130,6 @@ private:
   void visitDeclStmt(const DeclStmt *stmt) override;
   void visitBreakStmt(const BreakStmt *stmt) override;
   void visitContinueStmt(const ContinueStmt *stmt) override;
-  void visitAsmStmt(const AsmStmt *stmt) override;
   void visitLockStmt(const LockStmt *stmt) override;
 
   // Top-Level Declarations

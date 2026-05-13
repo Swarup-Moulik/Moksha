@@ -38,6 +38,13 @@ def Moksha_AllocaOp : Moksha_Op<"alloca"> {
     let assemblyFormat = "$allocatedType attr-dict `:` type($res)";
 }
 
+def Moksha_MakeSharedOp : Moksha_Op<"make_shared"> {
+    let summary = "Allocates a heap value and initializes its reference count for ARC.";
+    let arguments = (ins AnyType:$value);
+    let results = (outs AnyType:$res);
+    let assemblyFormat = "$value attr-dict `:` type($value) `->` type($res)";
+}
+
 def Moksha_LoadOp : Moksha_Op<"load", [MemoryEffects<[MemRead]>]> {
     let summary = "Loads a value from a pointer.";
     let arguments = (ins Moksha_PointerType:$ptr);
@@ -148,7 +155,7 @@ def Moksha_CallOp : Moksha_Op<"call"> {
 def Moksha_SpawnOp : Moksha_Op<"spawn", [DeclareOpInterfaceMethods<Moksha_AsyncOpInterface>]> {
     let summary = "Spawns a closure on a new thread or async executor.";
     let arguments = (ins Moksha_ClosureType:$closure, I32Attr:$threadKind);
-    let results = (outs Moksha_PointerType:$promise);
+    let results = (outs Moksha_PromiseType:$promise);
     let assemblyFormat = "$closure `,` $threadKind attr-dict `:` type($closure) `->` type($promise)";
 }
 
@@ -215,6 +222,7 @@ def Moksha_InlineAsmOp : Moksha_Op<"asm", [MemoryEffects<[MemWrite, MemRead]>]> 
     let arguments = (
         ins StrAttr:$asm_string,
             StrAttr:$constraints,
+            OptionalAttr<UnitAttr>:$is_volatile,
             Variadic<AnyType>:$operands
     );
     let results = (outs Variadic<AnyType>:$results);
@@ -224,7 +232,7 @@ def Moksha_InlineAsmOp : Moksha_Op<"asm", [MemoryEffects<[MemWrite, MemRead]>]> 
 // Attach the interface to Retain
 def Moksha_RetainOp : Moksha_Op<"retain", [DeclareOpInterfaceMethods<Moksha_ARCOpInterface>]> {
     let summary = "Increments reference count.";
-    let arguments = (ins Moksha_PointerType:$value);
+    let arguments = (ins AnyType:$value);
     let assemblyFormat = "$value attr-dict `:` type($value)";
 }
 
@@ -232,7 +240,7 @@ def Moksha_RetainOp : Moksha_Op<"retain", [DeclareOpInterfaceMethods<Moksha_ARCO
 def Moksha_ReleaseOp : Moksha_Op<"release", [DeclareOpInterfaceMethods<Moksha_ARCOpInterface>]> {
     let summary = "Decrements reference count.";
     let arguments = (ins
-        Moksha_PointerType:$value,
+        AnyType:$value,
         OptionalAttr<FlatSymbolRefAttr>:$drop_func
     );
     let assemblyFormat = "$value ( `[` `drop` `:` $drop_func^ `]` )? attr-dict `:` type($value)";
@@ -252,6 +260,19 @@ def Moksha_CastOp : Moksha_Op<"cast", [Pure]> {
     let arguments = (ins AnyType:$value);
     let results = (outs AnyType:$res);
     let assemblyFormat = "$value attr-dict `:` type($value) `to` type($res)";
+}
+
+def Moksha_BitcastOp : Moksha_Op<"bitcast", [Pure]> {
+    let summary = "Bitwise reinterpretation of a value without numeric conversion.";
+    let arguments = (ins AnyType:$operand);
+    let results = (outs AnyType:$res);
+    let assemblyFormat = "$operand attr-dict `:` type($operand) `to` type($res)";
+}
+
+def Moksha_UpcastOp : Moksha_Op<"upcast", [Pure]> {
+    let arguments = (ins AnyType:$operand, DefaultValuedAttr<I32Attr, "0">:$offset);
+    let results = (outs AnyType:$res);
+    let assemblyFormat = "$operand attr-dict `:` type($operand) `to` type($res)";
 }
 
 // === Aggregate & Pointer Ops ===
@@ -320,6 +341,27 @@ def InvokeIndirectOp : Moksha_Op<"invoke_indirect", [Terminator]> {
 
 def Moksha_LandingPadOp : Moksha_Op<"landingpad"> {
     let summary = "Catches an exception value in an unwind block.";
+
+    // ADDED: cleanup flag and array of catch types
+    let arguments = (ins UnitAttr:$cleanup, ArrayAttr:$catch_clauses);
     let results = (outs AnyType:$res);
+
+    // We let attr-dict handle the printing of the attributes automatically
     let assemblyFormat = "attr-dict `:` type($res)";
+}
+
+def Moksha_ResumeOp : Moksha_Op<"resume", [Terminator]> {
+    let summary = "Resumes propagation of an existing exception.";
+
+    // Resume takes exactly one argument: the exception payload to continue unwinding
+    let arguments = (ins AnyType:$value);
+
+    let assemblyFormat = "$value attr-dict `:` type($value)";
+}
+
+def Moksha_AnyCastOp : Moksha_Op<"any_cast", [Pure]> {
+    let summary = "Boxes or unboxes a value into an 'any' fat pointer.";
+    let arguments = (ins AnyType:$operand);
+    let results = (outs AnyType:$res);
+    let assemblyFormat = "$operand attr-dict `:` type($operand) `to` type($res)";
 }

@@ -133,6 +133,7 @@ public:
     case Opcode::AnyCast:
     case Opcode::ArrayToSlice:
     case Opcode::SliceToArray:
+    case Opcode::Upcast:
       visitCastInst(static_cast<CastInst *>(inst));
       break;
 
@@ -255,6 +256,9 @@ public:
     visitInstruction(inst);
   }
   virtual void visitMakeClosureInst(MakeClosureInst *inst) {
+    visitInstruction(inst);
+  }
+  virtual void visitMakeSharedInst(MakeSharedInst *inst) {
     visitInstruction(inst);
   }
   virtual void visitSpawnInst(SpawnInst *inst) { visitInstruction(inst); }

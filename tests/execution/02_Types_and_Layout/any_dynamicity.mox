@@ -1,0 +1,52 @@
+println("--- [E2E] any_dynamicity.mox ---");
+
+// ==========================================
+// The Absolute Dominance of the 'any' Type
+// ==========================================
+void test_any_dominance() {
+    println("--- Testing 'any' Type Reassignment ---");
+
+    // Declare a single dynamic variable
+    any dyn_var;
+
+    // 1. Null
+    dyn_var = null;
+    println("1. Null:      " + dyn_var);
+
+    // 2. Booleans
+    dyn_var = true;
+    println("2. Boolean:   " + dyn_var);
+
+    dyn_var = false;
+    println("   Boolean:   " + dyn_var);
+
+    // 3. Primitives (Ints & Floats)
+    dyn_var = 42;
+    println("3. Integer:   " + dyn_var);
+
+    dyn_var = 3.14159265;
+    println("4. Float:     " + dyn_var);
+
+    // 4. Strings
+    dyn_var = "Hello from dynamic memory!";
+    println("5. String:    " + dyn_var);
+
+    // 5. Fixed-Size Arrays
+    int[5] arr = [1, 2, 3, 4, 5];
+    dyn_var = arr;
+    println("6. Array:     " + dyn_var);
+
+    // 6. Dynamic Slices
+    int[] slc = [10, 20, 30, 40, 50];
+    dyn_var = slc;
+    println("7. Slice:     " + dyn_var);
+
+    // 7. Tables / Maps
+    table<string, any> dict = { "language": "Moksha", "is_awesome": true };
+    dyn_var = dict;
+    println("8. Table:     " + dyn_var);
+
+    println("--- Dynamicity Test Complete ---");
+}
+
+test_any_dominance();

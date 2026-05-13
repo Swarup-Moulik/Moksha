@@ -1,0 +1,34 @@
+// --- 1. Deep Const Semantics ---
+// INVARIANT: `const` applies deeply to the memory graph. Element-level
+// mutation of a const array or struct is strictly forbidden.
+void test_const_depth() {
+    const int[] arr = [1, 2, 3];
+    arr[0] = 10;
+    // [TypeError]: Cannot mutate elements of a deep const array.
+}
+
+// --- 2. Strict Null Coercion ---
+// INVARIANT: `T?` and `T` are entirely distinct types in the lattice.
+// Implicit narrowing coercion is strictly forbidden.
+void test_null_coercion() {
+    int? maybe_x = 5;
+    int definitely_y = maybe_x;
+    // [TypeError]: Cannot implicitly coerce `int?` to `int`. Requires explicit unwrap.
+}
+
+// --- 3. Null Inference Constraints ---
+// INVARIANT: `null` is the bottom type for nullable types, but cannot unify
+// with unconstrained generic parameters.
+generic id<T> {}
+
+void test_null_inference() {
+    id(null);
+    // [TypeError]: Cannot infer generic type `T` from unconstrained `null`.
+}
+
+const int PI = 3;
+// Error: Cannot assign to const variable
+PI = 4;
+
+// Error: Non-nullable type cannot be null
+int id2 = null;

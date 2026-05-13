@@ -1,0 +1,12 @@
+println("--- [E2E] types_and_scope.mox ---")
+
+// Explicit Type
+int x = 10;
+
+// Scoping & Shadowing
+{
+  int x = 20; // Allowed: shadows outer x
+  println(x); // Expected: 20
+}
+
+println(x); // Expected: 10

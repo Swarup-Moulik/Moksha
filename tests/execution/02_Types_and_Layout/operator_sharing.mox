@@ -1,0 +1,33 @@
+println("--- [E2E] operator_sharing.mox ---")
+
+class Matrix {
+    public int scalar;
+    constructor(int s) { this.scalar = s; }
+}
+
+void test_explicit_share() {
+    // Standard stack allocation using 'new'
+    Matrix m1 = new Matrix(5);
+
+    // Standard assignment = Deep Copy
+    Matrix m2 = m1;
+    m2.scalar = 10;
+
+    println("Testing deep copy. m1 should remain 5:");
+    println(m1.scalar);
+
+    // To create an alias, the root object must be allocated on the heap!
+    shared Matrix heap_m1 = new Matrix(5);
+
+    // Sharing the pointer (increments ARC, creates perfect alias)
+    shared Matrix m3 = heap_m1;
+
+    // Mutating through the shared reference
+    m3.scalar = 50;
+
+    println("Testing shared handle. Both heap_m1 and m3 should be 50:");
+    println(heap_m1.scalar);
+    println(m3.scalar);
+}
+
+test_explicit_share()

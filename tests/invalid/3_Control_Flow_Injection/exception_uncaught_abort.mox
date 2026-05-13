@@ -1,0 +1,15 @@
+println("--- [CRASH E2E] exception_uncaught_abort.mox ---")
+
+void no_safety_net() {
+    throw "This will escape to the top level";
+}
+
+void test_uncaught() {
+    no_safety_net();
+}
+
+test_uncaught();
+// BACKEND EXPECTATION:
+// The runtime must catch this at the `__moksha_main` boundary, print a stack trace,
+// and exit with a non-zero status code (e.g., exit(1)).
+// It MUST NOT trigger an LLVM unhandled `trap` leading to a silent core dump.

@@ -1,0 +1,110 @@
+println("--- [E2E] cf_semantic_stress.mox ---")
+
+// 1. NESTED CONTINUE SCOPING
+// Ensures 'continue' targets the correct loop header
+void test_continue_nested() {
+    int i = 0;
+    int hits = 0;
+    while (i < 2) {
+        i = i + 1;
+        int j = 0;
+        while (j < 3) {
+            j = j + 1;
+            if (j == 2) continue; // Must skip j=2 but stay in inner loop
+            hits = hits + 1;
+        }
+    }
+    println(hits); // Expected: 4
+}
+
+// 2. DEFER IN LOOPS (Block-Scoped, Late Evaluation)
+// Logic: Defer runs per-iteration (at block exit). Because Moksha
+// evaluates the AST node at the time of execution (not at declaration),
+// 'i' has already been incremented when the print fires.
+void test_defer_in_loop() {
+    int i = 0;
+    while (i < 3) {
+        defer print(i);
+        i = i + 1;
+    }
+    println("");
+    // Expected Output: 123
+}
+
+// 3. MULTI-RETURN DEFER UNWINDING
+// Logic: Scopes unwind in LIFO order upon hitting a return.
+void test_multi_return_defer(bool branch) {
+    defer print("C");
+    if (branch) {
+        defer print("A");
+        return;
+    }
+    defer print("B");
+    return;
+}
+// Expected (branch=true): AC
+// Expected (branch=false): BC
+
+// 4. TERNARY LAZINESS (Side-Effect Guard)
+// Logic: Short-circuiting prevents the unchosen branch from evaluating.
+int track(int x) {
+    print(x);
+    return x;
+}
+
+void test_ternary_laziness() {
+    int res = true ? track(1) : track(2);
+    // Expected: 1 (Only the true branch evaluates)
+}
+
+// 5. PIPE ASSOCIATIVITY & ORDERING
+int add1(int x) { return x + 1; }
+int pipe_order(int lhs, int rhs) { return lhs + rhs; }
+
+void test_pipe_semantics() {
+    // Associativity: (((1 |> add1) |> add1) |> add1)...
+    int res = 1 |> add1() |> add1();
+    println(res); // Expected: 3
+
+    // Side-effect ordering: LHS must evaluate strictly before RHS arguments
+    track(10) |> pipe_order(track(20));
+    // Expected: 1020
+}
+
+// 6. SWITCH: CORNER CASES & FALLTHROUGH
+enum Color { RED, GREEN, BLUE }
+
+void test_switch_corners(Color c, int val) {
+    // A. Empty Switch (Compiles and runs as a safe NOP)
+    switch (val) {}
+
+    // C. Strict Fallthrough Check
+    switch (1) {
+        case 1: println("Hit 1"); break;
+        case 2: println("Hit 2"); break;
+    }
+}
+
+// 7. BREAK/CONTINUE IN SWITCH-LOOP COMBO
+// Logic: 'continue' inside a switch safely bubbles up to the nearest loop condition.
+void test_loop_switch_interop() {
+    int i = 0;
+    while (i < 1) {
+        i = i + 1;
+        switch (i) {
+            case 1:
+                // Valid in Moksha: Continues the surrounding while loop
+                continue;
+        }
+    }
+}
+
+test_continue_nested();
+test_defer_in_loop();
+test_multi_return_defer(true);
+println("");
+test_ternary_laziness();
+println("");
+test_pipe_semantics();
+println("");
+test_switch_corners(Color.RED, 15);

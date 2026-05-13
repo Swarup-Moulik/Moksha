@@ -1,0 +1,36 @@
+println("--- [E2E] exception_async_and_pipelines.mox ---")
+
+async void yield() {}
+
+// 1. ASYNC + FINALLY
+async void async_thrower() {
+    await yield();
+    throw "Async Boom";
+}
+
+async void test_async_finally() {
+    try {
+        await async_thrower();
+    } finally {
+        // MUST run even though the throw happened across a cooperative suspension point
+        println("Async finally executed");
+    }
+}
+
+// 2. PIPELINE SHORT-CIRCUITING
+int safe_call(int x) { return x + 1; }
+int risky_call(int x) { throw "Pipeline Break"; }
+int unreachable_call(int x) { println("SHOULD NOT RUN"); return x; }
+
+void test_pipeline_eval() {
+    try {
+        // Strict Left-to-Right evaluation.
+        // risky_call throws, so unreachable_call is never evaluated.
+        10 |> safe_call() |> risky_call() |> unreachable_call();
+    } catch (string e) {
+        println("Pipeline safely halted");
+    }
+}
+
+test_pipeline_eval();
+test_async_finally()

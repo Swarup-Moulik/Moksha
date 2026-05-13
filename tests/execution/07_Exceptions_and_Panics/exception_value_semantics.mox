@@ -1,0 +1,22 @@
+println("--- [E2E] exception_value_semantics.mox ---")
+
+struct StatefulError {
+    int code;
+}
+
+void test_exception_identity() {
+    StatefulError e;
+    e.code = 404;
+
+    try {
+        throw e; // Creates a copy/move into the LLVM unwind payload
+    } catch (StatefulError caught) {
+        // Mutating the local variable 'e' should NOT mutate the caught payload
+        e.code = 500;
+
+        println("Caught code: " + string(caught.code)); // Expected: 404
+        println("Local code: " + string(e.code));       // Expected: 500
+    }
+}
+
+test_exception_identity();

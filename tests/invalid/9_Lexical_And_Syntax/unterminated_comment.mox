@@ -1,0 +1,5 @@
+int valid_var = 1;
+
+/* This block comment starts but never ends.
+   The lexer's skipComment() method must detect EOF
+   and emit an error rather than getting stuck in an infinite loop.

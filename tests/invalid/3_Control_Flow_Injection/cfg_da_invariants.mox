@@ -1,0 +1,76 @@
+void test_switch_fallthrough(int choice) {
+    int d;
+    // INVARIANT: Explicit `break` required. No implicit fallthrough.
+    switch (choice) {
+        case 1:
+            d = 40;
+            break;
+        case 2:
+            d = 50;
+            break;
+        default:
+            d = 0;
+            break;
+    }
+    // [Success]: `d` is safely assigned on all paths.
+    println(d);
+}
+
+void test_path_completeness(bool cond) {
+    int x;
+    if (cond) {
+        x = 10;
+    } else {
+        // INVARIANT: `throw` is a terminal node in the CFG.
+        // The path never exits the `else` block normally.
+        throw "Abort path";
+    }
+    // [Success]: `x` is definitely assigned on all non-terminal paths reaching here.
+    println(x);
+}
+
+void test_finally_da_override() {
+    int data;
+    try {
+        data = 1;
+    } finally {
+        // INVARIANT: Control-flow jumps in `finally` (throw/return) override
+        // the normal block execution. The assignment `data = 1` does not survive
+        // the jump.
+        throw "override";
+    }
+    // [CFGError / UnreachableCode]: This line is mathematically unreachable.
+    println(data);
+}
+
+void test_infinite_loop_reachability(bool cond) {
+    int y;
+    while (true) {
+        if (cond) {
+            y = 10;
+            break; // Validates DA on the break path
+        }
+    }
+    // [Success]: The only way to reach this line is via `break`, where `y` is assigned.
+    println(y);
+
+    while (true) {
+        // No break
+    }
+    // [CFGError / UnreachableCode]: The loop above never terminates.
+    println("Ghosts");
+}
+
+void test_constant_propagation() {
+    // INVARIANT: The compiler must fold constants before reachability analysis.
+    if (false) {
+        // [CFGError / UnreachableCode]
+        println("Dead code via literal");
+    }
+
+    const bool f = false;
+    if (f) {
+        // [CFGError / UnreachableCode]
+        println("Dead code via constant variable");
+    }
+}

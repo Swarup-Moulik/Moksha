@@ -22,6 +22,7 @@ void BinaryExpr::accept(ASTVisitor &v) const { v.visitBinaryExpr(this); }
 void UnaryExpr::accept(ASTVisitor &v) const { v.visitUnaryExpr(this); }
 void TernaryExpr::accept(ASTVisitor &v) const { v.visitTernaryExpr(this); }
 void CastExpr::accept(ASTVisitor &v) const { v.visitCastExpr(this); }
+void BitcastExpr::accept(ASTVisitor &v) const { v.visitBitcastExpr(this); }
 
 void IdentifierExpr::accept(ASTVisitor &v) const {
   v.visitIdentifierExpr(this);
@@ -44,6 +45,7 @@ void ThisExpr::accept(ASTVisitor &v) const { v.visitThisExpr(this); }
 void SuperExpr::accept(ASTVisitor &v) const { v.visitSuperExpr(this); }
 void SizeOfExpr::accept(ASTVisitor &v) const { v.visitSizeOfExpr(this); }
 void InputExpr::accept(ASTVisitor &v) const { v.visitInputExpr(this); }
+void AsmExpr::accept(ASTVisitor &v) const { v.visitAsmExpr(this); }
 
 // --- Expr Cloning Implementations ---
 
@@ -122,6 +124,8 @@ std::unique_ptr<Expr> MemberExpr::clone() const {
                         this->getBitWidth(), this->getBitOffset());
   cloned->setType(this->getType());
   cloned->setVirtualMethodInfo(isVirtualMethod(), getMemberIndex());
+  cloned->setQualifiedParent(this->qualifiedParent);
+  cloned->setParentUpcast(this->parentUpcast);
   return cloned;
 }
 std::unique_ptr<Expr> IndexExpr::clone() const {
@@ -162,12 +166,17 @@ LambdaExpr::LambdaExpr(std::vector<LambdaParam> params,
 std::unique_ptr<Expr> LambdaExpr::clone() const {
   std::vector<LambdaParam> clonedParams;
   for (const auto &p : params) {
-    clonedParams.push_back(
-        p.clone()); // Assuming LambdaParam has a clone() method
+    clonedParams.push_back(p.clone());
   }
-  // [FIX] Pass the captureMode to the new clone
-  return std::make_unique<LambdaExpr>(std::move(clonedParams), body->clone(),
-                                      isExprBody, captureMode, loc);
+  auto cloned = std::make_unique<LambdaExpr>(
+      std::move(clonedParams), body->clone(), isExprBody, captureMode, loc);
+  cloned->setAsync(this->isAsyncFlag);
+  // Also copy captures over if they were generated
+  for (const auto &c : captures) {
+    cloned->addCapture(c.name, c.type, c.mode);
+  }
+  cloned->setType(this->type);
+  return cloned;
 }
 
 std::unique_ptr<Expr> ThreadExpr::clone() const {

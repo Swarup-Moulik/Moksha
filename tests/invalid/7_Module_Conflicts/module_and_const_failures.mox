@@ -1,0 +1,33 @@
+println("--- [E2E] module_and_const_failures.mox ---");
+
+class Object {
+    public int data;
+}
+
+void trigger_strict_rejections() {
+    // ---------------------------------------------------------
+    // 1. Shallow Const Violations
+    // ---------------------------------------------------------
+    const int x = 10;
+    // EXPECTED ERROR: Cannot assign to const variable 'x'.
+    x = 20;
+
+    // ---------------------------------------------------------
+    // 2. Deep Const Violations
+    // ---------------------------------------------------------
+    const int[] arr = [1, 2, 3];
+    // EXPECTED ERROR: Cannot mutate elements of a const array. (Deep Immutability)
+    arr[0] = 10;
+
+    const Object obj = new Object();
+    // EXPECTED ERROR: Cannot mutate fields of a const object.
+    obj.data = 99;
+
+    // ---------------------------------------------------------
+    // 3. Local Initialization Violations
+    // ---------------------------------------------------------
+    Vector2 uninit_v;
+    // EXPECTED ERROR: Use of uninitialized local variable 'uninit_v'.
+    // (Unlike class members, locals must be explicitly assigned before read).
+    println(uninit_v.x);
+}

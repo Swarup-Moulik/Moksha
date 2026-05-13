@@ -8,6 +8,7 @@ void BuiltinRegistry::registerBuiltins(ASTContext &ctx, SymbolTable &sym) {
   registerGenericArrayBuiltins(ctx, sym);
   registerStandardIO(ctx, sym);
   registerAtomics(ctx, sym);
+  registerAsyncBuiltins(ctx, sym);
 
   // --- Register Math / Bitwise Intrinsics ---
   SourceLocation loc;
@@ -54,6 +55,44 @@ void BuiltinRegistry::registerBuiltins(ASTContext &ctx, SymbolTable &sym) {
                   Symbol(SymbolKind::Function, "clz", nullptr, funcDecl.get()));
     ctx.takeOwnership(std::move(funcDecl));
   }
+
+  // Register Exception Class
+  {
+    std::vector<DeclPtr> members;
+    SourceLocation loc;
+
+    // constructor(msg: string)
+    std::vector<FunctionDecl::Param> ctorParams;
+    ctorParams.push_back(
+        {"msg",
+         std::make_unique<PrimitiveType>(PrimitiveType::Scalar::String, loc),
+         loc});
+    members.push_back(std::make_unique<FunctionDecl>(
+        "constructor", std::move(ctorParams),
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc),
+        nullptr, false, false, false, false, Visibility::Public, loc));
+
+    // message: string
+    members.push_back(std::make_unique<VariableDecl>(
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::String, loc),
+        "message", nullptr, false, /* isConst */
+        false,                     /* isThreadLocal */
+        false,                     /* isStatic */
+        Visibility::Public, loc));
+
+    auto classDecl = std::make_unique<ClassDecl>(
+        "Exception", std::vector<std::string>{}, std::move(members),
+        true, // isRefClass = true (heap allocated)
+        AggregateKind::Class, Visibility::Public, loc);
+
+    sym.addSymbol("Exception",
+                  Symbol(SymbolKind::Class, "Exception",
+                         ctx.createNamedType("Exception"), classDecl.get()),
+                  loc);
+
+    ctx.registerClass(classDecl.get());
+    ctx.takeOwnership(std::move(classDecl));
+  }
 }
 
 void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
@@ -64,10 +103,10 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
   {
     std::vector<FunctionDecl::Param> params;
     params.push_back({"arr",
-                      std::make_unique<ArrayType>(
+                      std::make_unique<SliceType>(
                           std::make_unique<NamedType>(
                               "T", std::vector<NamedType::GenericArg>{}, loc),
-                          nullptr, loc),
+                          loc),
                       loc});
     params.push_back({"val",
                       std::make_unique<NamedType>(
@@ -83,9 +122,8 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
         "push", std::vector<GenericDecl::GenericParam>{{"T", false, loc}},
         std::move(funcDecl), loc);
 
-    // [FIX] Register the GenericDecl directly. No synthetic FunctionType!
-    sym.addSymbol("push", Symbol(SymbolKind::Function, "push", nullptr,
-                                 genericDecl.get()));
+    sym.addOverload("push", Symbol(SymbolKind::Function, "push", nullptr,
+                                   genericDecl.get()));
     ctx.takeOwnership(std::move(genericDecl));
   }
 
@@ -93,10 +131,10 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
   {
     std::vector<FunctionDecl::Param> params;
     params.push_back({"arr",
-                      std::make_unique<ArrayType>(
+                      std::make_unique<SliceType>(
                           std::make_unique<NamedType>(
                               "T", std::vector<NamedType::GenericArg>{}, loc),
-                          nullptr, loc),
+                          loc),
                       loc});
 
     auto funcDecl = std::make_unique<FunctionDecl>(
@@ -109,7 +147,7 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
         "pop", std::vector<GenericDecl::GenericParam>{{"T", false, loc}},
         std::move(funcDecl), loc);
 
-    sym.addSymbol(
+    sym.addOverload(
         "pop", Symbol(SymbolKind::Function, "pop", nullptr, genericDecl.get()));
     ctx.takeOwnership(std::move(genericDecl));
   }
@@ -118,10 +156,10 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
   {
     std::vector<FunctionDecl::Param> params;
     params.push_back({"arr",
-                      std::make_unique<ArrayType>(
+                      std::make_unique<SliceType>(
                           std::make_unique<NamedType>(
                               "T", std::vector<NamedType::GenericArg>{}, loc),
-                          nullptr, loc),
+                          loc),
                       loc});
 
     auto funcDecl = std::make_unique<FunctionDecl>(
@@ -133,8 +171,8 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
         "length", std::vector<GenericDecl::GenericParam>{{"T", false, loc}},
         std::move(funcDecl), loc);
 
-    sym.addSymbol("length", Symbol(SymbolKind::Function, "length", nullptr,
-                                   genericDecl.get()));
+    sym.addOverload("length", Symbol(SymbolKind::Function, "length", nullptr,
+                                     genericDecl.get()));
     ctx.takeOwnership(std::move(genericDecl));
   }
 
@@ -142,10 +180,10 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
   {
     std::vector<FunctionDecl::Param> params;
     params.push_back({"arr",
-                      std::make_unique<ArrayType>(
+                      std::make_unique<SliceType>(
                           std::make_unique<NamedType>(
                               "T", std::vector<NamedType::GenericArg>{}, loc),
-                          nullptr, loc),
+                          loc),
                       loc});
     params.push_back(
         {"index",
@@ -162,7 +200,7 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
         "at", std::vector<GenericDecl::GenericParam>{{"T", false, loc}},
         std::move(funcDecl), loc);
 
-    sym.addSymbol(
+    sym.addOverload(
         "at", Symbol(SymbolKind::Function, "at", nullptr, genericDecl.get()));
     ctx.takeOwnership(std::move(genericDecl));
   }
@@ -185,8 +223,8 @@ void BuiltinRegistry::registerStandardIO(ASTContext &ctx, SymbolTable &sym) {
         nullptr, false, false, false, false, Visibility::Public, loc);
     funcDecl->setBuiltin(true);
 
-    sym.addSymbol("length", Symbol(SymbolKind::Function, "length", nullptr,
-                                   funcDecl.get()));
+    sym.addOverload("length", Symbol(SymbolKind::Function, "length", nullptr,
+                                     funcDecl.get()));
     ctx.takeOwnership(std::move(funcDecl));
   }
 
@@ -209,8 +247,8 @@ void BuiltinRegistry::registerStandardIO(ASTContext &ctx, SymbolTable &sym) {
         nullptr, false, false, false, false, Visibility::Public, loc);
     funcDecl->setBuiltin(true);
 
-    sym.addSymbol("at",
-                  Symbol(SymbolKind::Function, "at", nullptr, funcDecl.get()));
+    sym.addOverload(
+        "at", Symbol(SymbolKind::Function, "at", nullptr, funcDecl.get()));
     ctx.takeOwnership(std::move(funcDecl));
   }
 
@@ -225,7 +263,6 @@ void BuiltinRegistry::registerStandardIO(ASTContext &ctx, SymbolTable &sym) {
         nullptr, false, false, true, false, Visibility::Public, loc);
     funcDecl->setBuiltin(true);
 
-    // [FIX] Use Decl-backed symbol. Type pointer is nullptr.
     sym.addSymbol("print", Symbol(SymbolKind::Function, "print", nullptr,
                                   funcDecl.get()));
     ctx.takeOwnership(std::move(funcDecl));
@@ -242,7 +279,6 @@ void BuiltinRegistry::registerStandardIO(ASTContext &ctx, SymbolTable &sym) {
         nullptr, false, false, true, false, Visibility::Public, loc);
     funcDecl->setBuiltin(true);
 
-    // [FIX] Use Decl-backed symbol
     sym.addSymbol("println", Symbol(SymbolKind::Function, "println", nullptr,
                                     funcDecl.get()));
     ctx.takeOwnership(std::move(funcDecl));
@@ -369,6 +405,243 @@ void BuiltinRegistry::registerAtomics(ASTContext &ctx, SymbolTable &sym) {
                          funcDecl.get()));
 
     ctx.takeOwnership(std::move(funcDecl));
+  }
+}
+
+void BuiltinRegistry::registerAsyncBuiltins(ASTContext &ctx, SymbolTable &sym) {
+  SourceLocation loc;
+
+  // 1. spawn(task: any, ...args: any) -> promise<any>
+  {
+    std::vector<FunctionDecl::Param> params;
+    params.push_back({"task", std::make_unique<AnyType>(loc), loc});
+    params.push_back({"args", std::make_unique<AnyType>(loc), loc});
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        "spawn", std::move(params),
+        std::make_unique<PromiseType>(std::make_unique<AnyType>(loc), loc),
+        nullptr, false, false, true /* isVariadic */, false, Visibility::Public,
+        loc);
+    funcDecl->setBuiltin(true);
+    sym.addSymbol("spawn", Symbol(SymbolKind::Function, "spawn", nullptr,
+                                  funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  }
+
+  // 2. cancel(task: any) -> void
+  {
+    std::vector<FunctionDecl::Param> params;
+    params.push_back({"task", std::make_unique<AnyType>(loc), loc});
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        "cancel", std::move(params),
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc),
+        nullptr, false, false, false, false, Visibility::Public, loc);
+    funcDecl->setBuiltin(true);
+    sym.addSymbol("cancel", Symbol(SymbolKind::Function, "cancel", nullptr,
+                                   funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  }
+
+  // 3. timeout(task: any, ms: i32) -> promise<promise<any>>
+  {
+    std::vector<FunctionDecl::Param> params;
+    params.push_back({"task", std::make_unique<AnyType>(loc), loc});
+    params.push_back(
+        {"ms", std::make_unique<PrimitiveType>(PrimitiveType::Scalar::I32, loc),
+         loc});
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        "timeout", std::move(params),
+        std::make_unique<PromiseType>(
+            std::make_unique<PromiseType>(std::make_unique<AnyType>(loc), loc),
+            loc),
+        nullptr, false, false, false, false, Visibility::Public, loc);
+    funcDecl->setBuiltin(true);
+    sym.addSymbol("timeout", Symbol(SymbolKind::Function, "timeout", nullptr,
+                                    funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  }
+
+  // 4. join(...tasks: any) -> promise<any[]>
+  {
+    std::vector<FunctionDecl::Param> params;
+    params.push_back({"tasks", std::make_unique<AnyType>(loc), loc});
+    auto sliceType =
+        std::make_unique<SliceType>(std::make_unique<AnyType>(loc), loc);
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        "join", std::move(params),
+        std::make_unique<PromiseType>(std::move(sliceType), loc), nullptr,
+        false, false, true /* isVariadic */, false, Visibility::Public, loc);
+    funcDecl->setBuiltin(true);
+    sym.addSymbol(
+        "join", Symbol(SymbolKind::Function, "join", nullptr, funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  }
+
+  // 5. select(...tasks: any) -> promise<any>
+  {
+    std::vector<FunctionDecl::Param> params;
+    params.push_back({"tasks", std::make_unique<AnyType>(loc), loc});
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        "select", std::move(params),
+        std::make_unique<PromiseType>(std::make_unique<AnyType>(loc), loc),
+        nullptr, false, false, true /* isVariadic */, false, Visibility::Public,
+        loc);
+    funcDecl->setBuiltin(true);
+    sym.addSymbol("select", Symbol(SymbolKind::Function, "select", nullptr,
+                                   funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  }
+
+  // 6. yield() -> promise<void>
+  {
+    std::vector<FunctionDecl::Param> params;
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        "yield", std::move(params),
+        std::make_unique<PromiseType>(
+            std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc),
+            loc),
+        nullptr, false, false, false, false, Visibility::Public, loc);
+    funcDecl->setBuiltin(true);
+    sym.addSymbol("yield", Symbol(SymbolKind::Function, "yield", nullptr,
+                                  funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  }
+
+  // 7. sleep(ms: i32) -> promise<void>
+  {
+    std::vector<FunctionDecl::Param> params;
+    params.push_back(
+        {"ms", std::make_unique<PrimitiveType>(PrimitiveType::Scalar::I32, loc),
+         loc});
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        "sleep", std::move(params),
+        std::make_unique<PromiseType>(
+            std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc),
+            loc),
+        nullptr, false, false, false, false, Visibility::Public, loc);
+    funcDecl->setBuiltin(true);
+    sym.addSymbol("sleep", Symbol(SymbolKind::Function, "sleep", nullptr,
+                                  funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  }
+
+  // 8. Channel<T> Generic Class
+  {
+    std::vector<std::unique_ptr<Decl>> members;
+
+    // constructor(capacity: i32)
+    std::vector<FunctionDecl::Param> ctorParams;
+    ctorParams.push_back(
+        {"capacity",
+         std::make_unique<PrimitiveType>(PrimitiveType::Scalar::I32, loc),
+         loc});
+    members.push_back(std::make_unique<FunctionDecl>(
+        "constructor", std::move(ctorParams),
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc),
+        nullptr, false, false, false, false, Visibility::Public, loc));
+
+    // send(val: T) -> promise<void>
+    std::vector<FunctionDecl::Param> sendParams;
+    sendParams.push_back({"val",
+                          std::make_unique<NamedType>(
+                              "T", std::vector<NamedType::GenericArg>{}, loc),
+                          loc});
+    members.push_back(std::make_unique<FunctionDecl>(
+        "send", std::move(sendParams),
+        std::make_unique<PromiseType>(
+            std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc),
+            loc),
+        nullptr, false, false, false, false, Visibility::Public, loc));
+
+    // recv() -> promise<T>
+    members.push_back(std::make_unique<FunctionDecl>(
+        "recv", std::vector<FunctionDecl::Param>{},
+        std::make_unique<PromiseType>(
+            std::make_unique<NamedType>(
+                "T", std::vector<NamedType::GenericArg>{}, loc),
+            loc),
+        nullptr, false, false, false, false, Visibility::Public, loc));
+
+    // close() -> void
+    members.push_back(std::make_unique<FunctionDecl>(
+        "close", std::vector<FunctionDecl::Param>{},
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc),
+        nullptr, false, false, false, false, Visibility::Public, loc));
+
+    auto classDecl = std::make_unique<ClassDecl>(
+        "Channel", std::vector<std::string>{}, std::move(members),
+        true /* isRefClass */, AggregateKind::Class, Visibility::Public, loc);
+
+    auto genericDecl = std::make_unique<GenericDecl>(
+        "Channel", std::vector<GenericDecl::GenericParam>{{"T", false, loc}},
+        std::move(classDecl), loc);
+
+    sym.addSymbol("Channel", Symbol(SymbolKind::Type, "Channel", nullptr,
+                                    genericDecl.get()));
+    ctx.takeOwnership(std::move(genericDecl));
+  }
+
+  // 9. AsyncMutex Class
+  {
+    std::vector<std::unique_ptr<Decl>> members;
+
+    // constructor()
+    members.push_back(std::make_unique<FunctionDecl>(
+        "constructor", std::vector<FunctionDecl::Param>{},
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc),
+        nullptr, false, false, false, false, Visibility::Public, loc));
+
+    // lock() -> promise<void>
+    members.push_back(std::make_unique<FunctionDecl>(
+        "lock", std::vector<FunctionDecl::Param>{},
+        std::make_unique<PromiseType>(
+            std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc),
+            loc),
+        nullptr, false, false, false, false, Visibility::Public, loc));
+
+    // unlock() -> void
+    members.push_back(std::make_unique<FunctionDecl>(
+        "unlock", std::vector<FunctionDecl::Param>{},
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc),
+        nullptr, false, false, false, false, Visibility::Public, loc));
+
+    auto classDecl = std::make_unique<ClassDecl>(
+        "AsyncMutex", std::vector<std::string>{}, std::move(members),
+        true /* isRefClass */, AggregateKind::Class, Visibility::Public, loc);
+
+    // Register class symbol in the Symbol Table
+    sym.addSymbol("AsyncMutex",
+                  Symbol(SymbolKind::Class, "AsyncMutex",
+                         ctx.createNamedType("AsyncMutex"), classDecl.get()),
+                  loc);
+
+    // Register in ASTContext so member lookup succeeds
+    ctx.registerClass(classDecl.get());
+    ctx.takeOwnership(std::move(classDecl));
+  }
+
+  // 10. ChannelClosedException Class
+  {
+    std::vector<std::unique_ptr<Decl>> members;
+
+    // constructor()
+    members.push_back(std::make_unique<FunctionDecl>(
+        "constructor", std::vector<FunctionDecl::Param>{},
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc),
+        nullptr, false, false, false, false, Visibility::Public, loc));
+
+    auto classDecl = std::make_unique<ClassDecl>(
+        "ChannelClosedException", std::vector<std::string>{},
+        std::move(members), true /* isRefClass */, AggregateKind::Class,
+        Visibility::Public, loc);
+
+    sym.addSymbol("ChannelClosedException",
+                  Symbol(SymbolKind::Class, "ChannelClosedException",
+                         ctx.createNamedType("ChannelClosedException"),
+                         classDecl.get()),
+                  loc);
+
+    ctx.registerClass(classDecl.get());
+    ctx.takeOwnership(std::move(classDecl));
   }
 }
 

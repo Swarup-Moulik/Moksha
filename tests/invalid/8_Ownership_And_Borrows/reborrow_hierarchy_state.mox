@@ -1,0 +1,20 @@
+void test_hierarchical_reborrow() {
+    int root = 10;
+    *mut int a = &root;
+
+    // Effect: Freeze(a), Write(b)
+    // 'a' transitions to State::Frozen.
+    *mut int b = a;
+
+    // ERROR EXPECTED: Temporal overlap conflict.
+    // 'a' is currently in State::Frozen. It cannot be used for writing
+    // until 'b's capability region is popped off the alias graph.
+    *a = 20;
+
+    *b = 30; // 'b' is last used here.
+
+    // SUCCESS EXPECTED: Capability Restoration.
+    // The GAG must recognize that 'b's lifetime has ended.
+    // 'a' transitions from State::Frozen back to State::Active.
+    *a = 40;
+}

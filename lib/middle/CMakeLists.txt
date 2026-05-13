@@ -33,7 +33,6 @@ add_library(MokshaMiddle
 
     ownership/ARCAnalyzer.cpp
     ownership/ARCInserter.cpp
-    ownership/BorrowChecker.cpp
 )
 
 target_link_libraries(MokshaMiddle

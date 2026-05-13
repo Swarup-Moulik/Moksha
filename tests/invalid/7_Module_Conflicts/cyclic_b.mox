@@ -1,0 +1,8 @@
+from "cyclic_dependency_value" import { ClassA }
+
+class ClassB {
+    // This field completes the infinite recursion.
+    // Because both ClassA and ClassB are value types,
+    // the compiler cannot determine a finite size for either.
+    public ClassA a;
+}

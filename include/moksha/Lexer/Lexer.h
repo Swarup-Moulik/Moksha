@@ -90,6 +90,7 @@ enum class TokenKind {
   KwPromise,
   KwConst,
   KwCast,
+  KwBitcast,
   KwStatic,
   KwAsync,
   KwAwait,
@@ -120,6 +121,9 @@ enum class TokenKind {
   KwInput,
   KwClosure,
   KwMove,
+  KwOut,
+  KwInout,
+  KwClobber,
 
   // --- OS & Low-Level Additions ---
   KwExtern,

@@ -1,0 +1,15 @@
+class ValueBase {
+    int x;
+}
+
+ref class RefBase {
+    int y;
+}
+
+// ERROR: Value class cannot inherit from Ref class
+class WrongValue(RefBase) {
+}
+
+// ERROR: Ref class cannot inherit from Value class
+ref class WrongRef(ValueBase) {
+}

@@ -1,0 +1,18 @@
+void test_array_borrows() {
+    int a = 1;
+    int b = 2;
+
+    // Array holding active mutable capabilities
+    *mut int[] ptr_array = [&a, &b];
+
+    // Extract a mutable pointer from the container via index
+    *mut int p1 = ptr_array[0];
+
+    // ERROR EXPECTED: The compiler must track that the capability at ptr_array[0]
+    // is already extracted/borrowed. Taking a second view or mut via the same
+    // index is illegal aliasing.
+    *view int p2 = ptr_array[0];
+
+    *p1 = 10;
+    print(*p2);
+}

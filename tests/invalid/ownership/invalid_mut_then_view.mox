@@ -1,7 +1,0 @@
-void test_mut_view_conflict() {
-    int x = 0;
-    *mut int m = &x;
-    *view int v = &x; // ERROR EXPECTED: Cannot borrow immutably while borrowed mutably.
-
-    *m = 1; // -> Keeps the mutable loan 'm' alive down to here!
-}

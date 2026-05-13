@@ -603,10 +603,23 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
     }
     break;
   }
-  case Opcode::LandingPad:
-    // A LandingPad must be the very first non-phi instruction in an unwind
-    // block.
+  case Opcode::LandingPad: {
+    const auto *lpad = static_cast<const LandingPadInst *>(inst);
+
+    // A landing pad usually returns a struct { i8*, i32 }
+    if (!lpad->getType() ||
+        lpad->getType()->getKind() != hir::TypeKind::Struct) {
+      logError("LandingPadInst must return a struct type { i8*, i32 }", inst);
+    }
+
+    // Verify all catch types attached to this landing pad
+    for (const auto *catchTy : lpad->getCatchTypes()) {
+      if (!catchTy) {
+        logError("LandingPadInst contains a null catch type", inst);
+      }
+    }
     break;
+  }
   case Opcode::Resume:
   case Opcode::Throw: {
     // Just verify they actually hold a value to throw/resume

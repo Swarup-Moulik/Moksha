@@ -46,6 +46,7 @@ public:
   virtual void visitUnaryExpr(const UnaryExpr *expr) = 0;
   virtual void visitTernaryExpr(const TernaryExpr *expr) = 0;
   virtual void visitCastExpr(const CastExpr *expr) = 0;
+  virtual void visitBitcastExpr(const BitcastExpr *expr) = 0;
   virtual void visitIdentifierExpr(const IdentifierExpr *expr) = 0;
   virtual void visitCallExpr(const CallExpr *expr) = 0;
   virtual void visitMemberExpr(const MemberExpr *expr) = 0;
@@ -59,6 +60,7 @@ public:
   virtual void visitAwaitExpr(const AwaitExpr *expr) = 0;
   virtual void visitSizeOfExpr(const SizeOfExpr *expr) = 0;
   virtual void visitInputExpr(const InputExpr *expr) = 0;
+  virtual void visitAsmExpr(const AsmExpr *expr) = 0;
 
   // --- Declarations ---
   virtual void visitModuleDecl(const ModuleDecl *decl) = 0;
@@ -88,7 +90,6 @@ public:
   virtual void visitUnsafeBlockStmt(const UnsafeBlockStmt *stmt) = 0;
   virtual void visitTryCatchStmt(const TryCatchStmt *stmt) = 0;
   virtual void visitThrowStmt(const ThrowStmt *stmt) = 0;
-  virtual void visitAsmStmt(const AsmStmt *stmt) = 0;
   virtual void visitLockStmt(const LockStmt *stmt) = 0;
 };
 

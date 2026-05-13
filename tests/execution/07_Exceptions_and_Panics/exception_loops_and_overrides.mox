@@ -1,0 +1,31 @@
+println("--- [E2E] exception_loops_and_overrides.mox ---")
+
+// 1. EXCEPTION + LOOPS (Break/Continue)
+int test_loop_break() {
+    int cleanup_count = 0;
+    while (true) {
+        try {
+            break; // Exiting the loop
+        } finally {
+            cleanup_count = cleanup_count + 1; // MUST execute before break resolves
+        }
+    }
+    return cleanup_count;
+}
+
+// 2. EXCEPTION DURING FINALLY
+void test_throw_inside_finally() {
+    try {
+        try {
+            throw "Original Error";
+        } finally {
+            throw "Finally Override Error"; // Thrown while unwinding
+        }
+    } catch (string e) {
+        // The newest exception wins and replaces the original.
+        println("Caught: " + e); // Expected: Caught: Finally Override Error
+    }
+}
+
+println(test_loop_break()); // Expected: 1
+test_throw_inside_finally();

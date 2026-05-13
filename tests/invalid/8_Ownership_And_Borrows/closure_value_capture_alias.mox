@@ -1,0 +1,16 @@
+void test_closure_pointer_capture() {
+    int x = 10;
+    *mut int p = &x;
+
+    // The closure captures 'p' by value, copying the physical pointer.
+    closure() -> void mutate_via_copy = () => {
+        *p = 20;
+    };
+
+    // ERROR EXPECTED: The closure now holds a duplicated *mut capability
+    // to 'x'. This violates strict single-writer rules. The compiler must
+    // either force a move of 'p' into the closure or reject the capture.
+    *p = 30;
+
+    mutate_via_copy();
+}

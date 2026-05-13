@@ -1,0 +1,44 @@
+class Animal {}
+class Dog(Animal) {}
+
+generic Box<T> {}
+
+// --- 1. Strict Generic Invariance ---
+// INVARIANT: Generics are strictly invariant by default. `Box<Dog>` is NOT a subtype of `Box<Animal>`.
+void test_generic_variance() {
+    Box<Dog> dogBox;
+    Box<Animal> animalBox = dogBox;
+    // [TypeError]: Box<T> is invariant.
+}
+
+// --- 2. Function Type Contravariance ---
+// INVARIANT: Function arguments are contravariant, returns are covariant.
+void test_function_subtyping() {
+    // If we expect a function that can handle ANY animal...
+    closure(Animal) -> void handler;
+
+    // ...we cannot assign a function that ONLY handles Dogs.
+    closure(Dog) -> void dog_only = (Dog d) => {};
+
+    handler = dog_only;
+    // [TypeError]: Function parameters are contravariant. `Dog` is not a supertype of `Animal`.
+}
+
+// --- 3. CFG Return Completeness ---
+// INVARIANT: `throw` and infinite loops are terminal nodes. The typechecker
+// must respect CFG dominance for return analysis.
+int valid_cfg_return(bool flag) {
+    if (flag) {
+        return 1;
+    }
+    throw "Exception path";
+    // [Success]: CFG recognizes all paths terminate mathematically.
+}
+
+int invalid_cfg_return(bool flag) {
+    if (flag) {
+        return 1;
+    }
+    // Implicit else falls through.
+    // [TypeError]: Not all control paths return a value.
+}

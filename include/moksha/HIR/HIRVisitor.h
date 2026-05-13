@@ -100,6 +100,8 @@ public:
   virtual void visitDerefExpr(HIRDerefExpr &expr) = 0;
   virtual void visitAddressOfExpr(HIRAddressOfExpr &expr) = 0;
   virtual void visitInputExpr(HIRInputExpr &expr) = 0;
+  virtual void visitSharedExpr(HIRSharedExpr &expr) = 0;
+  virtual void visitAsmExpr(HIRAsmExpr &expr) = 0;
 };
 
 class ConstHIRExprVisitor {
@@ -137,6 +139,8 @@ public:
   virtual void visitDerefExpr(const HIRDerefExpr &expr) = 0;
   virtual void visitAddressOfExpr(const HIRAddressOfExpr &expr) = 0;
   virtual void visitInputExpr(const HIRInputExpr &expr) = 0;
+  virtual void visitSharedExpr(const HIRSharedExpr &expr) = 0;
+  virtual void visitAsmExpr(const HIRAsmExpr &expr) = 0;
 };
 
 // ============================================================================
@@ -164,7 +168,6 @@ public:
   virtual void visitTryCatchStmt(TryCatchStmt &stmt) = 0;
   virtual void visitVarDeclStmt(HIRVarDeclStmt &stmt) = 0;
   virtual void visitThrowStmt(HIRThrowStmt &stmt) = 0;
-  virtual void visitAsmStmt(HIRAsmStmt &stmt) = 0;
 };
 
 class ConstHIRStmtVisitor {
@@ -188,7 +191,6 @@ public:
   virtual void visitTryCatchStmt(const TryCatchStmt &stmt) = 0;
   virtual void visitVarDeclStmt(const HIRVarDeclStmt &stmt) = 0;
   virtual void visitThrowStmt(const HIRThrowStmt &stmt) = 0;
-  virtual void visitAsmStmt(const HIRAsmStmt &stmt) = 0;
 };
 
 // ============================================================================

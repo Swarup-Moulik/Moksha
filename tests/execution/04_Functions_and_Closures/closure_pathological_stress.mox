@@ -1,0 +1,96 @@
+println("--- [E2E] closure_pathological_stress.mox ---")
+
+int track(int x) {
+    print(x);
+    return x;
+}
+
+// 1. CLOSURE + DEFAULT PARAMETER
+void test_closure_defaults() {
+    closure(int) -> int f = (int x = 10) => { return x + 1; };
+    print(f());  print("-"); // Expected: 11
+    print(f(5)); print("|"); // Expected: 6
+}
+
+// 2. DEFAULT CAPTURING OUTER SCOPE
+void test_default_capture() {
+    int base = 5;
+    // The default parameter 'x = base' requires capturing 'base' into the environment
+    closure(int) -> int make = (int x = base) => { return x; };
+    print(make()); print("|"); // Expected: 5
+}
+
+// 3. EVALUATION ORDER IN CLOSURE CALLS
+void test_closure_eval_order() {
+    closure(int, int) -> int f = (int a, int b) => { return a + b; };
+    // Must print 1, then 2 strictly before invoking f
+    int res = f(track(1), track(2));
+    print("="); print(res); print("|"); // Expected: 12=3
+}
+
+// 4. CURRYING WITH MUTABLE STATE
+void test_stateful_currying() {
+    closure() -> closure() -> int make = () => {
+        int x = 0;
+        // Use 'move' here so the middle closure takes ownership of 'x'
+        return move () => {
+            // Nested closure mutating captured outer state
+            return &mut () => {
+                x = x + 1;
+                return x;
+            }();
+        };
+    };
+    closure() -> int f = make();
+    print(f()); print("-"); // Expected: 1
+    print(f()); print("|"); // Expected: 2
+}
+
+// 6. MIXED CAPTURE MODES
+void test_mixed_capture() {
+    int a = 10;
+    int b = 20;
+    // 'b' is mutated (mut capture), 'a' is just read (view/snapshot capture)
+    closure() -> int f = &mut () => {
+        b = b + 1;
+        return a + b;
+    };
+    print(f()); print("|"); // Expected: 31
+}
+
+// 7. VIEW SEMANTICS POST-CREATION REASSIGNMENT
+void test_view_reassignment() {
+    int x = 5;
+    closure() -> int f = &() => { return x; };
+    x = 10; // Mutate after closure creation
+    print(f()); print("|"); // Expected: 10
+}
+
+// 8. RECURSIVE CAPTURE
+void test_recursive_capture() {
+    int base = 1;
+    closure(int) -> int fact = (int n) => { return 0; };
+    fact = &(int n) => {
+        if (n <= 1) return base; // Captures base alongside self-reference
+        return n * fact(n - 1);
+    };
+    print(fact(3)); print("|"); // Expected: 6
+}
+
+// 9. VARIADIC CLOSURE INTERACTION
+void call_variadic(closure(int) -> int f, ...) {
+    print(f(5));
+}
+void test_variadic_closure() {
+    call_variadic((int x) => { return x + 1; }, 1, 2, 3); print("|"); // Expected: 6
+}
+
+// --- EXECUTION ---
+test_closure_defaults();
+test_default_capture();
+test_closure_eval_order();
+test_stateful_currying();
+test_mixed_capture();
+test_view_reassignment();
+test_recursive_capture();
+test_variadic_closure();

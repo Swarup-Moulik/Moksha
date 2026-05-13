@@ -1,0 +1,42 @@
+println("--- [E2E] scheduler_priority_and_fairness.mox ---")
+
+enum TaskPriority { LOW, NORMAL, HIGH, CRITICAL }
+
+async void test_priority_scheduling() {
+    // Spawn a LOW priority task first
+    spawn(async () => {
+        await yield();
+        // RED TEAM: Even though this was spawned first, it should print second.
+        println(1); // LOW
+    }, TaskPriority.LOW);
+
+    // Spawn a HIGH priority task second
+    spawn(async () => {
+        await yield();
+        // RED TEAM: Because of its priority, this should execute first after the yield.
+        println(2); // HIGH
+    }, TaskPriority.HIGH);
+
+    await sleep(50); // Let scheduler flush
+
+    // Expected output order in console:
+    // 2
+    // 1
+}
+
+// Tests that LOW priority tasks don't starve to death if HIGH tasks spam the queue.
+async void test_starvation_prevention() {
+    // The scheduler should employ "Aging" — periodically boosting the priority
+    // of old tasks so they eventually run.
+    promise<int> low_task = spawn(async () => { return 42; }, TaskPriority.LOW);
+
+    for (int i = 0; i < 1000; i = i + 1) {
+        spawn(async () => { await yield(); }, TaskPriority.HIGH);
+    }
+
+    // Must eventually complete, not hang forever
+    println(await low_task); // Expected: 42
+}
+
+test_priority_scheduling();
+test_starvation_prevention();

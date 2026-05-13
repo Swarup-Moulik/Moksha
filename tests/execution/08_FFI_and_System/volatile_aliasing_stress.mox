@@ -1,0 +1,16 @@
+void test_volatile_aliasing() {
+    volatile int target = 0;
+    *mut int p_normal = cast<*mut int>(&target);
+    *mut volatile int p_vol = &target;
+
+    // The optimizer might think 'p_normal' is a standard store and
+    // attempt to coalesce it with 'p_vol'.
+    // Your IR must strictly maintain 'load volatile' and 'store volatile'.
+    *p_normal = 10;
+    *p_vol = 20;
+
+    int val = *p_normal;
+    print(val); // Must print '20'
+}
+
+test_volatile_aliasing()

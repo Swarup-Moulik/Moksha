@@ -1,0 +1,20 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/dev/moksha/moksha/build/cmake_install.cmake",
+		"C:/dev/moksha/moksha/build/include/moksha/Dialect/cmake_install.cmake",
+		"C:/dev/moksha/moksha/build/lib/cmake_install.cmake",
+		"C:/dev/moksha/moksha/build/lib/support/cmake_install.cmake",
+		"C:/dev/moksha/moksha/build/lib/middle/cmake_install.cmake",
+		"C:/dev/moksha/moksha/build/lib/backend/cmake_install.cmake",
+		"C:/dev/moksha/moksha/build/lib/backend/mlir/cmake_install.cmake",
+		"C:/dev/moksha/moksha/build/lib/backend/llvm/cmake_install.cmake",
+		"C:/dev/moksha/moksha/build/lib/backend/llvm/lowering/cmake_install.cmake",
+		"C:/dev/moksha/moksha/build/lib/backend/llvm/translation/cmake_install.cmake",
+		"C:/dev/moksha/moksha/build/lib/backend/llvm/codegen/cmake_install.cmake",
+		"C:/dev/moksha/moksha/build/lib/frontend/cmake_install.cmake",
+		"C:/dev/moksha/moksha/build/runtime/cmake_install.cmake",
+		"C:/dev/moksha/moksha/build/tools/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

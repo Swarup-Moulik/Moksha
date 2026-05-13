@@ -45,7 +45,7 @@ private:
   void error(const std::string &message);
   void synchronize();
 
-  DeclPtr parseTopLevelDecl();
+  std::vector<DeclPtr> parseTopLevelDecls();
   DeclPtr parseImportDecl();
   DeclPtr parseClassDecl();
   DeclPtr parseGenericDecl();
@@ -55,13 +55,12 @@ private:
                             bool isAsync = false, bool isStatic = false,
                             bool isWeak = false,
                             Visibility vis = Visibility::Default);
+  std::vector<DeclPtr> parseVariableDecls();
   DeclPtr parseVariableRest(TypePtr type, std::string name,
                             bool isConst = false, bool isStatic = false,
                             bool isShared = false,
                             Visibility vis = Visibility::Default);
-  DeclPtr parseVariableDecl();
 
-  StmtPtr parseVariableStmt();
   StmtPtr parseStatement();
   StmtPtr parseBlock();
   StmtPtr parseIfStmt();
@@ -78,7 +77,6 @@ private:
   StmtPtr parseUnsafeBlock();
   StmtPtr parseLockStmt();
   StmtPtr parseForInStmt();
-  StmtPtr parseAsmStmt();
 
   ExprPtr parseExpression();
   ExprPtr parseAssignment();
@@ -101,6 +99,7 @@ private:
   ExprPtr parsePrimary();
   ExprPtr parseNewExpr();
   ExprPtr parseInputExpr();
+  ExprPtr parseAsmExpr();
 
   ExprPtr parseStringLiteral();
   ExprPtr parseLambdaBody(std::vector<LambdaParam> params, CaptureMode mode);

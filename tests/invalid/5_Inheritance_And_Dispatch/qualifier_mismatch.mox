@@ -1,0 +1,17 @@
+class Data {
+    int val;
+    void update() { this.val = 1; }
+}
+
+void process(view Data d) {
+    // ERROR: Cannot call a 'mut' method on a 'view' reference.
+    // 'view' provides read-only access.
+    d.update();
+}
+
+void main() {
+    lock Data d = new Data(5);
+    // ERROR: Cannot move or copy a 'lock' variable to a standard mutable variable.
+    // This would bypass the "opt-in ownership" model.
+    Data d2 = d;
+}

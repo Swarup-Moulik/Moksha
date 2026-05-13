@@ -1,0 +1,11 @@
+async void network_delay() {}
+
+async void test_temporal_borrow_state() {
+    int config = 100;
+    *mut int active_mut = &config;
+
+    *active_mut = 200;
+
+    await network_delay(); // Error
+    *active_mut = 300;
+}

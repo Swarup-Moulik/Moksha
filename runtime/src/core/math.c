@@ -1,4 +1,5 @@
 #include "../../include/moksha_rt.h"
+#include <math.h>
 #include <stdint.h>
 
 // 32-bit integer exponentiation
@@ -92,13 +93,32 @@ void __moksha_dec_mul(MokshaDecimal *out, MokshaDecimal *a, MokshaDecimal *b) {
 void __moksha_dec_div(MokshaDecimal *out, MokshaDecimal *a, MokshaDecimal *b) {
   int32_t max_scale = a->scale > b->scale ? a->scale : b->scale;
   out->scale = max_scale;
+
   if (b->mantissa == 0) {
-    out->mantissa = 0;
+    // FIXED: Do not silently absorb division by zero!
+    moksha_rt_panic("Math Error: Division by zero.");
     return;
   }
+
   int32_t pow_exp = b->scale + (max_scale - a->scale);
   __int128 scaled_ma = a->mantissa * moksha_pow10_128(pow_exp);
   out->mantissa = scaled_ma / b->mantissa;
+}
+
+void __moksha_dec_mod(MokshaDecimal *out, MokshaDecimal *a, MokshaDecimal *b) {
+  int32_t max_scale = a->scale > b->scale ? a->scale : b->scale;
+  MokshaDecimal a_scaled, b_scaled;
+  __moksha_dec_scale(&a_scaled, a, max_scale);
+  __moksha_dec_scale(&b_scaled, b, max_scale);
+
+  if (b_scaled.mantissa == 0) {
+    // FIXED: Do not silently absorb modulo by zero!
+    moksha_rt_panic("Math Error: Modulo by zero.");
+    return;
+  }
+
+  out->mantissa = a_scaled.mantissa % b_scaled.mantissa;
+  out->scale = max_scale;
 }
 
 // Decimal Comparison (-1 for less, 0 for equal, 1 for greater)
@@ -115,19 +135,18 @@ int32_t __moksha_dec_cmp(MokshaDecimal *a, MokshaDecimal *b) {
   return 0; // Equal
 }
 
-// Decimal Modulo
-void __moksha_dec_mod(MokshaDecimal *out, MokshaDecimal *a, MokshaDecimal *b) {
-  int32_t max_scale = a->scale > b->scale ? a->scale : b->scale;
-  MokshaDecimal a_scaled, b_scaled;
-  __moksha_dec_scale(&a_scaled, a, max_scale);
-  __moksha_dec_scale(&b_scaled, b, max_scale);
+// --- Float to Decimal ---
+void __moksha_f64_to_decimal(MokshaDecimal *out, double val,
+                             int32_t target_scale) {
+  out->scale = target_scale;
+  // Shift the fractional part into the integer part
+  double multiplier = pow(10.0, target_scale);
+  out->mantissa = (__int128)(val * multiplier);
+}
 
-  if (b_scaled.mantissa == 0) {
-    out->mantissa = 0; // Fallback for modulo by zero
-    out->scale = max_scale;
-    return;
-  }
-
-  out->mantissa = a_scaled.mantissa % b_scaled.mantissa;
-  out->scale = max_scale;
+// --- Decimal to Float ---
+double __moksha_decimal_to_f64(MokshaDecimal *dec) {
+  double val = (double)dec->mantissa;
+  double divisor = pow(10.0, dec->scale);
+  return val / divisor;
 }

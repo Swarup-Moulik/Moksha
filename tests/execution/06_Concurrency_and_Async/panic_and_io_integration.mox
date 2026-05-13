@@ -1,0 +1,29 @@
+println("--- [E2E] panic_and_io_integration.mox ---")
+
+// 1. PANIC ISOLATION
+void test_panic_isolation() {
+    // This task throws an unhandled error
+    promise<void> explosive_task = spawn(async () => {
+        int x = 1 / 0; // Trigger runtime panic/exception
+    });
+
+    try {
+        await explosive_task;
+    } catch (TaskPanicException e) {
+        // The scheduler caught the panic, wrapped it, and failed the promise.
+        // The main OS thread DID NOT crash.
+        println("Task isolated safely"); // Expected: Task isolated safely
+    }
+}
+
+// 2. REAL I/O INTEGRATION (IOCP / Epoll Mock)
+async void test_async_io() {
+    // The runtime must map this to the OS non-blocking I/O event loop (IOCP)
+    AsyncFile file = await AsyncFile.open("test.txt", "w");
+
+    // Suspends the coroutine until the OS signals the disk write is complete
+    int bytes_written = await file.write("Hello Moksha");
+
+    println(bytes_written > 0); // Expected: true
+    await file.close();
+}

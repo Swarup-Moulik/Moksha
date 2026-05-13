@@ -1,0 +1,24 @@
+println("--- [E2E] systems_and_memory_edge_cases.mox ---");
+
+// ---------------------------------------------------------
+// 1. Struct/Class Member Zero-Initialization
+// ---------------------------------------------------------
+class Vector2 {
+    public int x;
+    public int y;
+    // No constructor provided.
+}
+
+// LAW: Heap/Stack allocations for objects zero-initialize members.
+Vector2 v = new Vector2();
+println("Zero-Init Member (Expected 0):");
+println(v.x);
+
+// ---------------------------------------------------------
+// 2. Numeric Overflow (Two's Complement Wraparound)
+// ---------------------------------------------------------
+int max_int = 2147483647;
+int wrapped = max_int + 1;
+// LAW: Standard arithmetic wraps natively to hardware behavior.
+println("Numeric Wraparound (Expected -2147483648):");
+println(wrapped);

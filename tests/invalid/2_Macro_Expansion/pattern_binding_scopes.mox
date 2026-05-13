@@ -1,0 +1,56 @@
+void test_scope_invariants(int val, any obj) {
+
+    // --- 1. Shadowing [Success] ---
+    int x = 5;
+    switch (val) {
+        case 1:
+            int x = 10;
+            // [Success]: Valid shadowing of outer `x`.
+            break;
+        case 2:
+            int y = x;
+            // [Success]: Outer `x` (5) remains intact and visible here.
+            break;
+    }
+
+    // --- 2. Basic Arm Leakage [ScopeError] ---
+    switch (val) {
+        case 1:
+            int bound_var = 10;
+            break;
+        case 2:
+            int oops = bound_var;
+            // [ScopeError]: `bound_var` is strictly scoped to case 1.
+            break;
+    }
+
+    // --- 3. True Pattern Binding Leakage [ScopeError] ---
+    switch (obj) {
+        case inner_val:
+            int a = inner_val;
+            // [Success]: `inner_val` is bound inside this arm.
+            break;
+        case None:
+            int b = inner_val;
+            // [ScopeError]: `inner_val` MUST NOT exist here.
+            break;
+    }
+
+    // --- 4. Nested Block Scope [ScopeError] ---
+    switch (val) {
+        case 1:
+            { int hidden = 42; }
+            int fail = hidden;
+            // [ScopeError]: `hidden` dies at the end of its inner block.
+            break;
+    }
+
+    // --- 5. Post-Control Flow Lifetime [ScopeError] ---
+    switch (val) {
+        case 1:
+            int short_lived = 99;
+            break;
+    }
+    int leaked = short_lived;
+    // [ScopeError]: `short_lived` cannot outlive the switch statement.
+}

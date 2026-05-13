@@ -1,0 +1,30 @@
+macro define_var(name, val) {
+    int name = val;
+}
+
+void test_macro_hygiene() {
+
+    // --- 1. Macro Binding Leakage Across Scopes [ScopeError] ---
+    switch (1) {
+        case 1:
+            define_var(injected, 100);
+            // Expands to: int injected = 100;
+            break;
+        case 2:
+            int read_fail = injected;
+            // [ScopeError]: Macro-expanded bindings MUST respect the block scope
+            // they were expanded into. No cross-arm leakage.
+            break;
+    }
+
+    // --- 2. Hygiene: Unintentional Capture [ScopeError] ---
+    // Assuming a modern, hygienic macro system (unlike C-preprocessor):
+    macro dangerous_read() {
+        return secret_val;
+    }
+
+    int secret_val = 42;
+    int try_read = dangerous_read();
+    // [ScopeError]: `secret_val` is not in the macro's lexical definition scope.
+    // A hygienic macro cannot accidentally capture local variables from the call site.
+}

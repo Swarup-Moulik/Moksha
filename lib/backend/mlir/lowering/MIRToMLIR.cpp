@@ -13,7 +13,9 @@
 #include "moksha/MIR/MIRInst.h"
 #include "moksha/MIR/MIRModule.h"
 #include "moksha/Support/Diagnostics.h"
+#include <queue>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace moksha {
 namespace backend {
@@ -36,6 +38,12 @@ public:
     ::mlir::ModuleOp mlirModule = ::mlir::ModuleOp::create(moduleLoc);
     builder.setInsertionPointToStart(mlirModule.getBody());
 
+    for (auto &func : mirModule.getFunctions()) {
+      if (func->getName() == "main" || func->getName() == "__moksha_main") {
+        this->hasMain = true;
+      }
+    }
+
     for (auto &global : mirModule.getGlobals()) {
       lowerGlobal(global);
     }
@@ -54,6 +62,7 @@ public:
   }
 
 private:
+  bool hasMain = false;
   ::mlir::MLIRContext &context;
   ::mlir::OpBuilder builder;
   DiagnosticEngine &diags;
@@ -176,12 +185,37 @@ private:
                    ::llvm::dyn_cast<mir::ConstantStruct>(constant)) {
       llvm::SmallVector<::mlir::Attribute, 4> elements;
       for (mir::MIRValue *elem : structConst->getFields()) {
-        elements.push_back(getAttributeForValue(elem));
+        // [FIX] Prevent Infinite Recursion on cyclic struct pointers
+        if (elem && elem->getType() &&
+            elem->getType()->getKind() == hir::TypeKind::Pointer) {
+          if (auto *global = ::llvm::dyn_cast<mir::MIRGlobal>(elem)) {
+            elements.push_back(::mlir::FlatSymbolRefAttr::get(
+                builder.getContext(), global->getName()));
+          } else if (auto *func = ::llvm::dyn_cast<mir::MIRFunction>(elem)) {
+            elements.push_back(::mlir::FlatSymbolRefAttr::get(
+                builder.getContext(), func->getName()));
+          } else {
+            // Otherwise, it's an opaque memory pointer. Just emit a null
+            // placeholder.
+            elements.push_back(builder.getUnitAttr());
+          }
+        } else {
+          elements.push_back(getAttributeForValue(elem));
+        }
       }
       return builder.getArrayAttr(elements);
     } else if (auto *bitcast =
                    ::llvm::dyn_cast<mir::ConstantBitCast>(constant)) {
       return getAttributeForValue(bitcast->getValue());
+    } else if (auto *anycast =
+                   ::llvm::dyn_cast<mir::ConstantAnyCast>(constant)) {
+      return getAttributeForValue(anycast->getValue());
+    } else if (auto *arrToSlice =
+                   ::llvm::dyn_cast<mir::ConstantArrayToSlice>(constant)) {
+      return getAttributeForValue(arrToSlice->getValue());
+    } else if (auto *sliceToArr =
+                   ::llvm::dyn_cast<mir::ConstantSliceToArray>(constant)) {
+      return getAttributeForValue(sliceToArr->getValue());
     }
 
     return builder.getUnitAttr();
@@ -200,12 +234,40 @@ private:
 
     auto loc = builder.getUnknownLoc();
 
-    if (auto *global = ::llvm::dyn_cast<mir::MIRGlobal>(val)) {
+    if (auto *func = ::llvm::dyn_cast<mir::MIRFunction>(val)) {
+      llvm::SmallVector<::mlir::Type, 4> argTypes;
+      for (const auto &arg : func->getArguments()) {
+        argTypes.push_back(getMLIRType(arg->getType()));
+      }
+
+      llvm::SmallVector<::mlir::Type, 1> retTypes;
+      if (func->getType() &&
+          func->getType()->getKind() != hir::TypeKind::Void) {
+        retTypes.push_back(getMLIRType(func->getType()));
+      }
+
+      ::mlir::Type funcTy = builder.getFunctionType(argTypes, retTypes);
+      ::mlir::Type ptrTy = ::moksha::IR::PointerType::get(&context, funcTy);
+
       auto addrOp = builder.create<::moksha::IR::AddressOfOp>(
-          loc, getMLIRType(global->getType()),
+          loc, ptrTy,
+          ::mlir::FlatSymbolRefAttr::get(builder.getContext(),
+                                         func->getName()));
+      return addrOp.getResult();
+    }
+
+    if (auto *global = ::llvm::dyn_cast<mir::MIRGlobal>(val)) {
+      // --- THE FIX: Only wrap in a PointerType if it isn't already one ---
+      ::mlir::Type globalTy = getMLIRType(global->getType());
+      ::mlir::Type ptrTy = globalTy;
+      if (!::llvm::isa<::moksha::IR::PointerType>(globalTy)) {
+        ptrTy = ::moksha::IR::PointerType::get(&context, globalTy);
+      }
+
+      auto addrOp = builder.create<::moksha::IR::AddressOfOp>(
+          loc, ptrTy,
           ::mlir::FlatSymbolRefAttr::get(builder.getContext(),
                                          global->getName()));
-      // We don't cache globals anymore!
       return addrOp.getResult();
     }
 
@@ -217,8 +279,32 @@ private:
         ::mlir::Value underlying = getValue(bitcast->getValue());
         if (!underlying)
           return nullptr;
-        auto castOp = builder.create<::moksha::IR::CastOp>(
+        auto castOp = builder.create<::moksha::IR::BitcastOp>(
             loc, getMLIRType(bitcast->getType()), underlying);
+        return castOp.getResult();
+      } else if (auto *anycast =
+                     ::llvm::dyn_cast<mir::ConstantAnyCast>(constant)) {
+        ::mlir::Value underlying = getValue(anycast->getValue());
+        if (!underlying)
+          return nullptr;
+        auto castOp = builder.create<::moksha::IR::CastOp>(
+            loc, getMLIRType(anycast->getType()), underlying);
+        return castOp.getResult();
+      } else if (auto *a2s =
+                     ::llvm::dyn_cast<mir::ConstantArrayToSlice>(constant)) {
+        ::mlir::Value underlying = getValue(a2s->getValue());
+        if (!underlying)
+          return nullptr;
+        auto castOp = builder.create<::moksha::IR::CastOp>(
+            loc, getMLIRType(a2s->getType()), underlying);
+        return castOp.getResult();
+      } else if (auto *s2a =
+                     ::llvm::dyn_cast<mir::ConstantSliceToArray>(constant)) {
+        ::mlir::Value underlying = getValue(s2a->getValue());
+        if (!underlying)
+          return nullptr;
+        auto castOp = builder.create<::moksha::IR::CastOp>(
+            loc, getMLIRType(s2a->getType()), underlying);
         return castOp.getResult();
       }
 
@@ -240,24 +326,54 @@ private:
     // --- ABI COERCION: Struct Return (sret) ---
     if (func->isDeclaration() && func->getType() &&
         func->getType()->getKind() == hir::TypeKind::Struct) {
-      isSRet = true;
-      sretType = getMLIRType(func->getType());
-      argTypes.push_back(::moksha::IR::PointerType::get(&context, sretType));
+
+      auto &structTy = static_cast<const hir::StructType &>(*func->getType());
+
+      auto getByteSize = [&](const hir::HIRType *t) -> size_t {
+        auto impl = [&](auto &self, const hir::HIRType *t_) -> size_t {
+          if (!t_)
+            return 8;
+          if (t_->getKind() == hir::TypeKind::Int)
+            return std::max<size_t>(
+                1, static_cast<const hir::HIRIntType *>(t_)->getWidth() / 8);
+          if (t_->getKind() == hir::TypeKind::Float)
+            return std::max<size_t>(
+                1, static_cast<const hir::HIRFloatType *>(t_)->getWidth() / 8);
+          if (t_->getKind() == hir::TypeKind::Array) {
+            auto *arr = static_cast<const hir::ArrayType *>(t_);
+            return self(self, arr->getElementType()) * arr->getSize();
+          }
+          if (t_->getKind() == hir::TypeKind::Struct) {
+            size_t size = 0;
+            for (auto *f :
+                 static_cast<const hir::StructType *>(t_)->getFields())
+              size += self(self, f);
+            return size;
+          }
+          if (t_->getKind() == hir::TypeKind::Any ||
+              t_->getKind() == hir::TypeKind::Slice ||
+              t_->getKind() == hir::TypeKind::Closure ||
+              t_->getKind() == hir::TypeKind::Map ||
+              t_->getKind() == hir::TypeKind::Decimal)
+            return 16;
+          return 8;
+        };
+        return impl(impl, t);
+      };
+
+      size_t structSize = getByteSize(&structTy);
+
+      // Windows x64 ABI: Structs larger than 8 bytes are returned via hidden
+      // pointer (sret)
+      if (structSize > 8) {
+        isSRet = true;
+        sretType = getMLIRType(func->getType());
+        argTypes.push_back(::moksha::IR::PointerType::get(&context, sretType));
+      }
     }
-    // ------------------------------------------
 
     for (const auto &arg : func->getArguments()) {
       ::mlir::Type mlirArgTy = getMLIRType(arg->getType());
-
-      // --- ABI COERCION: Homogeneous Float Aggregates ---
-      if (func->isDeclaration() &&
-          arg->getType()->getKind() == hir::TypeKind::Struct) {
-        auto &structTy = static_cast<const hir::StructType &>(*arg->getType());
-        if (structTy.getFields().size() == 4) {
-          mlirArgTy = ::mlir::VectorType::get({4}, builder.getF32Type());
-          isHFA = true;
-        }
-      }
       argTypes.push_back(mlirArgTy);
     }
 
@@ -271,10 +387,12 @@ private:
     auto funcOp = builder.create<::mlir::func::FuncOp>(
         builder.getUnknownLoc(), func->getName(), funcType);
 
-    if (func->isDeclaration())
+    if (!func->isDeclaration() &&
+        func->getLinkage() == mir::Linkage::Internal) {
       funcOp.setPrivate();
+    }
     if (func->isVariadic())
-      funcOp->setAttr("func.varargs", builder.getBoolAttr(true));
+      funcOp->setAttr("vararg", builder.getUnitAttr());
 
     // Tag the function so we can debug the IR easily
     if (isSRet) {
@@ -305,10 +423,34 @@ private:
     }
 
     // Map Function Linkage
-    std::string fnLinkStr =
-        func->getLinkage() == mir::Linkage::Internal ? "internal"
-        : func->getLinkage() == mir::Linkage::Weak   ? "weak"
-                                                     : "external";
+    std::string fnLinkStr;
+    switch (func->getLinkage()) {
+    case mir::Linkage::Internal:
+      fnLinkStr = "internal";
+      break;
+    case mir::Linkage::Weak:
+      fnLinkStr = "weak";
+      break;
+    case mir::Linkage::LinkOnce:
+      fnLinkStr = "linkonce";
+      break;
+    default:
+      fnLinkStr = "external";
+      break;
+    }
+
+    llvm::StringRef funcName = func->getName();
+
+    // 1. Struct constructors and destructors are local to the object file
+    if (funcName.contains(".constructor") || funcName.contains(".destructor")) {
+      fnLinkStr = func->isDeclaration() ? "external" : "internal";
+    }
+    // 2. Export init/destroy ONLY if this is the main module
+    else if (funcName == "__moksha_module_init" ||
+             funcName == "__moksha_module_destroy") {
+      fnLinkStr = this->hasMain ? "external" : "internal";
+    }
+
     funcOp->setAttr("moksha.linkage", builder.getStringAttr(fnLinkStr));
 
     // Map Calling Conventions
@@ -362,24 +504,56 @@ private:
 
     blockMap[func->getEntryBlock()] = mlirEntry;
 
-    for (auto &block : func->getBlocks()) {
-      if (block.get() == func->getEntryBlock())
-        continue;
+    // Stabilized Block Layout
+    std::vector<mir::MIRBlock *> layout;
+    std::unordered_set<mir::MIRBlock *> visited;
+    std::queue<mir::MIRBlock *> queue;
 
-      // Standard MLIR Block creation
-      ::mlir::Block *newBlock = new ::mlir::Block();
-      funcOp.getBody().push_back(newBlock);
-      blockMap[block.get()] = newBlock;
+    if (func->getEntryBlock()) {
+      queue.push(func->getEntryBlock());
+      visited.insert(func->getEntryBlock());
+
+      while (!queue.empty()) {
+        mir::MIRBlock *b = queue.front();
+        queue.pop();
+        layout.push_back(b);
+
+        for (auto *succ : b->getSuccessors()) {
+          if (visited.find(succ) == visited.end()) {
+            visited.insert(succ);
+            queue.push(succ);
+          }
+        }
+      }
     }
 
+    // Append any dead/unreachable blocks just in case so they don't get lost
+    for (auto &block : func->getBlocks()) {
+      if (visited.find(block.get()) == visited.end()) {
+        layout.push_back(block.get());
+      }
+    }
+
+    // 1. Create MLIR Blocks in Topological Order
+    for (mir::MIRBlock *block : layout) {
+      if (block == func->getEntryBlock())
+        continue;
+
+      ::mlir::Block *newBlock = new ::mlir::Block();
+      funcOp.getBody().push_back(newBlock);
+      blockMap[block] = newBlock;
+    }
+
+    // 2. Map Function Arguments
     for (size_t i = 0; i < func->getArguments().size(); ++i) {
       mir::MIRValue *arg = func->getArguments()[i].get();
       valueMap[arg] = mlirEntry->getArgument(i);
     }
 
-    for (auto &block : func->getBlocks()) {
-      ::mlir::Block *mlirBlock = blockMap[block.get()];
-      if (block.get() == func->getEntryBlock())
+    // 3. Create Phi Block Arguments
+    for (mir::MIRBlock *block : layout) {
+      ::mlir::Block *mlirBlock = blockMap[block];
+      if (block == func->getEntryBlock())
         continue;
 
       for (auto &inst : block->getInstructions()) {
@@ -389,18 +563,25 @@ private:
               mlirBlock->addArgument(phiType, builder.getUnknownLoc());
           valueMap[phi] = arg;
         } else {
-          break; // Phis are always at the start of the block
+          break; // Phis are always strictly at the start of the block
         }
       }
     }
 
-    for (auto &block : func->getBlocks()) {
-      builder.setInsertionPointToStart(blockMap[block.get()]);
+    // 4. Lower Instructions in Topological Order
+    for (mir::MIRBlock *block : layout) {
+      builder.setInsertionPointToStart(blockMap[block]);
       for (auto &instPtr : block->getInstructions()) {
-        if (failed(lowerInstruction(instPtr.get())))
+        if (failed(lowerInstruction(instPtr.get()))) {
+          // ---> ADD THIS DEBUG DUMP <---
+          llvm::errs() << "\n[CRITICAL] MLIR Lowering Failed on Instruction:\n";
+          instPtr->dump(llvm::errs());
+          llvm::errs() << "\nIn Function: " << func->getName() << "\n";
           return ::mlir::failure();
+        }
       }
     }
+
     return ::mlir::success();
   }
 
@@ -426,10 +607,22 @@ private:
     }
 
     // 2. Map Global Linkage
-    std::string linkStr =
-        global->getLinkage() == mir::Linkage::Internal ? "internal"
-        : global->getLinkage() == mir::Linkage::Weak   ? "weak"
-                                                       : "external";
+    std::string linkStr;
+    switch (global->getLinkage()) {
+    case mir::Linkage::Internal:
+      linkStr = "internal";
+      break;
+    case mir::Linkage::Weak:
+      linkStr = "weak";
+      break;
+    case mir::Linkage::LinkOnce:
+      linkStr = "linkonce";
+      break;
+    default:
+      linkStr = "external";
+      break;
+    }
+
     globalOp->setAttr("moksha.linkage", builder.getStringAttr(linkStr));
 
     // --- Attach all Global Attributes ---
@@ -504,11 +697,16 @@ private:
       // Store the operand vectors so their memory stays alive for ValueRange
       llvm::SmallVector<llvm::SmallVector<::mlir::Value, 4>, 4> caseOpsStorage;
 
+      std::unordered_set<int32_t> seenCases;
       for (const auto &c : swInst->getCases()) {
         if (auto *cInt = llvm::dyn_cast<mir::ConstantInt>(c.first)) {
-          caseValues.push_back(cInt->getValue());
-          caseDests.push_back(blockMap[c.second]);
-          caseOpsStorage.push_back(getPhiOperands(inst->getParent(), c.second));
+          int32_t val = cInt->getValue();
+          if (seenCases.insert(val).second) {
+            caseValues.push_back(val);
+            caseDests.push_back(blockMap[c.second]);
+            caseOpsStorage.push_back(
+                getPhiOperands(inst->getParent(), c.second));
+          }
         }
       }
 
@@ -537,6 +735,15 @@ private:
       } else {
         builder.create<::mlir::func::ReturnOp>(loc);
       }
+      break;
+    }
+    case mir::Opcode::Resume: {
+      auto *resumeInst = static_cast<mir::ResumeInst *>(inst);
+      ::mlir::Value val = getValue(resumeInst->getException());
+      if (!val)
+        return ::mlir::failure();
+
+      builder.create<::moksha::IR::ResumeOp>(loc, val);
       break;
     }
 
@@ -735,7 +942,6 @@ private:
     }
 
     // --- Casts ---
-    case mir::Opcode::BitCast:
     case mir::Opcode::IntToFloat:
     case mir::Opcode::FloatToInt:
     case mir::Opcode::Trunc:
@@ -743,7 +949,6 @@ private:
     case mir::Opcode::ZExt:
     case mir::Opcode::PtrToInt:
     case mir::Opcode::IntToPtr:
-    case mir::Opcode::AnyCast:
     case mir::Opcode::ArrayToSlice:
     case mir::Opcode::SliceToArray: {
       auto *castInst = static_cast<mir::CastInst *>(inst);
@@ -754,6 +959,58 @@ private:
       ::mlir::Type resType = getMLIRType(castInst->getType());
       auto mlirCast = builder.create<::moksha::IR::CastOp>(loc, resType, val);
       valueMap[inst] = mlirCast.getResult();
+      break;
+    }
+    case mir::Opcode::AnyCast: {
+      auto *castInst = static_cast<mir::CastInst *>(inst);
+      ::mlir::Value val = getValue(castInst->getValue());
+      if (!val)
+        return ::mlir::failure();
+
+      ::mlir::Type resType = getMLIRType(castInst->getType());
+      auto mlirCast =
+          builder.create<::moksha::IR::AnyCastOp>(loc, resType, val);
+      valueMap[inst] = mlirCast.getResult();
+      break;
+    }
+    case mir::Opcode::BitCast: {
+      auto *castInst = static_cast<mir::CastInst *>(inst);
+      ::mlir::Value operand = getValue(castInst->getValue());
+      if (!operand)
+        return ::mlir::failure();
+
+      ::mlir::Type resType = getMLIRType(castInst->getType());
+
+      if (auto prevCast = operand.getDefiningOp<::moksha::IR::BitcastOp>()) {
+        // Use ->getOperand(0) to safely fetch the inner value of the MLIR
+        // operation
+        if (prevCast->getOperand(0).getType() == resType) {
+          // The types match perfectly, bypass both casts entirely.
+          valueMap[inst] = prevCast->getOperand(0);
+          break;
+        }
+      }
+
+      auto mlirBitCastOp =
+          builder.create<::moksha::IR::BitcastOp>(loc, resType, operand);
+      valueMap[inst] = mlirBitCastOp.getResult();
+      break;
+    }
+    case mir::Opcode::Upcast: {
+      auto *castInst = static_cast<mir::CastInst *>(inst);
+      ::mlir::Value operand = getValue(castInst->getValue());
+      if (!operand)
+        return ::mlir::failure();
+
+      ::mlir::Type resType = getMLIRType(castInst->getType());
+
+      // Fetch the calculated struct offset from your MIRCast instruction
+      int32_t byteOffset = castInst->getByteOffset();
+
+      auto mlirUpcast = builder.create<::moksha::IR::UpcastOp>(
+          loc, resType, operand, builder.getI32IntegerAttr(byteOffset));
+
+      valueMap[inst] = mlirUpcast.getResult();
       break;
     }
 
@@ -777,8 +1034,50 @@ private:
               llvm::dyn_cast_or_null<mir::MIRFunction>(calleeVal)) {
         if (calleeFunc->isDeclaration() && calleeFunc->getType() &&
             calleeFunc->getType()->getKind() == hir::TypeKind::Struct) {
-          isSRet = true;
-          sretTy = getMLIRType(calleeFunc->getType());
+
+          auto &structTy =
+              static_cast<const hir::StructType &>(*calleeFunc->getType());
+
+          auto getByteSize = [&](const hir::HIRType *t) -> size_t {
+            auto impl = [&](auto &self, const hir::HIRType *t_) -> size_t {
+              if (!t_)
+                return 8;
+              if (t_->getKind() == hir::TypeKind::Int)
+                return std::max<size_t>(
+                    1,
+                    static_cast<const hir::HIRIntType *>(t_)->getWidth() / 8);
+              if (t_->getKind() == hir::TypeKind::Float)
+                return std::max<size_t>(
+                    1,
+                    static_cast<const hir::HIRFloatType *>(t_)->getWidth() / 8);
+              if (t_->getKind() == hir::TypeKind::Array) {
+                auto *arr = static_cast<const hir::ArrayType *>(t_);
+                return self(self, arr->getElementType()) * arr->getSize();
+              }
+              if (t_->getKind() == hir::TypeKind::Struct) {
+                size_t size = 0;
+                for (auto *f :
+                     static_cast<const hir::StructType *>(t_)->getFields())
+                  size += self(self, f);
+                return size;
+              }
+              if (t_->getKind() == hir::TypeKind::Any ||
+                  t_->getKind() == hir::TypeKind::Slice ||
+                  t_->getKind() == hir::TypeKind::Closure ||
+                  t_->getKind() == hir::TypeKind::Map ||
+                  t_->getKind() == hir::TypeKind::Decimal)
+                return 16;
+              return 8;
+            };
+            return impl(impl, t);
+          };
+
+          size_t structSize = getByteSize(&structTy);
+
+          if (structSize > 8) {
+            isSRet = true;
+            sretTy = getMLIRType(calleeFunc->getType());
+          }
         }
       }
 
@@ -838,7 +1137,7 @@ private:
       break;
     }
 
-    // --- ARC ---
+      // --- ARC ---
     case mir::Opcode::Retain: {
       auto *arc = static_cast<mir::ARCInst *>(inst);
       ::mlir::Value obj = getValue(arc->getObject());
@@ -1037,14 +1336,75 @@ private:
       ::mlir::Block *normalDest = blockMap[invInst->getNormalDest()];
       ::mlir::Block *unwindDest = blockMap[invInst->getUnwindDest()];
 
+      // --- [FIX] Add sret ABI logic for Invoke ---
+      bool isSRet = false;
+      ::mlir::Type sretTy;
+      mir::MIRValue *calleeVal = invInst->getCallee();
+
+      if (auto *calleeFunc =
+              llvm::dyn_cast_or_null<mir::MIRFunction>(calleeVal)) {
+        if (calleeFunc->isDeclaration() && calleeFunc->getType() &&
+            calleeFunc->getType()->getKind() == hir::TypeKind::Struct) {
+          auto &structTy =
+              static_cast<const hir::StructType &>(*calleeFunc->getType());
+
+          auto getByteSize = [&](const hir::HIRType *t) -> size_t {
+            auto impl = [&](auto &self, const hir::HIRType *t_) -> size_t {
+              if (!t_)
+                return 8;
+              if (t_->getKind() == hir::TypeKind::Int)
+                return std::max<size_t>(
+                    1,
+                    static_cast<const hir::HIRIntType *>(t_)->getWidth() / 8);
+              if (t_->getKind() == hir::TypeKind::Float)
+                return std::max<size_t>(
+                    1,
+                    static_cast<const hir::HIRFloatType *>(t_)->getWidth() / 8);
+              if (t_->getKind() == hir::TypeKind::Array) {
+                auto *arr = static_cast<const hir::ArrayType *>(t_);
+                return self(self, arr->getElementType()) * arr->getSize();
+              }
+              if (t_->getKind() == hir::TypeKind::Struct) {
+                size_t size = 0;
+                for (auto *f :
+                     static_cast<const hir::StructType *>(t_)->getFields())
+                  size += self(self, f);
+                return size;
+              }
+              if (t_->getKind() == hir::TypeKind::Any ||
+                  t_->getKind() == hir::TypeKind::Slice ||
+                  t_->getKind() == hir::TypeKind::Closure ||
+                  t_->getKind() == hir::TypeKind::Map ||
+                  t_->getKind() == hir::TypeKind::Decimal)
+                return 16;
+              return 8;
+            };
+            return impl(impl, t);
+          };
+
+          size_t structSize = getByteSize(&structTy);
+          if (structSize > 8) {
+            isSRet = true;
+            sretTy = getMLIRType(calleeFunc->getType());
+          }
+        }
+      }
+
+      ::mlir::Value sretAlloc;
+      if (isSRet) {
+        sretAlloc = builder.create<::moksha::IR::AllocaOp>(
+            loc, ::moksha::IR::PointerType::get(&context, sretTy),
+            ::mlir::TypeAttr::get(sretTy));
+        operands.insert(operands.begin(), sretAlloc);
+      }
+
       llvm::SmallVector<::mlir::Type, 1> resTypes;
-      if (invInst->getType() &&
+      if (!isSRet && invInst->getType() &&
           invInst->getType()->getKind() != hir::TypeKind::Void) {
         resTypes.push_back(getMLIRType(invInst->getType()));
       }
 
       ::mlir::Operation *invokeOp = nullptr;
-      mir::MIRValue *calleeVal = invInst->getCallee();
 
       if (auto *mirFunc = llvm::dyn_cast_or_null<mir::MIRFunction>(calleeVal)) {
         // DIRECT INVOKE
@@ -1069,7 +1429,11 @@ private:
             loc, resTypes, calleeMLIRVal, operands, normalDest, unwindDest);
       }
 
-      if (!resTypes.empty()) {
+      if (isSRet) {
+        auto loadOp =
+            builder.create<::moksha::IR::LoadOp>(loc, sretTy, sretAlloc);
+        valueMap[inst] = loadOp.getResult();
+      } else if (!resTypes.empty()) {
         valueMap[inst] = invokeOp->getResult(0);
       }
       break;
@@ -1079,14 +1443,30 @@ private:
       auto *lpadInst = static_cast<mir::LandingPadInst *>(inst);
       ::mlir::Type resType = getMLIRType(lpadInst->getType());
 
-      auto lpadOp = builder.create<::moksha::IR::LandingPadOp>(loc, resType);
+      // 1. Convert HIR catch types to MLIR TypeAttrs
+      llvm::SmallVector<::mlir::Attribute, 4> catchAttrs;
+      for (const auto *catchTy : lpadInst->getCatchTypes()) {
+        if (catchTy) {
+          ::mlir::Type mlirTy = getMLIRType(catchTy);
+          catchAttrs.push_back(::mlir::TypeAttr::get(mlirTy));
+        }
+      }
+
+      // 2. Determine if it's a cleanup pad (no catches = cleanup)
+      ::mlir::UnitAttr cleanupAttr =
+          catchAttrs.empty() ? builder.getUnitAttr() : nullptr;
+      ::mlir::ArrayAttr catchArrayAttr = builder.getArrayAttr(catchAttrs);
+
+      // 3. Create the MLIR Operation with the new attributes
+      auto lpadOp = builder.create<::moksha::IR::LandingPadOp>(
+          loc, resType, cleanupAttr, catchArrayAttr);
 
       // Store it in the map so the subsequent StoreInst can find it!
       valueMap[inst] = lpadOp.getResult();
       break;
     }
 
-      // --- Inline Assembly ---
+    // --- Inline Assembly ---
     case mir::Opcode::InlineAsm: {
       auto *asmInst = static_cast<mir::InlineAsmInst *>(inst);
 
@@ -1106,11 +1486,32 @@ private:
 
       auto mlirAsmOp = builder.create<::moksha::IR::InlineAsmOp>(
           loc, resTypes, builder.getStringAttr(asmInst->getAsmString()),
-          builder.getStringAttr(asmInst->getConstraints()), operands);
+          builder.getStringAttr(asmInst->getConstraints()),
+          asmInst->getIsVolatile() ? builder.getUnitAttr() : nullptr, operands);
 
       if (!resTypes.empty()) {
         valueMap[inst] = mlirAsmOp.getResult(0);
       }
+      break;
+    }
+
+    case mir::Opcode::MakeShared: {
+      auto *sharedInst = static_cast<mir::MakeSharedInst *>(inst);
+
+      // Get the value we are putting on the heap
+      ::mlir::Value operand = getValue(sharedInst->getOperand());
+      if (!operand)
+        return ::mlir::failure();
+
+      // Lower the resulting reference type
+      ::mlir::Type resType = getMLIRType(sharedInst->getType());
+
+      // Emit the MLIR operation
+      auto mlirSharedOp =
+          builder.create<::moksha::IR::MakeSharedOp>(loc, resType, operand);
+
+      // Register it in the SSA value map
+      valueMap[inst] = mlirSharedOp.getResult();
       break;
     }
 

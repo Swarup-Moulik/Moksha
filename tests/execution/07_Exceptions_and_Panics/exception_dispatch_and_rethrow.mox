@@ -1,0 +1,48 @@
+println("--- [E2E] exception_dispatch_and_rethrow.mox ---")
+
+// 1. TYPE MISMATCH & MULTI-CATCH DISPATCH
+void test_multi_catch() {
+    int result = 0;
+    try {
+        throw "StringError"; // Throwing a string
+    } catch (int e) {
+        result = 1; // Should skip
+    } catch (string e) {
+        result = 2; // Should match here!
+    } catch (any e) {
+        result = 3; // Fallback
+    }
+    println(result); // Expected: 2
+}
+
+// 2. EXCEPTION IN CATCH & RETHROW
+void test_rethrow_semantics() {
+    try {
+        try {
+            throw 404;
+        } catch (int e) {
+            // Rethrow the exact same exception.
+            // BACKEND NOTE: Must preserve original stack trace if supported.
+            throw e;
+        }
+    } catch (int e) {
+        println("Caught rethrow: " + string(e)); // Expected: Caught rethrow: 404
+    }
+}
+
+// 3. THROWING A NEW EXCEPTION FROM CATCH
+void test_chain_throw() {
+    try {
+        try {
+            throw 1;
+        } catch (int e) {
+            throw "Escalated"; // Throwing a COMPLETELY different type
+        }
+    } catch (string e) {
+        println(e); // Expected: Escalated
+    }
+}
+
+test_multi_catch();
+test_rethrow_semantics();
+test_chain_throw();

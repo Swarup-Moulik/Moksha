@@ -63,7 +63,7 @@ public:
                            const std::string &name = "",
                            SourceLocation loc = {});
 
-  LandingPadInst *createLandingPad(const hir::HIRType *catchType,
+  LandingPadInst *createLandingPad(const hir::HIRType *resultType,
                                    const std::string &name = "",
                                    SourceLocation loc = {});
 
@@ -72,7 +72,7 @@ public:
                          SourceLocation loc = {});
 
   InlineAsmInst *createInlineAsm(std::string asmString, std::string constraints,
-                                 std::vector<MIRValue *> args,
+                                 std::vector<MIRValue *> args, bool isVolatile,
                                  const hir::HIRType *retType,
                                  SourceLocation loc = {});
 
@@ -184,6 +184,10 @@ public:
                                      const std::string &name = "",
                                      SourceLocation loc = {});
 
+  MakeSharedInst *createMakeShared(MIRValue *operand,
+                                   const hir::HIRType *allocatedType,
+                                   SourceLocation loc = {});
+
   SpawnInst *createSpawn(MIRValue *closure, hir::ThreadKind threadKind,
                          const hir::HIRType *handleType,
                          const std::string &name = "", SourceLocation loc = {});
@@ -198,6 +202,14 @@ public:
   CastInst *createBitCast(MIRValue *val, const hir::HIRType *destType,
                           const std::string &name = "",
                           SourceLocation loc = {});
+  CastInst *createIntToFloat(MIRValue *val, const hir::HIRType *destType,
+                             const std::string &name = "",
+                             SourceLocation loc = {});
+  CastInst *createFloatToInt(MIRValue *val, const hir::HIRType *destType,
+                             const std::string &name = "",
+                             SourceLocation loc = {});
+  CastInst *createUpcast(MIRValue *val, const hir::HIRType *destType,
+                         const std::string &name = "", SourceLocation loc = {});
   CastInst *createAnyCast(MIRValue *val, const hir::HIRType *destType,
                           const std::string &name = "",
                           SourceLocation loc = {});

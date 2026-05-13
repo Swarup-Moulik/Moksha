@@ -1,0 +1,14 @@
+generic TypeA<T> {
+    public TypeB<T> b_ref;
+}
+
+generic TypeB<T> {
+    public TypeA<TypeB<T>> a_ref;
+}
+
+void test_mutual_explosion() {
+    // ERROR EXPECTED: Mutual generic recursion depth exceeded.
+    // TypeA instantiates TypeB, which instantiates TypeA with a deeper nested type.
+    // A<int> -> B<int> -> A<B<int>> -> B<B<int>> -> A<B<B<int>>> ...
+    TypeA<int> root = new TypeA<int>();
+}

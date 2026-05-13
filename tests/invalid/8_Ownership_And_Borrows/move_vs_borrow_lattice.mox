@@ -1,0 +1,20 @@
+class Vector3 {
+    public int x;
+    public int y;
+    public int z;
+    constructor() { this.x = 0; this.y = 0; this.z = 0; }
+}
+
+void test_move_while_borrowed() {
+    Vector3 vec = new Vector3();
+
+    // Borrow a specific field of the stack allocation
+    *view int vx = &vec.x;
+
+    // ERROR EXPECTED: Cannot perform a move operation on 'vec'
+    // because a part of its memory ('vec.x') is actively borrowed.
+    Vector3 moved_vec = vec;
+
+    // Keeps the borrow alive
+    print(*vx);
+}

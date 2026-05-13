@@ -1,0 +1,15 @@
+void test_reborrow_chain() {
+    int x = 10;
+    *mut int a = &x;
+
+    // b is a reborrow of a.
+    // This creates a lifetime sub-graph where 'b' suspends 'a'.
+    *mut int b = a;
+
+    // ERROR EXPECTED: 'a' is temporarily inaccessible because 'b' holds
+    // the active mutable capability over that memory location.
+    *a = 20;
+
+    // 'b' is used here, extending its lifetime over the illegal mutation above.
+    *b = 30;
+}

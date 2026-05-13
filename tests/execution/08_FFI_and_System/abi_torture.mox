@@ -1,0 +1,36 @@
+println("--- [E2E] abi_torture.mox ---")
+
+// We define the externs locally so the Clang linker doesn't fail on Windows.
+extern "stdcall" void win32_api(int a, int b) {
+    println(`win32_api: ${a + b}`);
+}
+
+extern "fastcall" void x64_sysv_abi(int a, int b, int c, int d) {
+    println(`sysv_abi: ${a + b + c + d}`);
+}
+
+struct BigData { long[16] data; }
+BigData get_kernel_table() {
+    mut BigData bd;
+    bd.data[0] = 999_i64;
+    return bd;
+}
+
+struct Vector4 { float x; float y; float z; float w; }
+void process_vector(Vector4 v) {
+    println(v.x);
+}
+
+void test_abi_lowering() {
+    win32_api(10, 20);                  // Expected: win32_api: 30
+    x64_sysv_abi(1, 2, 3, 4);           // Expected: sysv_abi: 10
+
+    BigData tbl = get_kernel_table();
+    println(tbl.data[0]);             // Expected: 999
+
+    Vector4 vec;
+    vec.x = 3.14;
+    process_vector(vec);                // Expected: 3.14
+}
+
+test_abi_lowering();

@@ -1,0 +1,8 @@
+from "cyclic_b" import { ClassB }
+
+// ERROR: Infinite size allocation.
+// ClassA is a value type containing ClassB, which contains ClassA.
+// The compiler cannot determine the stack layout size.
+class ClassA {
+    public ClassB b;
+}

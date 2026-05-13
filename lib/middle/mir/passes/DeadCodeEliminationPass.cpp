@@ -260,6 +260,8 @@ bool DeadCodeEliminationPass::runOnModule(MIRModule &M) {
         markAlive(ins->getValue());
       } else if (auto *arc = llvm::dyn_cast_or_null<ARCInst>(i)) {
         markAlive(arc->getObject());
+      } else if (auto *ms = llvm::dyn_cast_or_null<MakeSharedInst>(i)) {
+        markAlive(ms->getOperand());
       } else if (auto *mc = llvm::dyn_cast_or_null<MakeClosureInst>(i)) {
         markAlive(mc->getFunctionPointer());
         for (auto *c : mc->getCaptures())
@@ -280,6 +282,12 @@ bool DeadCodeEliminationPass::runOnModule(MIRModule &M) {
         markAlive(e);
     } else if (auto *cbc = llvm::dyn_cast_or_null<ConstantBitCast>(val)) {
       markAlive(cbc->getValue());
+    } else if (auto *cac = llvm::dyn_cast_or_null<ConstantAnyCast>(val)) {
+      markAlive(cac->getValue());
+    } else if (auto *ca2s = llvm::dyn_cast_or_null<ConstantArrayToSlice>(val)) {
+      markAlive(ca2s->getValue());
+    } else if (auto *cs2a = llvm::dyn_cast_or_null<ConstantSliceToArray>(val)) {
+      markAlive(cs2a->getValue());
     }
   };
 

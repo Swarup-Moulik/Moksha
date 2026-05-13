@@ -1,0 +1,12 @@
+void test_closure() {
+    int x = 10;
+
+    // The closure takes a hidden *mut borrow of x
+    closure() -> int mutate_x = () => {
+        x = x + 1;
+    };
+
+    x = 20; // ERROR: x is borrowed by the closure environment!
+
+    mutate_x();
+}

@@ -1,0 +1,40 @@
+println("--- [E2E] structured_concurrency.mox ---")
+
+// 1. ASYNC SCOPES (The Tokio/Swift Model)
+async void test_task_group() {
+    int completed_tasks = 0;
+
+    // async_scope blocks until all spawned children complete or are cancelled
+    await async_scope((TaskGroup group) => {
+        group.spawn(async () => { await sleep(10); completed_tasks = completed_tasks + 1; });
+        group.spawn(async () => { await sleep(20); completed_tasks = completed_tasks + 1; });
+    });
+
+    // Both tasks are guaranteed to be finished when the scope exits
+    println(completed_tasks); // Expected: 2
+}
+
+// 2. FAIL-FAST CANCELLATION CASCADE
+async void test_join_cancellation_cascade() {
+    promise<int> a = spawn(async () => {
+        throw new Exception("Task A Failed");
+    });
+
+    promise<int> b = spawn(async () => {
+        await sleep(500); // Long running task
+        return 1;
+    });
+
+    try {
+        await join(a, b);
+    } catch (Exception e) {
+        println("Join aborted early"); // Expected: Join aborted early
+    }
+
+    // RED TEAM: Because 'a' failed, 'join' must explicitly send a cancel signal to 'b'.
+    // If 'b' is still running, you have a resource leak!
+    println(b.is_cancelled()); // Expected: true
+}
+
+await test_task_group()
+await test_join_cancellation_cascade()

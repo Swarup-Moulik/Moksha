@@ -1,0 +1,38 @@
+println("--- [E2E] compile_failures.mox ---");
+
+generic Box<T> {
+    public T value;
+    constructor(T v) { this.value = v; }
+}
+
+struct BitfieldTest {
+    int present : 1;
+}
+
+void trigger_compiler_errors() {
+    // EXPECTED ERROR: Cannot infer uniform type for array.
+    int[] bad_array = [1, 2, "3"];
+
+    // EXPECTED ERROR: Cannot assign null to strictly typed non-nullable variable.
+    int strictly_typed = null;
+    int[] strictly_typed_arr = null;
+
+    // EXPECTED ERROR: Spread types do not match target array type.
+    int[] arr1 = [1, 2];
+    string[] arr2 = ["a", "b"];
+    int[] bad_spread = [...arr1, ...arr2];
+
+    // EXPECTED ERROR: Type mismatch in generic instantiation.
+    Box<int> wrong_box = new Box<string>("oops");
+
+    // EXPECTED ERROR: Use of uninitialized variable.
+    int uninit_val;
+    println(uninit_val);
+
+    // EXPECTED ERROR: Value exceeds capacity of 1-bit field.
+    BitfieldTest bf;
+    bf.present = 5;
+
+    // EXPECTED ERROR: Duplicate key in table literal.
+    table<string, int> dup_keys = { "A": 1, "A": 2 };
+}

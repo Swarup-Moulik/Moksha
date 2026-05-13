@@ -1,0 +1,24 @@
+println("--- [E2E] gradient_ownership.mox ---");
+
+class Metric {
+    public int value;
+
+    constructor(int v) {
+        this.value = v;
+    }
+
+    // Operates directly on the 'this' pointer (passed by reference automatically)
+    void read_metric() {
+        println("Inside read_metric (view). Value is: " + this.value);
+    }
+
+    // Mutates the 'this' pointer (mutates the original object)
+    void update_metric(int newVal) {
+        this.value = newVal;
+    }
+}
+
+Metric m = new Metric(50);
+m.read_metric();
+m.update_metric(100);
+println("After update_metric (mut). Value should be 100: " + m.value);

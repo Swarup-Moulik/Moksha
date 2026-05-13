@@ -1,0 +1,18 @@
+// --- 1. Basic AST Structural Violations [ParseFail] ---
+10 |> 20;             // Literal
+10 |> (a + b);        // BinaryExpr
+10 |> -foo;           // UnaryExpr
+10 |> (x => x + 1);   // LambdaExpr
+10 |> {};             // BlockExpr
+10 |> if (true) foo;  // Control flow expr
+
+// --- 2. Postfix / Access Violations [ParseFail] ---
+// Ensures the parser differentiates access from CallExpr/IdentifierExpr
+10 |> foo.bar;        // MemberAccessExpr
+10 |> arr[0];         // IndexExpr
+
+
+// --- 3. Transparent Parentheses [Success (Parser Phase)] ---
+// SPEC DECISION: Parentheses around identifiers are transparent.
+// The parser MUST accept this. (Semantic validation happens later).
+10 |> (foo);

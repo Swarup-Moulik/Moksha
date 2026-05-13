@@ -1,0 +1,31 @@
+// 1. Nested Macro Expansion
+macro inner(x) {
+    println(`Inner: ${x}`);
+}
+macro outer(x) {
+    inner(x); // Does the compiler resolve inner during outer's expansion?
+}
+
+// 2. The Side-Effect Trap (Double expansion check)
+macro square(x) {
+    (x) * (x)
+}
+
+// 3. Potential Infinite Recursion (Compiler should catch this)
+macro infinite(x) {
+    infinite(x);
+}
+
+void test_macro_chaos() {
+    outer("Hello"); // Expected: "Inner: Hello" [cite: 17, 23]
+
+    int i = 2;
+    int result = square(i++);
+    // If double-expanded without care: (2) * (3) = 6, and i becomes 4.
+    // If handled correctly: 2 * 2 = 4, and i becomes 3.
+    println(result);
+
+    // infinite(1); // UNCOMMENT TO TEST COMPILER TIMEOUT/RECURSION LIMIT
+}
+
+test_macro_chaos()

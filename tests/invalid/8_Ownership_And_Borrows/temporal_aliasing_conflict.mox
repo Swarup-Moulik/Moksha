@@ -1,0 +1,17 @@
+void mutate_indirectly(*mut int indirect) {
+    *indirect = 99;
+}
+
+void test_temporal_visibility() {
+    int x = 10;
+    *view int v = &x;
+
+    // ERROR EXPECTED: Alias Overlap in Function Call.
+    // Creating a temporary *mut to pass into the function violates the
+    // active *view capability held by 'v'.
+    mutate_indirectly(&x);
+
+    // If the compiler allowed the mutation, 'v' would unexpectedly see '99'
+    // instead of '10'. The GAG must trace '&x' directly to 'v's lifetime.
+    print(*v);
+}

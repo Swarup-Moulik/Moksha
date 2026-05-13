@@ -1,0 +1,28 @@
+void test_invalid_c_strings() {
+    // ERROR EXPECTED: Char array is too small. '"Hello"' requires 6 bytes, but array is size 5
+    char[5] bad_1d = "Hello";
+
+    // ERROR EXPECTED: Char array is too small. '"World !"' requires 8 bytes, but array is size 7
+    // ("Hello " is 7 bytes so it fits, but the TypeChecker will catch the second one!)
+    char[2][7] bad_2d = ["Hello ", "World !"];
+
+    // ERROR EXPECTED: Char array is too small. '"Hello"' requires 6 bytes, but array is size 5
+    char[5] bad_reassign = "Hi";
+    bad_reassign = "Hello";
+
+    // ERROR EXPECTED: Array length mismatch. Expected 5 elements but found 6
+    // (Standard array checking catches oversized array literals)
+    char[5] bad_literal = ['H', 'e', 'l', 'l', 'o', '\0'];
+}
+
+void test_encoding_and_escapes() {
+    // ERROR EXPECTED: UTF-8 Overflow.
+    // 'é' is a multi-byte character (2 bytes in UTF-8).
+    // Plus the null terminator, this requires 3 bytes, but the array is size 2.
+    char[2] bad_utf8 = "é";
+
+    // ERROR EXPECTED: Escape Expansion Overflow.
+    // The literal looks like 4 characters, but "\n" expands to 1 byte,
+    // making the total payload 'A', '\n', 'B', '\0' (4 bytes).
+    char[3] bad_escape_size = "A\nB";
+}

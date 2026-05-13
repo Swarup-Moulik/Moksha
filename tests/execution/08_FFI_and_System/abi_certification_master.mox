@@ -1,0 +1,106 @@
+println("--- [E2E] abi_certification_master.mox ---")
+
+// ============================================================================
+// 1. FLOAT RETURN ABI
+// ============================================================================
+extern "C" double return_double_identity(double x);
+
+void test_f64_return() {
+    double input1 = 1.23456789;
+    double output = return_double_identity(input1);
+}
+
+// ============================================================================
+// 2. COMPLEX NUMBERS: AGGREGATE VS REGISTER PAIR
+// ============================================================================
+struct ComplexDouble { double re; double im; }
+extern "C" ComplexDouble return_complex_pair();
+
+// ============================================================================
+// 3. INTEGER EXTENSION: SIGN vs ZERO EXTENSION
+// ============================================================================
+extern "C" void takes_signed_char(char c);
+extern "C" void takes_unsigned_char(unsigned char c);
+
+// ============================================================================
+// 4. THE 256-BIT VECTOR (AVX) & STACK PROBING
+// ============================================================================
+// Stresses stack alignment beyond 16 bytes. AVX requires 32-byte alignment.
+struct Vec256 {
+    float f1; float f2; float f3; float f4;
+    float f5; float f6; float f7; float f8;
+}
+extern "C" void pass_vec256(Vec256 v);
+
+// ============================================================================
+// 5. NATIVE REFERENCE ABI
+// ============================================================================
+// Tests passing by native reference (`&`) which should lower to a pointer in LLVM IR
+struct RefTarget {
+    int x;
+}
+extern "C" void take_by_ref(&RefTarget c);
+
+void test_native_reference() {
+    RefTarget target;
+    target.x = 42;
+    // Call it to force the compiler to emit the function declaration and struct definition!
+    take_by_ref(target);
+}
+
+// ============================================================================
+// 6. NaN PAYLOAD PRESERVATION
+// ============================================================================
+// Tests if the backend/optimizer "quiets" or canonicalizes NaNs.
+void test_nan_payload() {
+    // 0x7FC01234 is a Quiet NaN with a specific payload.
+    float nan_val = cast<float>(0x7FC01234_u32);
+}
+
+// ============================================================================
+// 7. PLT/GOT RELOCATION (DYNAMIC LINKING)
+// ============================================================================
+// Ensures function calls to external DSOs use the Procedure Linkage Table (PLT).
+extern "C" void external_shared_lib_func();
+
+void test_plt_call() {
+    external_shared_lib_func();
+}
+
+// ============================================================================
+// 8. EVALUATION ORDER BARRIER
+// ============================================================================
+extern "C" void side_effect(int a, int b);
+
+void test_eval_order() {
+    mut int x = 1;
+    // ABI + Language Spec must guarantee evaluation order (typically left-to-right).
+    side_effect(x++, x++);
+}
+
+// ============================================================================
+// 9. DWARF CFI & UNWIND METADATA
+// ============================================================================
+void test_unwind_metadata() {
+    println("Verifying CFI (Call Frame Information) emission...");
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_nan_payload();
+test_eval_order();
+test_f64_return();
+test_unwind_metadata();
+test_native_reference();
+test_plt_call();
+
+takes_signed_char(-5i8);
+takes_unsigned_char(250u8);
+
+Vec256 v;
+v.f1 = 1.0; v.f8 = 8.0;
+pass_vec256(v);
+
+ComplexDouble c = return_complex_pair();
+println(cast<any>(c.re));

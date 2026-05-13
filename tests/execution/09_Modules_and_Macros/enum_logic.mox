@@ -1,0 +1,14 @@
+enum Status { Ready = 5, Busy = 10 }
+
+void test_enum_logic() {
+    Status s = Status.Ready;
+
+    // Comparison against literals requires an explicit cast
+    if (cast<int>(s) == 5) { println("Match: Literal"); }
+
+    // Enum Arithmetic requires an explicit cast
+    int offset = cast<int>(Status.Busy) + 2;
+    println(offset); // Expected: 12
+}
+
+test_enum_logic();

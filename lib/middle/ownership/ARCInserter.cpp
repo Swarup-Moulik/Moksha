@@ -130,6 +130,8 @@ private:
     }
     if (llvm::isa<hir::SliceType>(type))
       return true;
+    if (type->getKind() == hir::TypeKind::Any)
+      return true;
     return false;
   }
 

@@ -1,0 +1,84 @@
+println("--- [E2E] advanced_valid_semantics.mox ---");
+
+// ---------------------------------------------------------
+// Arrays (Zero-Length & Overwrites)
+// ---------------------------------------------------------
+int[] empty_arr = [];
+println("Empty array length (Expected 0):");
+println(length(empty_arr));
+
+// ---------------------------------------------------------
+// Deep Nullability Chains
+// ---------------------------------------------------------
+ref class Node {
+    public Node? next;
+    public int val;
+    constructor(int v) { this.val = v; this.next = null; }
+}
+
+Node? root = null;
+println("Deep null chain (Expected -1):");
+println(root?.next?.next?.val ?? -1);
+
+// ---------------------------------------------------------
+// Spread Operator Order & Duplication
+// ---------------------------------------------------------
+int[] spread_base = [42];
+int[] spread_result = [...spread_base, 42];
+println("Spread duplication (Expected length 2):");
+println(length(spread_result));
+println("Spread value (Expected 42):");
+println(spread_result[1]);
+
+// ---------------------------------------------------------
+// Memory Model & Equality (Value vs Reference)
+// ---------------------------------------------------------
+class Vector2 {
+    public int x;
+    constructor(int x) { this.x = x; }
+}
+
+Vector2 v1 = new Vector2(10);
+Vector2 v2 = new Vector2(10);
+println("Value structural equality (Expected true):");
+println(v1 == v2);
+
+ref class Player {
+    public int id;
+    constructor(int id) { this.id = id; }
+}
+
+Player p1 = new Player(1);
+Player p2 = new Player(1);
+println("Ref pointer equality (Expected false):");
+println(p1 == p2);
+
+// ---------------------------------------------------------
+// Parsing Ambiguities
+// ---------------------------------------------------------
+table<string, int[]> nested_generics = {"test": [1, 2, 3]};
+println("Nested generic parse (Expected 2):");
+println(nested_generics["test"][1]);
+
+int a = 1;
+int b = 2;
+int c = 3;
+int d = 1;
+bool cmp = (a < b) && (c > d);
+println("Relational vs Generic parsing (Expected true):");
+println(cmp);
+
+// ---------------------------------------------------------
+// Low-Level Memory Layout & Ref Parameters
+// ---------------------------------------------------------
+println("Sizeof int:");
+println(sizeof(int));
+
+void modify_val(ref int val) {
+    val = 100;
+}
+
+int default_init = 0;
+modify_val(default_init);
+println("Ref mutation (Expected 100):");
+println(default_init);

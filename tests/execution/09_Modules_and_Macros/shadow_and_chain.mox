@@ -1,0 +1,22 @@
+macro C(x) { println(`Result: ${x}`); }
+macro B(x) { C((x) * 2); }
+macro A(x) { B((x) + 1); }
+
+void test_chains_and_shadows() {
+    // 1. Multi-level expansion order
+    A(5); // Expected: ((5 + 1) * 2) -> "Result: 12"
+
+    // 2. Shadow Chains (Symbol Resolution Depth)
+    int x = 1;
+    {
+        int x = 2;
+        {
+            int x = 3;
+            println(x); // Expected: 3
+        }
+        println(x);     // Expected: 2
+    }
+    println(x);         // Expected: 1
+}
+
+test_chains_and_shadows()

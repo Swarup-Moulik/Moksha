@@ -14,6 +14,7 @@ private:
   static void registerGenericArrayBuiltins(ASTContext &ctx, SymbolTable &sym);
   static void registerStandardIO(ASTContext &ctx, SymbolTable &sym);
   static void registerAtomics(ASTContext &ctx, SymbolTable &sym);
+  static void registerAsyncBuiltins(ASTContext &ctx, SymbolTable &sym);
 };
 
 } // namespace moksha

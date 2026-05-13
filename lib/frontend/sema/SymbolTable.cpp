@@ -137,6 +137,23 @@ ScopeKind SymbolTable::getCurrentScopeKind() const {
   return scopeStack.back()->getKind();
 }
 
+void Scope::addOverload(llvm::StringRef name, Symbol symbol) {
+  auto it = symbols.find(name);
+  if (it != symbols.end()) {
+    // Symbol exists, append to its overload list
+    it->second.overloads.push_back(std::move(symbol));
+  } else {
+    // First time seeing this name, add as the primary symbol
+    symbols.insert({name, std::move(symbol)});
+  }
+}
+
+void SymbolTable::addOverload(llvm::StringRef name, Symbol symbol) {
+  if (scopeStack.empty())
+    return;
+  scopeStack.back()->addOverload(name, std::move(symbol));
+}
+
 // === Helper: Built-in Primitives ===
 
 void SymbolTable::addPrimitiveTypes(ASTContext &ctx) {

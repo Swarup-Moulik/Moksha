@@ -1,0 +1,15 @@
+println("--- [E2E] closure_shared_state.mox ---")
+
+void test_shared_env() {
+    int x = 0;
+
+    // Both closures capture the same 'x'
+    closure() -> void inc = &mut () => { x = x + 1; };
+    closure() -> int get = &() => { return x; };
+
+    inc();
+    inc();
+    println(get()); // Expected: 2
+}
+
+test_shared_env();

@@ -1,0 +1,59 @@
+println("--- [E2E] collection_equality.mox ---");
+
+void test_strings() {
+    println("--- 1. Heap String Equality ---");
+    // Standard heap-allocated dynamic string
+    string s1 = "hello moksha";
+    string s2 = "hello " + "moksha";
+
+    println("String Equality (Expected true):");
+    println(s1 == s2);
+}
+
+void test_char_arrays() {
+    println("--- 2. Char Array Equality (C-Style) ---");
+    // Fixed-size stack array auto-initialized from string literal (null-terminated = 6 bytes)
+    char[6] c1 = "hello";
+    char[6] c2 = "hello";
+    char[6] c3 = "world";
+
+    println("Char Array Equality (Expected true):");
+    println(c1 == c2);
+
+    println("Char Array Inequality (Expected false):");
+    println(c1 == c3);
+}
+
+void test_arrays() {
+    println("--- 3. Fixed Array Equality ---");
+    // Standard stack-allocated fixed arrays
+    int[3] arr1 = [1, 2, 3];
+    int[3] arr2 = [1, 2, 3];
+    int[3] arr3 = [1, 99, 3];
+
+    println("Fixed Array Equality (Expected true):");
+    println(arr1 == arr2);
+
+    println("Fixed Array Inequality (Expected false):");
+    println(arr1 == arr3);
+}
+
+void test_slices() {
+    println("--- 4. Slice Equality ---");
+    // Dynamic fat-pointers (ptr + len) initialized directly from array literals
+    int[] slice1 = [1, 2, 3];
+    int[] slice2 = [1, 2, 3];
+    int[] slice3 = [1, 99, 3];
+
+    println("Slice Equality (Expected true):");
+    println(slice1 == slice2);
+
+    println("Slice Inequality (Expected false):");
+    println(slice1 == slice3);
+}
+
+
+test_strings();
+test_char_arrays();
+test_arrays();
+test_slices();

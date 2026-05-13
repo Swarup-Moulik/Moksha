@@ -1,0 +1,122 @@
+println("--- [E2E] pipe_and_cast_errors.mox ---");
+
+// --- Mock external dependencies ---
+void process(int x) {}
+void f(int x, int y) {}
+void g(int x) {}
+void v() {}
+int toInt(string s) { return 0; }
+string toStr(int x) { return ""; }
+
+int side(int x) {
+    println("side effect evaluated");
+    return x;
+}
+
+// --- A. PIPE SEMANTICS ---
+
+void test_pipe_semantics() {
+    // 1. Resolution Failures [TypeError]
+    10 |> undefined_func();
+    // [TypeError]: undefined_func is not defined. (Valid CallExpr, invalid resolution)
+
+    // 2. Direct Type Mismatch [TypeError]
+    "Hello" |> process();
+    // [TypeError]: process expects int, got string
+
+    10 |> toInt();
+    // [TypeError]: toInt expects string, got int. Originates exactly here.
+
+    // 3. Void Propagation [TypeError]
+    10 |> println() |> process();
+    // [TypeError]: Cannot pipe void (from println) into process.
+
+    v() |> process();
+    // [TypeError]: Void source expression cannot initiate a pipe.
+
+    // 4. Arity & Application [TypeError]
+    10 |> f();
+    // [TypeError]: Under-application (expects 2, got 1 via pipe)
+
+    10 |> g(20);
+    // [TypeError]: Over-application (expects 1, got 2: 10 and 20)
+
+    // 5. Non-Callable Identifiers [TypeError]
+    int x = 5;
+    10 |> x;
+    // [TypeError]: Identifier 'x' is not callable.
+
+    10 |> (x);
+    // [TypeError]: Transparent parens parsed, but 'x' is still not callable.
+
+    // 6. Precedence & Associativity [Success]
+    10 + 5 |> process();
+    // [Success]: Must lower to process(10 + 5), evaluating to process(15).
+
+    10 |> toStr() |> toInt() |> process();
+    // [Success]: Strictly left-to-right. Lowers to process(toInt(toStr(10))).
+
+    // 7. Evaluation Order Preservation [Success]
+    10 |> g(side(20));
+    // [Success]: `side(20)` MUST evaluate exactly once before `g` is called.
+}
+
+// --- B. CAST SYSTEM ---
+
+void test_cast_semantics() {
+    // 1. Invalid Targets & Direct Casting [TypeError]
+    any x_val = 10;
+
+    string s = "123";
+    int x_str = int(s);
+    // [TypeError]: Direct primitive coercion (string->int) disallowed without `any` intermediate.
+
+    // 2. Type-Tag Mismatch [RuntimeTrap]
+    any f_val = 3.14;
+    int y_mismatch = int(f_val);
+    // [RuntimeTrap]: Type-tag mismatch (expected int tag inside `any`, found float).
+
+    // 3. Overflow & Invalid Runtime Casts [RuntimeTrap]
+    any big = 1e30;
+    int small = int(big);
+    // [RuntimeTrap]: Overflow
+
+    any str_val = "not a number";
+    int fail_cast = int(str_val);
+    // [RuntimeTrap]: Invalid cast format
+
+    any x_null = null;
+    int y_null = int(x_null);
+    // [RuntimeTrap]: Null cast
+
+    // 4. Redundant & Chained Casts [Success]
+    any x_id = 42;
+    int y_red = int(int(x_id));
+    // [Success]: Outer cast acts as a zero-overhead identity check.
+
+    any x_chain = "123";
+    int y_chain = int(float(x_chain));
+    // [Success]: Valid intermediate coercion.
+}
+
+// --- C. CROSS-FEATURE INTERACTIONS ---
+
+void test_cross_feature_interactions() {
+    // 1. Compile-Time Failure Propagation [TypeError]
+    any val = 10;
+
+    // 2. Short-Circuiting on Failure [RuntimeTrap]
+    any invalid = "hello";
+    invalid |> int() |> side() |> process();
+    // [RuntimeTrap]: `int()` throws CastException.
+    // CRITICAL: `side()` MUST NOT execute. Chain aborts immediately.
+
+    // 3. Valid Interaction [Success]
+    any valid_str = "42";
+    valid_str |> int() |> process();
+    // [Success]: Chain evaluates smoothly.
+}
+
+test_pipe_semantics();
+test_cast_semantics();
+test_cross_feature_interactions();

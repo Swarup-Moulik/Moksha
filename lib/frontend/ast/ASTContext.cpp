@@ -49,6 +49,11 @@ const Type *ASTContext::createPointerType(const Type *pointee) {
       std::make_unique<PointerType>(pointee->clone(), pointee->getLoc()));
 }
 
+const Type *ASTContext::createReferenceType(const Type *inner) {
+  return saveType(
+      std::make_unique<ReferenceType>(inner->clone(), inner->getLoc()));
+}
+
 const Type *ASTContext::createNullableType(const Type *inner) {
   // In a real compiler, we would deduplicate (intern) types here.
   // For now, we clone the inner type and wrap it.

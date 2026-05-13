@@ -57,6 +57,7 @@ public:
   Scope(ScopeKind k) : kind(k) {}
 
   void addSymbol(llvm::StringRef name, Symbol symbol);
+  void addOverload(llvm::StringRef name, Symbol symbol);
   Symbol *findSymbol(llvm::StringRef name);
   const Symbol *findSymbol(llvm::StringRef name) const;
   ScopeKind getKind() const { return kind; }
@@ -75,6 +76,7 @@ public:
 
   // Returns true if successful, false if redefinition
   bool addSymbol(llvm::StringRef name, Symbol symbol, llvm::SMLoc loc = {});
+  void addOverload(llvm::StringRef name, Symbol symbol);
 
   Symbol *lookup(llvm::StringRef name);
   const Symbol *lookup(llvm::StringRef name) const;

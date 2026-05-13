@@ -1,0 +1,45 @@
+println("--- [E2E] stress_state_machines.mox ---")
+
+// 1. COMPLEX CONTROL FLOW WITH AWAITS
+async int complex_branching(int x) {
+    int local_state = 42;
+
+    if (x > 0) {
+        await yield(); // Suspension Point 1
+        if (x == 5) {
+            return local_state + 100; // Early return after suspension
+        }
+        return 1;
+    } else {
+        while (local_state > 40) {
+            await yield(); // Suspension Point 2 (inside loop)
+            local_state = local_state - 1;
+        }
+        return local_state; // Expected: 40
+    }
+}
+
+// 2. EXCEPTION AFTER SUSPENSION
+async void throw_after_await() {
+    await yield();
+    // The runtime must correctly map this to the coroutine's cleanup block
+    throw new Exception("Post-resume panic");
+}
+
+async void test_state_machines() {
+    // Test 1: Branching logic across suspension
+    println(await complex_branching(5));  // Expected: 142
+
+    // Test 2: Loop logic with multiple yields
+    println(await complex_branching(-1)); // Expected: 40
+
+    try {
+        // Test 3: Exception handling after a resume
+        await throw_after_await();
+    } catch (Exception e) {
+        println(e.message); // Expected: Post-resume panic
+    }
+}
+
+// --- EXECUTION ---
+await test_state_machines();

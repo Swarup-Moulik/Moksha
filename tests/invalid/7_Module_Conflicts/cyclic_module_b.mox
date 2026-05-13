@@ -1,0 +1,8 @@
+from "cyclic_ref_b" import { RefB }
+
+ref class RefA {
+    // ERROR: Cyclic instantiation dependency.
+    // Even though these are heap pointers, inline instantiation
+    // forces the constructor of RefA to call RefB, which calls RefA infinitely.
+    public RefB b = new RefB();
+}

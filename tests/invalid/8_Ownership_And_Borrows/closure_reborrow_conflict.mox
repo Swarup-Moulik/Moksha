@@ -1,0 +1,17 @@
+void test_closure_reborrow() {
+    int data = 100;
+    *mut int root_ptr = &data;
+
+    // b_ptr is a reborrow. It suspends root_ptr.
+    *mut int b_ptr = root_ptr;
+
+    // ERROR EXPECTED: Capability Frozen.
+    // The closure attempts to capture 'root_ptr', but 'root_ptr' is currently
+    // stripped of its mutability capability by 'b_ptr'. The capture must fail.
+    closure() -> void bad_capture = () => {
+        *root_ptr = 200;
+    };
+
+    *b_ptr = 300; // Error
+    bad_capture();
+}

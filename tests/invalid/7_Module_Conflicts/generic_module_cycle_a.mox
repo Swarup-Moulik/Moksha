@@ -1,0 +1,5 @@
+from "generic_module_cycle_b" import { Node }
+
+generic Box<T> {
+    public Node<T> val;
+}

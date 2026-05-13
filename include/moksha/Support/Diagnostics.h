@@ -33,6 +33,7 @@ enum class DiagID {
   err_invalid_cast,
   err_missing_return,
   err_invalid_access,
+  err_member_collision,
   err_argument_count_mismatch,
   err_unreachable_code,
   err_decimal_precision_loss,
@@ -65,6 +66,11 @@ enum class DiagID {
   warn_not_implemented,
   warn_unused_variable,
 
+  // Concurrency & Async Errors
+  err_await_in_sync_lock,
+  err_thread_in_async_lock,
+  err_async_lock_target,
+
   // General / Notes
   note_previous_definition,
   err_no_member,
@@ -75,6 +81,7 @@ enum class DiagID {
   err_invalid_super,
   warn_implicit_bool_conv,
   err_internal,
+  err_missing_builtin,
 };
 
 /// Forward declaration

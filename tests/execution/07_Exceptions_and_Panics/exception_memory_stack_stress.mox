@@ -1,0 +1,42 @@
+println("--- [E2E] exception_memory_stack_stress.mox ---")
+
+// 1. STRUCT PAYLOADS (Value vs Reference Semantics)
+struct HttpError {
+    int code;
+    string message;
+}
+
+void test_struct_throw() {
+    try {
+        HttpError err;
+        err.code = 500;
+        err.message = "Server Down";
+
+        throw err;
+    } catch (HttpError e) {
+        println(string(e.code) + ": " + e.message); // Expected: 500: Server Down
+    }
+}
+
+// 2. DEEP STACK UNWINDING
+void deep_recursion(int depth) {
+    defer { /* Dummy defer to force LLVM landingpad generation */ }
+
+    if (depth == 0) {
+        throw "Bottom of the stack";
+    }
+    deep_recursion(depth - 1);
+}
+
+void test_deep_unwind() {
+    try {
+        // Unwind 1,000 frames. If zero-cost exceptions are implemented correctly,
+        // this is slow but will not blow the C-stack or segfault.
+        deep_recursion(1000);
+    } catch (string e) {
+        println("Safely caught: " + e);
+    }
+}
+
+test_struct_throw();
+test_deep_unwind();

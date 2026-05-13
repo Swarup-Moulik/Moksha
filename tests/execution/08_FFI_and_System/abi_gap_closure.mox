@@ -1,0 +1,144 @@
+println("--- [E2E] abi_gap_closure.mox ---")
+
+// ============================================================================
+// 1. SRET: HIDDEN RETURN POINTER VALIDATION
+// ============================================================================
+// Your current tests cover large structs[cite: 101], but this explicitly
+// validates the 'sret' attribute for structs far exceeding register limits.
+struct Huge {
+    long[8] data;
+}
+
+extern "C" Huge return_huge();
+
+void test_sret() {
+    Huge h = return_huge();
+    // Verify: LLVM should emit 'sret' on the first parameter,
+    // the caller allocates the stack slot, and the callee writes directly to it.
+    println(h.data[0]);
+}
+
+// ============================================================================
+// 2. MIXED RETURN ABI: GPR + XMM SPLITTING
+// ============================================================================
+// You currently test mixed arguments[cite: 58, 65], but returning mixed
+// types is a separate path in the SysV ABI logic.
+struct MixedRet {
+    int a;    // Should go in RAX
+    float b;  // Should go in XMM0
+}
+
+extern "C" MixedRet return_mixed();
+
+void test_mixed_return() {
+    MixedRet m = return_mixed();
+    println(m.a);
+    println(m.b);
+}
+
+// ============================================================================
+// 3. VARARGS: REGISTER SAVE AREA STRESS
+// ============================================================================
+// Verifies that the SysV "Register Save Area" is correctly populated.
+// If the SSE/GPR save counts are off, the callee reads garbage.
+extern "C" int printf(string fmt, ...);
+
+void test_vararg_spilling() {
+    // Interleaving ints and floats to force multiple register types
+    printf("Spill: %d %f %d %f %d", 1, 2.0, 3, 4.0, 5);
+}
+
+// ============================================================================
+// 4. FUNCTION POINTER: INDIRECT CALL LOWERING
+// ============================================================================
+// You've tested passing pointers to OS callbacks[cite: 52, 54], but
+// invoking an arbitrary pointer requires strict ABI preservation in the IR.
+void my_local_func(int x) { println(`Value: ${x}`); }
+
+void test_indirect_calls() {
+    (int) => void fp = my_local_func;
+    fp(100); // Ensures correct indirect call lowering and CC preservation
+}
+
+// ============================================================================
+// 5. BITFIELD / SUB-BYTE PACKING (Moksha 2026 Milestone)
+// ============================================================================
+// Validates bit-level layout for interop with C bitfields.
+// SysV packs these into an integer base with specific bit offsets.
+struct Bitfield {
+    unsigned int a : 3;
+    unsigned int b : 5;
+    unsigned int c : 8;
+}
+
+void test_bitfield_layout() {
+    Bitfield bf;
+    bf.a = 7;
+    bf.b = 31;
+    println(sizeof(Bitfield)); // Should be 4 (or 1 depending on packing)
+}
+
+// ============================================================================
+// 6. VOLATILE: REORDERING BARRIER VALIDATION
+// ============================================================================
+// Extends your MMIO tests[cite: 151]. This ensures that multiple
+// volatile assignments are not coalesced or reordered by the optimizer.
+volatile int x_reg;
+volatile int y_reg;
+
+void test_volatile_barrier() {
+    x_reg = 1;
+    y_reg = 2;
+    // IR must show: store volatile 1 -> store volatile 2
+}
+
+// ============================================================================
+// 7. TLS: ACCESS MODEL & INIT ORDER
+// ============================================================================
+// Tests dependent initialization within Thread Local Storage[cite: 21].
+thread_local int tls_a = 10;
+thread_local int tls_b = tls_a + 5;
+
+void test_tls_logic() {
+    println(tls_b); // Expected: 15
+}
+
+// ============================================================================
+// 8. INLINE ASM: REGISTER CLOBBER VALIDATION
+// ============================================================================
+// Extends memory clobber tests[cite: 42]. Prevents LLVM from
+// reusing registers that the assembly block modifies.
+void test_reg_clobber() {
+    int val = 1;
+    // Explicitly clobbering rax and rbx
+   asm("mov $$42, %rax") clobber("rax", "rbx") volatile;
+    println(val);
+}
+
+// ============================================================================
+// 9. STACK ALIGNMENT: SIMD PREPARATION
+// ============================================================================
+struct Vector4 { float x}
+
+// While you support align(16)[cite: 55], this validates that the
+// function call itself maintains the 16-byte boundary required by SysV.
+extern "C" void simd_func(Vector4 v);
+
+void test_stack_alignment() {
+    Vector4 v;
+    v.x = 0;
+    simd_func(v); // Caller MUST align stack before this call
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_sret();
+test_mixed_return();
+test_vararg_spilling();
+test_indirect_calls();
+test_bitfield_layout();
+test_volatile_barrier();
+test_tls_logic();
+test_reg_clobber();
+test_stack_alignment()

@@ -1,0 +1,129 @@
+println("--- [E2E] abi_killshot_conformance.mox ---")
+
+// ============================================================================
+// 1. THE 8-BYTE SPLIT: MIXED CLASSIFICATION (INTEGER + SSE)
+// ============================================================================
+// SysV requires classification of each 8-byte chunk. [cite: 8]
+// If a single 8-byte chunk contains both float and int, it is complex.
+struct Split {
+    float a; // 4 bytes (SSE)
+    int b;   // 4 bytes (INTEGER)
+}
+// Verification: Ensures the backend doesn't take the "easy way" and
+// push the whole struct to memory or a single register type.
+extern "C" void pass_split_struct(Split s);
+
+// ============================================================================
+// 2. CROSS-BOUNDARY BITFIELDS
+// ============================================================================
+// Stresses endianness and bit-offset spilling across storage unit boundaries. [cite: 13, 93]
+struct CrossBitfield {
+    unsigned int a : 31;
+    unsigned int b : 2; // This bit crosses the 32-bit (4-byte) boundary.
+}
+
+void test_bitfield_spill() {
+    CrossBitfield cb;
+    cb.a = 0x7FFFFFFF;
+    cb.b = 3;
+    println(sizeof(CrossBitfield)); // Typically 8 bytes in C/C++
+}
+
+// ============================================================================
+// 3. ATOMIC MEMORY MODEL (ACQUIRE / RELEASE)
+// ============================================================================
+// Volatile is for hardware side-effects; Atomics are for concurrency. [cite: 23, 68]
+// This ensures Moksha isn't just "thread-safe by accident."
+void test_atomic_ordering() {
+    int sync_flag = 0;
+    int data = 0;
+
+    // RELEASE: Ensures 'data' write is visible before 'sync_flag'
+    atomic_store(&data, 42, 3);
+    atomic_store(&sync_flag, 1, 3);
+}
+
+// ============================================================================
+// 4. TAIL CALL STACK NEUTRALITY
+// ============================================================================
+extern "C" int terminal_callee(int x);
+
+int test_tail_call_verification(int x) {
+    // Verification: The generated ASM must show 'jmp' instead of 'call'
+    // and must not move the stack pointer (RSP). [cite: 125, 126]
+    return terminal_callee(x);
+}
+
+// ============================================================================
+// 6. MULTI-THREADED TLS ISOLATION
+// ============================================================================
+// Validates that TLS isn't just "global with extra steps." [cite: 20, 21]
+thread_local int thread_secret = 10;
+
+void test_tls_isolation() {
+    // Expected behavior: Modifications in a spawned thread do not affect
+    // the value in the parent thread.
+    println(`Local Secret: ${thread_secret}`);
+}
+
+// ============================================================================
+// 7. EXCEPTION UNWINDING ACROSS FFI
+// ============================================================================
+// Even if Moksha doesn't support C++ style catch, it must allow
+// unwinding to pass through its frames without corrupting the stack. [cite: 126, 128]
+extern "C" void external_c_thrower();
+
+void test_unwind_safety() {
+    // If an exception passes through here, Moksha must have valid .eh_frame entries.
+    external_c_thrower();
+}
+
+// ============================================================================
+// 8. SIZED ENUMS & PROMOTION
+// ============================================================================
+// Enums with explicit underlying types change the ABI passing width. [cite: 91]
+enum HugeEnum {
+    MAX_VAL = 0xFFFFFFFFFFFFFFFF_u64
+}
+
+extern "C" void pass_huge_enum(HugeEnum e);
+
+// ============================================================================
+// 9. THE 3-REGISTER RETURN (192-BIT EDGE)
+// ============================================================================
+// SysV return limit is 128 bits (RAX+RDX). 192 bits forces memory return. [cite: 30]
+struct ThreeReg {
+    long a; long b; long c;
+}
+extern "C" ThreeReg return_three_reg();
+
+// ============================================================================
+// 10. UB & OPTIMIZER ASSUMPTIONS
+// ============================================================================
+// Validates if the compiler treats arithmetic overflow as UB for optimization.
+void test_arithmetic_ub(int x) {
+    // If (x + 1) > x is folded to 'true', the compiler is assuming signed overflow UB.
+    if ((x + 1) > x) {
+        println("Optimizer assumes standard signed overflow");
+    }
+}
+
+// ============================================================================
+// 11. MISALIGNED ACCESS & ENDIANNESS
+// ============================================================================
+// Stresses targets where unaligned loads cause hardware faults or slow paths. [cite: 94]
+void test_misalignment() {
+    char[8] buffer = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+    // Misaligned read of an int from index 1.
+    int x = *cast<*int>(&buffer[1]);
+    println(`Unaligned read (Endian check): ${x}`);
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_bitfield_spill();
+test_atomic_ordering();
+test_tls_isolation();
+test_arithmetic_ub(10);
+test_misalignment();

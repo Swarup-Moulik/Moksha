@@ -1,0 +1,131 @@
+println("--- [E2E] closure_semantic_edge_cases.mox ---")
+
+// 1. CLOSURE IDENTITY VS EQUALITY
+// Spec: Closures are compared by reference (Fat Pointer equality: same fn ptr + same env ptr).
+void test_closure_identity() {
+    int x = 10;
+    closure() -> int a = () => { return x; };
+    closure() -> int b = () => { return x; };
+    closure() -> int c = a;
+
+    println(a == c); // Expected: true
+    println(a == b); // Expected: false (Different environment allocations)
+}
+
+// 2. CLOSURE STORED INSIDE OBJECT (Heap-to-Heap Graph)
+class Holder {
+    public closure() -> int f;
+    // Dummy constructor
+    constructor() {}
+}
+
+void test_closure_in_object() {
+    int x = 7;
+    Holder h = new Holder();
+    h.f = () => { return x; }; // Escapes into an object field
+
+    // Extract to local variable to bypass method dispatcher
+    closure() -> int tempF = h.f;
+    println(tempF()); // Expected: 7
+}
+
+// 4. NESTED MUTATION ACROSS LAYERS
+void test_nested_mutation_layers() {
+    int x = 1;
+    // Outer mutates the state captured from the outermost scope
+    closure() -> closure() -> void outer = &mut () => {
+        return &mut () => { x = x * 2; };
+    };
+
+    closure() -> void f = outer();
+    f();
+    println(x); // Expected: 2
+}
+
+// 5. CLOSURE REASSIGNMENT (Env Swap)
+void test_closure_reassignment() {
+    int x = 5;
+    closure() -> int f = () => { return x; };
+    println(f()); // Expected: 5
+
+    x = 10;
+    // Rebinding 'f' creates a entirely new closure and environment
+    f = () => { return x + 1; };
+    println(f()); // Expected: 11
+}
+
+// 6. DEFAULT PARAMETER EVALUATION TIMING
+// Spec: Default arguments are LATE-BOUND (evaluated at the call site).
+// Since 'x' is captured by reference, the default uses the latest value of 'x'.
+void test_default_eval_time() {
+    int x = 10;
+
+    // Evaluate the outer factory closure first
+    closure() -> closure(int) -> int factory = &() => {
+        return (int a = x) => { return a; };
+    };
+
+    // Execute the factory to retrieve the inner closure
+    closure(int) -> int f = factory();
+
+    closure(int) -> int delayed = (int a = x) => { return a; };
+    x = 20;
+    println(delayed()); // Expected: 20
+}
+
+// 7. CLOSURE CAPTURING ANOTHER CLOSURE
+void test_capture_closure() {
+    closure(int) -> int add1 = (int x) => { return x + 1; };
+    // 'f' captures 'add1' inside its environment struct
+    closure(int) -> int f = (int x) => { return add1(x); };
+    println(f(5)); // Expected: 6
+}
+
+// 8. NON-CAPTURING CLOSURE TO FUNCTION POINTER (Optimization)
+// Spec: If a closure captures nothing, its environment pointer is NULL.
+void test_non_capturing_closure() {
+    closure(int) -> int f = (int x) => { return x + 1; };
+    println(f(5)); // Expected: 6
+}
+
+// 9. LARGE ENVIRONMENT PACKING STRESS
+// Spec: Tests the backend's struct generation for mixed primitive/reference types.
+void test_large_env() {
+    int a = 1;
+    int b = 2;
+    int c = 3;
+    string d = "env_str";
+
+    closure() -> int f = () => {
+        // Forces a struct { i32, i32, i32, ptr }
+        return a + b + c + 1;
+    };
+    println(f()); // Expected: 7
+}
+
+// 10. MUTATION + SNAPSHOT COEXISTENCE (Split Capture Mode)
+// Spec: If a closure is marked '&mut', ALL captures from that scope become reference/view
+// captures unless explicitly requested otherwise.
+void test_split_capture_modes() {
+    int a = 10;
+    int b = 20;
+
+    closure() -> int f = &mut () => {
+        b = b + 1;
+        return a + b;
+    };
+
+    a = 100; // 'a' is mutated outside
+    println(f()); // Expected: 121 (Because f holds a reference to 'a', not a snapshot)
+}
+
+// --- EXECUTION ---
+test_closure_identity();
+test_closure_in_object();
+test_nested_mutation_layers();
+test_closure_reassignment();
+test_default_eval_time();
+test_capture_closure();
+test_non_capturing_closure();
+test_large_env();
+test_split_capture_modes();

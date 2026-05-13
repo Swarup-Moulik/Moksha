@@ -1,0 +1,22 @@
+class SelfRef {
+    public int data;
+    public *mut int self_ptr;
+
+    constructor() {
+        this.data = 42;
+        // Points into its own stack allocation
+        this.self_ptr = &this.data;
+    }
+}
+
+void test_relocation() {
+    SelfRef obj1 = new SelfRef();
+
+    // ERROR EXPECTED: Moving a value type that contains active internal borrows
+    // to itself invalidates those pointers. The compiler must flag this move as
+    // an unsafe relocation.
+    SelfRef obj2 = obj1;
+
+    // FATAL: obj2.self_ptr still points to the memory address of obj1.data!
+    *(obj2.self_ptr) = 100;
+}

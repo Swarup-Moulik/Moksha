@@ -1,0 +1,38 @@
+println("--- [E2E] large_env_stress.mox ---")
+
+void test_large_env() {
+    // Capturing a wide variety of types to stress the struct layout [cite: 13]
+    int i1 = 1; double d1 = 1.1; bool b1 = true;
+    int i2 = 2; double d2 = 2.2; string s1 = "stress";
+
+    closure() -> void stress_f = move () => {
+        println(s1);
+        println(i1 + i2);
+        println(d1 + d2);
+    };
+
+    closure() -> void stress_f2 = () => {
+        println(s1);
+        println(i1 + i2);
+        println(d1 + d2);
+    };
+
+    closure() -> void stress_f3 = &() => {
+        println(s1);
+        println(i1 + i2);
+        println(d1 + d2);
+    };
+
+    closure() -> void stress_f4 = &mut() => {
+        println(s1);
+        println(i1 + i2);
+        println(d1 + d2);
+    };
+
+    stress_f();
+    stress_f2();
+    stress_f3();
+    stress_f4();
+}
+
+test_large_env();

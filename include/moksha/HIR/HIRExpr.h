@@ -59,7 +59,8 @@ enum class CastOp {
   FloatExtend,   // Float widening (e.g., quarter -> half -> float -> double)
   FloatTruncate, // Float narrowing (e.g., double -> float)
   PointerCast,
-  AnyCast
+  AnyCast,
+  Upcast
 };
 
 // [NEW] robust ThreadKind
@@ -117,7 +118,9 @@ public:
     Deref,
     AddressOf,
     Member,
-    Input
+    Input,
+    Shared,
+    Asm
   };
 
   virtual ~HIRExpr() = default;
@@ -442,21 +445,24 @@ public:
   HIRMemberExpr(
       std::unique_ptr<HIRExpr> object, std::string member,
       std::unordered_map<std::string, const HIRType *> genericBindings,
-      const HIRType *type, SourceLocation loc, FieldInfo info = FieldInfo())
+      const HIRType *type, SourceLocation loc, FieldInfo info = FieldInfo(),
+      const HIRType *targetParent = nullptr)
       : HIRExpr(Kind::Member, type, ValueCategory::LValue, loc),
         object(std::move(object)), member(std::move(member)),
-        info(std::move(info)), genericBindings(std::move(genericBindings)) {}
-
+        info(std::move(info)), genericBindings(std::move(genericBindings)),
+        targetParent(targetParent) {}
   HIRMemberExpr(std::unique_ptr<HIRExpr> object, std::string member,
                 const HIRType *type, SourceLocation loc,
-                FieldInfo info = FieldInfo())
+                FieldInfo info = FieldInfo(),
+                const HIRType *targetParent = nullptr)
       : HIRExpr(Kind::Member, type, ValueCategory::LValue, loc),
         object(std::move(object)), member(std::move(member)),
-        info(std::move(info)) {}
+        info(std::move(info)), targetParent(targetParent) {}
 
   [[nodiscard]] HIRExpr *getObject() const { return object.get(); }
   [[nodiscard]] const std::string &getMemberName() const { return member; }
   [[nodiscard]] const FieldInfo &getMemberInfo() const { return info; }
+  [[nodiscard]] const HIRType *getTargetParent() const { return targetParent; }
   const std::unordered_map<std::string, const HIRType *> &
   getGenericBindings() const {
     return genericBindings;
@@ -481,6 +487,8 @@ private:
   bool virtualMethod = false;
   uint32_t vtableIndex = 0;
   std::unordered_map<std::string, const HIRType *> genericBindings;
+
+  const HIRType *targetParent = nullptr;
 };
 
 class HIRIndexExpr : public HIRExpr {
@@ -634,18 +642,18 @@ class HIRLambdaExpr : public HIRExpr {
 public:
   HIRLambdaExpr(std::vector<HIRLambdaParam> params,
                 std::vector<HIRCapture> captures, std::unique_ptr<HIRStmt> body,
-                const HIRType *type, CaptureMode mode, SourceLocation loc);
+                const HIRType *type, CaptureMode mode, bool isAsync,
+                SourceLocation loc);
 
   ~HIRLambdaExpr() override;
-
   const std::vector<HIRLambdaParam> &getParams() const { return params; }
   const std::vector<HIRCapture> &getCaptures() const { return captures; }
   const HIRStmt *getBody() const;
   CaptureMode getCaptureMode() const { return captureMode; }
+  bool isAsyncLambda() const { return isAsync; }
   void accept(HIRVisitor &v) override;
   void accept(ConstHIRVisitor &v) const override;
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
-
   static bool classof(const HIRExpr *E) { return E->getKind() == Kind::Lambda; }
 
 private:
@@ -653,6 +661,7 @@ private:
   std::vector<HIRCapture> captures;
   std::unique_ptr<HIRStmt> body;
   CaptureMode captureMode;
+  bool isAsync;
 };
 
 class HIRThreadExpr : public HIRExpr {
@@ -794,6 +803,74 @@ public:
 
 private:
   std::unique_ptr<HIRExpr> prompt;
+};
+
+class HIRSharedExpr : public HIRExpr {
+public:
+  HIRSharedExpr(std::unique_ptr<HIRExpr> expr, const HIRType *type,
+                SourceLocation loc)
+      : HIRExpr(Kind::Shared, type, ValueCategory::RValue, loc),
+        expression(std::move(expr)) {}
+
+  [[nodiscard]] const HIRExpr *getExpr() const { return expression.get(); }
+
+  void accept(HIRVisitor &v) override;
+  void accept(ConstHIRVisitor &v) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
+
+  static bool classof(const HIRExpr *E) { return E->getKind() == Kind::Shared; }
+
+private:
+  std::unique_ptr<HIRExpr> expression;
+};
+
+class HIRAsmExpr : public HIRExpr {
+public:
+  // Replicate the AsmOperand struct here in the HIR layer
+  struct AsmOperand {
+    std::string constraint;
+    std::unique_ptr<HIRExpr> expr;
+
+    AsmOperand(std::string c, std::unique_ptr<HIRExpr> e)
+        : constraint(std::move(c)), expr(std::move(e)) {}
+
+    // Move semantics required for unique_ptr
+    AsmOperand(AsmOperand &&) = default;
+    AsmOperand &operator=(AsmOperand &&) = default;
+
+    // We do not need a clone() method here as HIR is generally immutable
+    // post-creation
+  };
+
+  HIRAsmExpr(std::string assemblyStr, std::vector<AsmOperand> outputs,
+             std::vector<AsmOperand> inputs, std::vector<AsmOperand> inouts,
+             std::vector<std::string> clobbers, bool isVolatile,
+             const HIRType *type, SourceLocation loc)
+      : HIRExpr(Kind::Asm, type, ValueCategory::RValue, loc),
+        assemblyStr(std::move(assemblyStr)), outputs(std::move(outputs)),
+        inputs(std::move(inputs)), inouts(std::move(inouts)),
+        clobbers(std::move(clobbers)), isVolatile(isVolatile) {}
+
+  const std::string &getAssemblyStr() const { return assemblyStr; }
+  const std::vector<AsmOperand> &getOutputs() const { return outputs; }
+  const std::vector<AsmOperand> &getInputs() const { return inputs; }
+  const std::vector<AsmOperand> &getInouts() const { return inouts; }
+  const std::vector<std::string> &getClobbers() const { return clobbers; }
+  bool getIsVolatile() const { return isVolatile; }
+
+  void accept(HIRVisitor &v) override;
+  void accept(ConstHIRVisitor &v) const override;
+  void dump(llvm::raw_ostream &os, int indent = 0) const override;
+
+  static bool classof(const HIRExpr *E) { return E->getKind() == Kind::Asm; }
+
+private:
+  std::string assemblyStr;
+  std::vector<AsmOperand> outputs;
+  std::vector<AsmOperand> inputs;
+  std::vector<AsmOperand> inouts;
+  std::vector<std::string> clobbers;
+  bool isVolatile;
 };
 
 } // namespace hir

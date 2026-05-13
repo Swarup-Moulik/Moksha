@@ -1,0 +1,15 @@
+class ValueType { int x; }
+ref class RefType { int x; }
+
+void test() {
+    ValueType v = new ValueType(10);
+    RefType r = new RefType(20);
+
+    // ERROR: Cannot assign a reference to a value-type variable.
+    // This would break the "No implicit aliasing" rule for value classes.
+    v = r;
+
+    // ERROR: Cannot assign a value type to a reference variable.
+    // Values lack the heap-identity required by 'ref class'.
+    r = v;
+}

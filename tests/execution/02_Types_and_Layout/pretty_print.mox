@@ -1,0 +1,26 @@
+println("--- [E2E] pretty_print.mox ---");
+
+// ==========================================
+// 1. Built-in Collections (Auto Pretty-Print)
+// ==========================================
+void test_builtins() {
+    println("--- Built-in Collections ---");
+
+    // Arrays (Fixed size)
+    int[5] static_arr = [1, 2, 3, 4, 5];
+    println("Array: " + static_arr);
+
+    // Slices (Dynamic fat-pointers)
+    int[] dynamic_slice = [10, 20, 30, 40, 50];
+    println("Slice: " + dynamic_slice);
+
+    // Tables / Maps
+    table<int, string> dict = { 1: "Alice", 2: "Bob", 3: "Charlie" };
+    println("Table: " + dict);
+
+    // Tables / Maps (any, any implicitly)
+    table dict2 = { 1: "Alice", 2: "Bob", 3: "Charlie" };
+    println("Table2: " + dict2);
+}
+
+test_builtins()

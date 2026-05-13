@@ -1,0 +1,12 @@
+async void fetch_data() {}
+
+async void test_async_borrows() {
+    int x = 42;
+    *mut int m = &x;
+
+    // The HIR must reject holding a mutable pointer across an 'await'.
+    // When the state machine suspends, the stack frame is yielded, meaning local pointers become invalid!
+    await fetch_data();
+
+    *m = 99;
+}

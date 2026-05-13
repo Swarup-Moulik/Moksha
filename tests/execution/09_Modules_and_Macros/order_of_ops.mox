@@ -1,0 +1,15 @@
+int f() { println("f"); return 1; }
+int g() { println("g"); return 10; }
+
+void test_execution_contract() {
+    // 1. Left-to-Right Guarantee
+    // Should print "f", then "g", then "11"
+    println(f() + g());
+
+    // 2. Sequential Input Buffering
+    println("Enter two numbers:");
+    int sum = input("A :- ") + input("B :- ");
+    println(`Combined: ${sum}`);
+}
+
+test_execution_contract()

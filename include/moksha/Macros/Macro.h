@@ -129,23 +129,23 @@ public:
 
   // --- Empty Stubs for ASTVisitor Pure Virtuals ---
   void visitPrimitiveType(const PrimitiveType *) override {}
-  void visitPointerType(const PointerType *) override {}
-  void visitReferenceType(const ReferenceType *) override {}
-  void visitArrayType(const ArrayType *) override {}
+  void visitPointerType(const PointerType *) override;
+  void visitReferenceType(const ReferenceType *) override;
+  void visitArrayType(const ArrayType *) override;
   void visitSliceType(const SliceType *type) override;
-  void visitMapType(const MapType *) override {}
-  void visitFunctionType(const FunctionType *) override {}
-  void visitNamedType(const NamedType *) override {}
-  void visitNullableType(const NullableType *) override {}
+  void visitMapType(const MapType *) override;
+  void visitFunctionType(const FunctionType *) override;
+  void visitNamedType(const NamedType *) override;
+  void visitNullableType(const NullableType *) override;
   void visitAnyType(const AnyType *) override {}
-  void visitLockType(const LockType *) override {}
-  void visitViewType(const ViewType *) override {}
-  void visitMutType(const MutType *) override {}
+  void visitLockType(const LockType *) override;
+  void visitViewType(const ViewType *) override;
+  void visitMutType(const MutType *) override;
   void visitEnumType(const EnumType *) override {}
   void visitNullType(const NullType *) override {}
   void visitVolatileType(const VolatileType *type) override;
   void visitConstType(const ConstType *type) override;
-  void visitWeakType(const WeakType *type) override {}
+  void visitWeakType(const WeakType *type) override;
   void visitDecimalType(const DecimalType *) override {}
   void visitClosureType(const ClosureType *type) override;
   void visitPromiseType(const PromiseType *type) override;
@@ -157,42 +157,43 @@ public:
   void visitBoolLiteral(const BoolLiteral *) override {}
   void visitNullLiteral(const NullLiteral *) override {}
   void visitCharLiteral(const CharLiteral *) override {}
-  void visitArrayLiteral(const ArrayLiteral *) override {}
-  void visitMapLiteral(const MapLiteral *) override {}
-  void visitBinaryExpr(const BinaryExpr *) override {}
-  void visitUnaryExpr(const UnaryExpr *) override {}
-  void visitTernaryExpr(const TernaryExpr *) override {}
-  void visitCastExpr(const CastExpr *) override {}
+  void visitArrayLiteral(const ArrayLiteral *) override;
+  void visitMapLiteral(const MapLiteral *) override;
+  void visitBinaryExpr(const BinaryExpr *) override;
+  void visitUnaryExpr(const UnaryExpr *) override;
+  void visitTernaryExpr(const TernaryExpr *) override;
+  void visitCastExpr(const CastExpr *) override;
+  void visitBitcastExpr(const BitcastExpr *) override;
   void visitIdentifierExpr(const IdentifierExpr *) override {}
-  void visitCallExpr(const CallExpr *) override {}
-  void visitMemberExpr(const MemberExpr *) override {}
-  void visitIndexExpr(const IndexExpr *) override {}
-  void visitLambdaExpr(const LambdaExpr *) override {}
-  void visitNewExpr(const NewExpr *) override {}
-  void visitTemplateStringExpr(const TemplateStringExpr *) override {}
+  void visitCallExpr(const CallExpr *) override;
+  void visitMemberExpr(const MemberExpr *) override;
+  void visitIndexExpr(const IndexExpr *) override;
+  void visitLambdaExpr(const LambdaExpr *) override;
+  void visitNewExpr(const NewExpr *) override;
+  void visitTemplateStringExpr(const TemplateStringExpr *) override;
   void visitThreadExpr(const ThreadExpr *) override;
   void visitThisExpr(const ThisExpr *) override {}
   void visitSuperExpr(const SuperExpr *) override {}
   void visitAwaitExpr(const AwaitExpr *) override;
-  void visitSizeOfExpr(const SizeOfExpr *) override {}
+  void visitSizeOfExpr(const SizeOfExpr *) override;
   void visitInputExpr(const InputExpr *expr) override;
+  void visitAsmExpr(const AsmExpr *) override;
 
-  void visitVariableDecl(const VariableDecl *) override {}
+  void visitDeclStmt(const DeclStmt *stmt) override;
   void visitImportDecl(const ImportDecl *) override {}
   void visitEnumDecl(const EnumDecl *) override {}
   void visitMacroDecl(const MacroDecl *) override {}
-  void visitUsingDecl(const UsingDecl *) override {}
+  void visitUsingDecl(const UsingDecl *) override;
+  void visitVariableDecl(const VariableDecl *decl) override;
 
-  void visitExpressionStmt(const ExpressionStmt *) override {}
-  void visitDeclStmt(const DeclStmt *) override {}
-  void visitReturnStmt(const ReturnStmt *) override {}
+  void visitExpressionStmt(const ExpressionStmt *) override;
   void visitBreakStmt(const BreakStmt *) override {}
   void visitContinueStmt(const ContinueStmt *) override {}
-  void visitDeferStmt(const DeferStmt *) override {}
-  void visitUnsafeBlockStmt(const UnsafeBlockStmt *) override {}
-  void visitThrowStmt(const ThrowStmt *) override {}
-  void visitAsmStmt(const AsmStmt *) override {}
+  void visitDeferStmt(const DeferStmt *) override;
+  void visitUnsafeBlockStmt(const UnsafeBlockStmt *) override;
+  void visitThrowStmt(const ThrowStmt *) override;
   void visitLockStmt(const LockStmt *stmt) override;
+  void visitReturnStmt(const ReturnStmt *stmt) override;
 };
 
 } // namespace moksha

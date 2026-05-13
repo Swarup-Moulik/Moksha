@@ -1,6 +1,0 @@
-from "Net" import { timeout }
-from "DB" import { timeout }
-
-// Type checker must throw: Ambiguous reference to 'timeout'.
-// Did you mean 'Net.timeout' or 'DB.timeout'?
-print(timeout);

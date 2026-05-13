@@ -1,0 +1,84 @@
+println("--- [E2E] abi_final_polishing_fixed.mox ---")
+
+// ============================================================================
+// 1. ABI CLASSIFICATION: NESTED & RECURSIVE AGGREGATES
+// ============================================================================
+// On SysV ABI, if this struct fits in 128 bits, it must be flattened and
+// passed in registers.
+struct Inner {
+    int a;
+    float b;
+}
+struct Outer {
+    Inner x;
+    Inner y;
+}
+extern "C" void pass_nested_aggregate(Outer o);
+
+// ============================================================================
+// 2. ABI CLASSIFICATION: PADDING SENSITIVITY
+// ============================================================================
+// Total size: 8 bytes. 1 byte 'a', 3 bytes padding, 4 bytes 'b'.
+struct Padded {
+    char a;
+    int b;
+}
+extern "C" Padded return_padded_struct();
+
+void test_padding() {
+    Padded p = return_padded_struct();
+    // Ensures the MLIR -> LLVM GEPOp correctly calculated the offset of 'b'
+    // skipping over the 3 bytes of padding.
+    println(p.b);
+}
+
+// ============================================================================
+// 3. FUNCTION POINTER ABI MISMATCH PREVENTION
+// ============================================================================
+extern "C" void register_float_callback((float) => void cb);
+
+void correct_cb(float x) { println("OK"); }
+void wrong_cb(int x) { println("FAIL"); }
+
+void test_callback_signatures() {
+    register_float_callback(correct_cb); // MUST COMPILE
+
+    // RED TEAM: register_float_callback(wrong_cb);
+    // Semantic Analyzer Fix: The type checker must verify not just the return
+    // type, but execute a deep equality check on the parameter types array.
+}
+
+// ============================================================================
+// 4. THREAD-LOCAL STORAGE (TLS)
+// ============================================================================
+// Must map to LLVM's thread_local global and placed in .tdata/.tbss
+thread_local int cpu_core_id = 0;
+
+void test_tls() {
+    cpu_core_id = 1;
+    println(cpu_core_id);
+}
+
+// ============================================================================
+// 5. VOLATILE: POINTER VS POINTEE (FIXED)
+// ============================================================================
+void test_volatile_ast() {
+    int target = 42;
+    volatile int vol_target = 42; // ADDED: Need a volatile base to point to without unsafe casting.
+
+    // 1. Non-volatile pointer to a volatile integer.
+    // FIX: Must point to an actually volatile variable to satisfy strict type checking.
+    volatile *mut int p1 = &vol_target;
+
+    // 2. Volatile pointer to a non-volatile integer.
+    // FIX: Can point to the standard target, but the pointer itself is volatile.
+    *mut volatile int p2 = &target;
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_padding();
+test_tls();
+test_callback_signatures();
+test_volatile_ast();

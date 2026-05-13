@@ -1,0 +1,15 @@
+println("--- [E2E] pipe_closure_combo.mox ---")
+
+void test_pipe_closure_capture() {
+    int base = 5;
+    // Closure syntax
+    closure(int) -> int addBase = (int x) => {
+        return x + base;
+    };
+
+    // Combinator: 10 passed to addBase(10)
+    int res = 10 |> addBase();
+    println(res); // Expected: 15
+}
+
+test_pipe_closure_capture();

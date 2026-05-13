@@ -1,0 +1,114 @@
+println("--- [E2E] abi_final_impossible_suite.mox ---")
+
+// ============================================================================
+// 1. NON-HFA VECTORIZABLE STRUCTS (XMM PACKING)
+// ============================================================================
+// On SysV, this is 128-bit. Stresses the IR generator to ensure it
+// lowers to <2 x double> for XMM0 usage, rather than an {i64, i64} aggregate.
+struct VecLike {
+    double a;
+    double b;
+}
+extern "C" void take_veclike(VecLike v);
+
+// ============================================================================
+// 2. BYVAL + ALIGN(32) INTERACTION
+// ============================================================================
+// Forces the backend to handle over-aligned stack-passed parameters.
+// Validates 'byval align 32' in the IR.
+align(32) struct BigAligned {
+    float[8] data;
+}
+extern "C" void take_big_aligned(BigAligned b);
+
+// ============================================================================
+// 3. FLEXIBLE ARRAY MEMBER (FAM)
+// ============================================================================
+// ABI rule: sizeof(Packet) must ignore the flexible tail.
+// Passing/returning must treat it as a 4-byte (int) header only.
+struct Packet {
+    int len;
+    char[0] data;
+}
+void test_fam_semantics() {
+    println(`FAM Struct Size: ${sizeof(Packet)}`); // Expected: 4
+}
+
+// ============================================================================
+// 4. UNION ABI CLASSIFICATION
+// ============================================================================
+// Stresses classification based on the largest member.
+// If i32 and float alias, the ABI must decide between GPR and SSE.
+union U {
+    int i;
+    float f;
+}
+extern "C" void pass_union(U u);
+
+// ============================================================================
+// 5. LONG DOUBLE PASSING (SYSV MEMORY VS WIN64 ALIAS)
+// ============================================================================
+// Cross-platform divergence point: x86_64 SysV uses memory/x87 stack,
+// while Windows often aliases this to a 64-bit double.
+extern "C" void take_ld(double x);
+
+// ============================================================================
+// 6. FUNCTION RETURNING FUNCTION POINTER
+// ============================================================================
+// Validates CC (Calling Convention) metadata preservation through nesting.
+extern "C" (int) => void get_callback();
+
+// ============================================================================
+// 7. MULTI-DIMENSIONAL ARRAY DECAY
+// ============================================================================
+// ABI Rule: int[3][4] must decay to int (*)[4], not int**.
+extern "C" void take_2d(int[3][4] arr);
+
+// ============================================================================
+// 8. SMALL ENUM WIDTH (EXPLICIT STORAGE)
+// ============================================================================
+// Validates that Moksha doesn't promote i8 enums to i32 in standard FFI.
+enum SmallEnum {
+    A = 1
+}
+extern "C" void pass_small_enum(SmallEnum e);
+
+// ============================================================================
+// 9. CROSS-LANGUAGE INTEROP (C VS C++)
+// ============================================================================
+// Validates layout consistency. In Moksha's Gradient Memory Model,
+// we must ensure that a 'class' (value type) or 'ref class' doesn't
+// inject unexpected padding compared to a standard C struct. [cite: 2]
+extern "C" {
+    struct CData { int x; char y; }
+}
+extern "C++" {
+    struct CppData { int x; char y; }
+}
+
+// ============================================================================
+// 10. ZERO-INITIALIZED TLS (.TBSS VS .TDATA)
+// ============================================================================
+// Ensures zero-init TLS variables are placed in .tbss to minimize binary size.
+thread_local int zero_tls = 0;
+
+// ============================================================================
+// 11. WEAK + INLINE + ODR PATHOLOGY
+// ============================================================================
+// Stresses LTO. If 'foo' is inlined before the weak symbol is resolved,
+// it creates a permanent ODR violation.
+inline weak void weak_inline_test() {
+    println("Default Weak Inline");
+}
+
+// ============================================================================
+// 12. CALLING CONVENTION + VARARGS (WINDOWS DEGRADATION)
+// ============================================================================
+// On Windows, 'stdcall' varargs must degrade to 'cdecl' to prevent stack corruption.
+extern "stdcall" int win_printf(string fmt, ...);
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_fam_semantics();
+println(`TLS Address: ${&zero_tls}`);

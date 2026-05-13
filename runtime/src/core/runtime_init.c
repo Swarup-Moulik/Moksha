@@ -2,7 +2,6 @@
 #include "../../include/moksha_rt.h"
 #include "../abi/sys_caps.h"
 #include "../abi/sys_event.h"
-#include <stdio.h>
 
 // Bring in Windows API for the console fix
 #ifdef _WIN32
@@ -19,6 +18,7 @@ extern void __moksha_main(void);
 // Provided by src/async/scheduler.c
 extern void moksha_scheduler_init(void);
 extern void moksha_scheduler_run(void);
+extern bool moksha_scheduler_is_active(void);
 
 // The REAL entry point that the OS and Linker will call
 int main(int argc, char **argv) {
@@ -43,7 +43,9 @@ int main(int argc, char **argv) {
 
   // Keep pumping the scheduler until all async tasks are complete.
   if (caps->has_async_io) {
-    moksha_scheduler_run();
+    while (moksha_scheduler_is_active()) {
+      moksha_scheduler_run();
+    }
   }
 
   // 4. Cleanup

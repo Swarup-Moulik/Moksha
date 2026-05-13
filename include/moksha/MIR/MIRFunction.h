@@ -39,7 +39,8 @@ public:
   // ------------------------------------------------------------------------
 
   Linkage getLinkage() const { return linkage; }
-
+  void setLinkage(Linkage l) { linkage = l; }
+  bool isWeak() const { return linkage == Linkage::Weak; }
   bool isDeclaration() const;
 
   // ------------------------------------------------------------------------

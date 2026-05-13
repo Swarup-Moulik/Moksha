@@ -66,6 +66,7 @@ public:
   void visitLambdaExpr(const LambdaExpr *expr) override;
   void visitTernaryExpr(const TernaryExpr *expr) override;
   void visitCastExpr(const CastExpr *expr) override;
+  void visitBitcastExpr(const BitcastExpr *expr) override;
   void visitNewExpr(const NewExpr *expr) override;
   void visitTemplateStringExpr(const TemplateStringExpr *expr) override;
   void visitThreadExpr(const ThreadExpr *expr) override;
@@ -75,6 +76,7 @@ public:
   void visitSuperExpr(const SuperExpr *expr) override;
   void visitSizeOfExpr(const SizeOfExpr *expr) override;
   void visitInputExpr(const InputExpr *expr) override;
+  void visitAsmExpr(const AsmExpr *expr) override;
 
   // Statements
   void visitBlockStmt(const BlockStmt *stmt) override;
@@ -93,7 +95,6 @@ public:
   void visitUnsafeBlockStmt(const UnsafeBlockStmt *stmt) override;
   void visitTryCatchStmt(const TryCatchStmt *stmt) override;
   void visitThrowStmt(const ThrowStmt *stmt) override;
-  void visitAsmStmt(const AsmStmt *stmt) override;
   void visitLockStmt(const LockStmt *stmt) override;
 
   // Declarations

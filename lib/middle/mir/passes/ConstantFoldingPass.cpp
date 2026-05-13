@@ -27,6 +27,14 @@ static MIRValue *getBasePointer(MIRValue *val) {
       val = gep->getPointer();
     } else if (auto *cast = llvm::dyn_cast<CastInst>(val)) {
       val = cast->getValue();
+    } else if (auto *cCast = llvm::dyn_cast<ConstantBitCast>(val)) {
+      val = cCast->getValue();
+    } else if (auto *cAny = llvm::dyn_cast<ConstantAnyCast>(val)) {
+      val = cAny->getValue();
+    } else if (auto *cArr = llvm::dyn_cast<ConstantArrayToSlice>(val)) {
+      val = cArr->getValue();
+    } else if (auto *cSlice = llvm::dyn_cast<ConstantSliceToArray>(val)) {
+      val = cSlice->getValue();
     } else {
       break;
     }
@@ -188,8 +196,26 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
 
           // Strip away BitCasts so we can see the raw Constants underneath
           auto unwrapCasts = [](MIRValue *val) -> MIRValue * {
-            while (auto *cast = llvm::dyn_cast_or_null<CastInst>(val)) {
-              val = cast->getValue();
+            while (val) {
+              if (auto *cast = llvm::dyn_cast_or_null<CastInst>(val)) {
+                val = cast->getValue();
+              } else if (auto *cCast =
+                             llvm::dyn_cast_or_null<ConstantBitCast>(val)) {
+                val = cCast->getValue();
+              } else if (auto *cAny =
+                             llvm::dyn_cast_or_null<ConstantAnyCast>(val)) {
+                val = cAny->getValue();
+              } else if (auto *cArr =
+                             llvm::dyn_cast_or_null<ConstantArrayToSlice>(
+                                 val)) {
+                val = cArr->getValue();
+              } else if (auto *cSlice =
+                             llvm::dyn_cast_or_null<ConstantSliceToArray>(
+                                 val)) {
+                val = cSlice->getValue();
+              } else {
+                break;
+              }
             }
             return val;
           };
@@ -209,34 +235,78 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
                   M.getOrInsertConstant<ConstantBool>(false, icmp->getType());
             }
           }
-          // 2. Fold Constant Integer Math
+          // 2. Fold Constant Integer Comparisons
           else if (auto *lInt = llvm::dyn_cast<ConstantInt>(lhs)) {
             if (auto *rInt = llvm::dyn_cast<ConstantInt>(rhs)) {
-              int64_t lVal = lInt->getValue();
-              int64_t rVal = rInt->getValue();
+
+              // Determine if the operands are signed based on LHS type
+              bool isSigned = false;
+              if (lhs->getType()) {
+                if (auto *hirIntTy = llvm::dyn_cast_or_null<hir::HIRIntType>(
+                        lhs->getType())) {
+                  isSigned = hirIntTy->isSigned();
+                } else if (lhs->getType()->toString().find("i") !=
+                           std::string::npos) {
+                  isSigned = true; // Fallback heuristic for "i32", "i64"
+                }
+              }
+
               bool result = false;
 
-              switch (icmp->getPredicate()) {
-              case CompareInst::Predicate::EQ:
-                result = (lVal == rVal);
-                break;
-              case CompareInst::Predicate::NE:
-                result = (lVal != rVal);
-                break;
-              case CompareInst::Predicate::LT:
-                result = (lVal < rVal);
-                break;
-              case CompareInst::Predicate::LE:
-                result = (lVal <= rVal);
-                break;
-              case CompareInst::Predicate::GT:
-                result = (lVal > rVal);
-                break;
-              case CompareInst::Predicate::GE:
-                result = (lVal >= rVal);
-                break;
-              default:
-                break;
+              if (isSigned) {
+                // Evaluate using C++ SIGNED comparisons
+                int64_t lVal = static_cast<int64_t>(lInt->getValue());
+                int64_t rVal = static_cast<int64_t>(rInt->getValue());
+
+                switch (icmp->getPredicate()) {
+                case CompareInst::Predicate::EQ:
+                  result = (lVal == rVal);
+                  break;
+                case CompareInst::Predicate::NE:
+                  result = (lVal != rVal);
+                  break;
+                case CompareInst::Predicate::LT:
+                  result = (lVal < rVal);
+                  break;
+                case CompareInst::Predicate::LE:
+                  result = (lVal <= rVal);
+                  break;
+                case CompareInst::Predicate::GT:
+                  result = (lVal > rVal);
+                  break;
+                case CompareInst::Predicate::GE:
+                  result = (lVal >= rVal);
+                  break;
+                default:
+                  break;
+                }
+              } else {
+                // Evaluate using C++ UNSIGNED comparisons
+                uint64_t lVal = lInt->getValue();
+                uint64_t rVal = rInt->getValue();
+
+                switch (icmp->getPredicate()) {
+                case CompareInst::Predicate::EQ:
+                  result = (lVal == rVal);
+                  break;
+                case CompareInst::Predicate::NE:
+                  result = (lVal != rVal);
+                  break;
+                case CompareInst::Predicate::LT:
+                  result = (lVal < rVal);
+                  break;
+                case CompareInst::Predicate::LE:
+                  result = (lVal <= rVal);
+                  break;
+                case CompareInst::Predicate::GT:
+                  result = (lVal > rVal);
+                  break;
+                case CompareInst::Predicate::GE:
+                  result = (lVal >= rVal);
+                  break;
+                default:
+                  break;
+                }
               }
 
               folded =
@@ -250,8 +320,26 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
         // --------------------------------------------------------------------
         if (auto *fcmp = llvm::dyn_cast<FCmpInst>(inst)) {
           auto unwrapCasts = [](MIRValue *val) -> MIRValue * {
-            while (auto *cast = llvm::dyn_cast_or_null<CastInst>(val)) {
-              val = cast->getValue();
+            while (val) {
+              if (auto *cast = llvm::dyn_cast_or_null<CastInst>(val)) {
+                val = cast->getValue();
+              } else if (auto *cCast =
+                             llvm::dyn_cast_or_null<ConstantBitCast>(val)) {
+                val = cCast->getValue();
+              } else if (auto *cAny =
+                             llvm::dyn_cast_or_null<ConstantAnyCast>(val)) {
+                val = cAny->getValue();
+              } else if (auto *cArr =
+                             llvm::dyn_cast_or_null<ConstantArrayToSlice>(
+                                 val)) {
+                val = cArr->getValue();
+              } else if (auto *cSlice =
+                             llvm::dyn_cast_or_null<ConstantSliceToArray>(
+                                 val)) {
+                val = cSlice->getValue();
+              } else {
+                break;
+              }
             }
             return val;
           };
@@ -303,8 +391,26 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
         // --------------------------------------------------------------------
         if (auto *binOp = llvm::dyn_cast<BinaryInst>(inst)) {
           auto unwrapCasts = [](MIRValue *val) -> MIRValue * {
-            while (auto *cast = llvm::dyn_cast_or_null<CastInst>(val)) {
-              val = cast->getValue();
+            while (val) {
+              if (auto *cast = llvm::dyn_cast_or_null<CastInst>(val)) {
+                val = cast->getValue();
+              } else if (auto *cCast =
+                             llvm::dyn_cast_or_null<ConstantBitCast>(val)) {
+                val = cCast->getValue();
+              } else if (auto *cAny =
+                             llvm::dyn_cast_or_null<ConstantAnyCast>(val)) {
+                val = cAny->getValue();
+              } else if (auto *cArr =
+                             llvm::dyn_cast_or_null<ConstantArrayToSlice>(
+                                 val)) {
+                val = cArr->getValue();
+              } else if (auto *cSlice =
+                             llvm::dyn_cast_or_null<ConstantSliceToArray>(
+                                 val)) {
+                val = cSlice->getValue();
+              } else {
+                break;
+              }
             }
             return val;
           };
@@ -315,37 +421,86 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
           // Integer Math
           if (auto *lInt = llvm::dyn_cast<ConstantInt>(lhs)) {
             if (auto *rInt = llvm::dyn_cast<ConstantInt>(rhs)) {
-              uint64_t lVal = lInt->getValue();
-              uint64_t rVal = rInt->getValue();
+
+              // Check if the Moksha type is a signed integer
+              bool isSigned = false;
+              if (auto *hirIntTy = llvm::dyn_cast_or_null<hir::HIRIntType>(
+                      binOp->getType())) {
+                isSigned = hirIntTy->isSigned();
+              } else if (binOp->getType()->toString().find("i") !=
+                         std::string::npos) {
+                isSigned = true; // Fallback heuristic for "i32", "i64", etc.
+              }
+
               uint64_t result = 0;
               bool valid = true;
 
-              switch (binOp->getOpcode()) {
-              case Opcode::Add:
-                result = lVal + rVal;
-                break;
-              case Opcode::Sub:
-                result = lVal - rVal;
-                break;
-              case Opcode::Mul:
-                result = lVal * rVal;
-                break;
-              case Opcode::Div:
-                if (rVal != 0)
-                  result = lVal / rVal;
-                else
+              if (isSigned) {
+                // Evaluate using C++ SIGNED arithmetic (sdiv, srem, etc.)
+                int64_t lVal = static_cast<int64_t>(lInt->getValue());
+                int64_t rVal = static_cast<int64_t>(rInt->getValue());
+                int64_t sResult = 0;
+
+                switch (binOp->getOpcode()) {
+                case Opcode::Add:
+                  sResult = lVal + rVal;
+                  break;
+                case Opcode::Sub:
+                  sResult = lVal - rVal;
+                  break;
+                case Opcode::Mul:
+                  sResult = lVal * rVal;
+                  break;
+                case Opcode::Div:
+                  if (rVal != 0)
+                    sResult = lVal / rVal;
+                  else
+                    valid = false;
+                  break;
+                case Opcode::Mod:
+                  if (rVal != 0)
+                    sResult = lVal % rVal;
+                  else
+                    valid = false;
+                  break;
+                default:
                   valid = false;
-                break;
-              case Opcode::Mod:
-                if (rVal != 0)
-                  result = lVal % rVal;
-                else
+                  break;
+                }
+                result = static_cast<uint64_t>(sResult);
+              } else {
+                // Evaluate using C++ UNSIGNED arithmetic (udiv, urem, etc.)
+                uint64_t lVal = lInt->getValue();
+                uint64_t rVal = rInt->getValue();
+
+                switch (binOp->getOpcode()) {
+                case Opcode::Add:
+                  result = lVal + rVal;
+                  break;
+                case Opcode::Sub:
+                  result = lVal - rVal;
+                  break;
+                case Opcode::Mul:
+                  result = lVal * rVal;
+                  break;
+                case Opcode::Div:
+                  if (rVal != 0)
+                    result = lVal / rVal;
+                  else
+                    valid = false;
+                  break;
+                case Opcode::Mod:
+                  if (rVal != 0)
+                    result = lVal % rVal;
+                  else
+                    valid = false;
+                  break;
+                default:
                   valid = false;
-                break;
-              default:
-                valid = false;
-                break;
+                  break;
+                }
               }
+
               if (valid) {
                 folded = M.getOrInsertConstant<ConstantInt>(result,
                                                             binOp->getType());

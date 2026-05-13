@@ -22,12 +22,14 @@ typedef struct __attribute__((aligned(64))) {
 static PaddedLock lock_table[LOCK_TABLE_SIZE] = {0};
 
 // CPU-specific Pause instruction to prevent pipeline starvation
-static inline void cpu_relax() {
+void cpu_relax() {
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) ||             \
     defined(_M_IX86)
   __builtin_ia32_pause();
 #elif defined(__aarch64__) || defined(__arm__)
   __asm__ volatile("yield" ::: "memory");
+#elif defined(__riscv)
+  __asm__ volatile("pause" ::: "memory");
 #endif
 }
 
@@ -37,8 +39,16 @@ static inline void thread_yield() {
   Sleep(0); // Yield to another thread of equal priority
 #elif defined(__linux__) || defined(__APPLE__)
   sched_yield();
+#else
+  // Bare-metal fallback: just relax the CPU, no OS scheduler exists
+  cpu_relax();
 #endif
 }
+
+extern void *moksha_rt_make_unresolved_promise(void);
+extern void moksha_rt_resolve_promise(void *promise_handle, void *result_data);
+extern void *moksha_mem_alloc(size_t size);
+extern void moksha_mem_free(void *ptr);
 
 static inline uint32_t hash_ptr(void *ptr) {
   uintptr_t val = (uintptr_t)ptr;
@@ -81,4 +91,82 @@ void __moksha_unlock(void *ptr) {
 
   uint32_t idx = hash_ptr(ptr);
   __atomic_store_n(&lock_table[idx].locked, 0, __ATOMIC_RELEASE);
+}
+
+void AsyncMutex_constructor(void *this_ptr) {
+  MokshaAsyncMutex *mtx = (MokshaAsyncMutex *)this_ptr;
+  mtx->is_locked = false;
+  mtx->waiters_head = NULL;
+  mtx->waiters_tail = NULL;
+  mtx->spin_lock = 0;
+}
+
+void *AsyncMutex_lock(void *this_ptr) {
+  MokshaAsyncMutex *mtx = (MokshaAsyncMutex *)this_ptr;
+  void *promise = moksha_rt_make_unresolved_promise();
+
+  while (__atomic_exchange_n(&mtx->spin_lock, 1, __ATOMIC_ACQUIRE)) {
+    cpu_relax();
+  }
+
+  if (!mtx->is_locked) {
+    mtx->is_locked = true;
+    moksha_rt_resolve_promise(promise, NULL); // Available immediately
+  } else {
+    // Lock is taken. Enqueue the promise to be woken up later!
+    AsyncMutexWaitNode *node =
+        (AsyncMutexWaitNode *)moksha_mem_alloc(sizeof(AsyncMutexWaitNode));
+    node->promise_handle = promise;
+    node->next = NULL;
+    if (!mtx->waiters_head) {
+      mtx->waiters_head = node;
+      mtx->waiters_tail = node;
+    } else {
+      mtx->waiters_tail->next = node;
+      mtx->waiters_tail = node;
+    }
+  }
+
+  __atomic_store_n(&mtx->spin_lock, 0, __ATOMIC_RELEASE);
+  return promise;
+}
+
+void AsyncMutex_unlock(void *this_ptr) {
+  MokshaAsyncMutex *mtx = (MokshaAsyncMutex *)this_ptr;
+
+  while (__atomic_exchange_n(&mtx->spin_lock, 1, __ATOMIC_ACQUIRE)) {
+    cpu_relax();
+  }
+
+  if (mtx->waiters_head) {
+    // Transfer the lock directly to the next coroutine in the queue
+    AsyncMutexWaitNode *node = mtx->waiters_head;
+    mtx->waiters_head = node->next;
+    if (!mtx->waiters_head)
+      mtx->waiters_tail = NULL;
+
+    // Resolve their promise, notifying the scheduler to wake them up
+    moksha_rt_resolve_promise(node->promise_handle, NULL);
+    moksha_mem_free(node);
+  } else {
+    mtx->is_locked = false;
+  }
+
+  __atomic_store_n(&mtx->spin_lock, 0, __ATOMIC_RELEASE);
+}
+
+void AsyncMutex_destructor(void *this_ptr) {
+  MokshaAsyncMutex *mtx = (MokshaAsyncMutex *)this_ptr;
+  while (__atomic_exchange_n(&mtx->spin_lock, 1, __ATOMIC_ACQUIRE)) {
+    cpu_relax();
+  }
+
+  // Free any dangling memory if the mutex is destroyed while tasks are waiting
+  AsyncMutexWaitNode *curr = mtx->waiters_head;
+  while (curr) {
+    AsyncMutexWaitNode *next = curr->next;
+    moksha_mem_free(curr);
+    curr = next;
+  }
+  __atomic_store_n(&mtx->spin_lock, 0, __ATOMIC_RELEASE);
 }

@@ -1,0 +1,110 @@
+println("--- [E2E] cross_feature_valid_paths.mox ---")
+
+// Global variable to test valid global escape origins
+int global_val = 100;
+
+*view int get_global_ptr() {
+    return &global_val; // Valid: origin is global, not local stack
+}
+
+class Vector2 {
+    public int x;
+    public int y;
+
+    constructor(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+void test_reborrow_chaining() {
+    println("Category 1: Reborrow Chaining");
+    int x = 10;
+    *mut int m1 = &x;           // Primary mutable borrow [cite: 30]
+    *view int v1 = &*m1;        // Reborrow mut as view
+    *view int v2 = &*v1;        // Transitive reborrow (depth 2)
+
+    println(*v2);               // Expected: 10
+}
+
+void test_mixed_alias() {
+    println("Category 2: Mixed Pointer and Reference Alias");
+    int x = 10;
+    *mut int p = &x;            // Pointer abstraction [cite: 30]
+    // Assuming 'ref' is a supported alias abstraction in Moksha
+    // ref int r = x;
+
+    *p = 20;                    // Mutation via pointer
+    println(x);                 // Expected: 20
+}
+
+void test_temporary_borrow() {
+    println("Category 3: Inline Temporary Borrows");
+    int x = 50;
+    // Borrowing directly inside an expression
+    println(*(&x));             // Expected: 50
+}
+
+void test_lock_borrow_interaction() {
+    println("Category 4: Lock + Borrow Interaction");
+    lock int x = 10;
+    *lock int p = &x;
+    lock (p) {
+        *view int v = &*p;
+        println(*v);            // Expected: 10
+    }
+}
+
+void test_valid_return_reuse() {
+    println("Category 5: Valid Function Return Reuse");
+    *view int p = get_global_ptr();
+    println(*p);                // Expected: 100
+}
+
+void test_definite_assignment_borrow() {
+    println("Category 6: Definite Assignment + Borrow");
+    int x;
+    x = 42;                     // Initialized after declaration
+    *view int v = &x;           // Valid: x is now definitely assigned [cite: 31]
+    println(*v);                // Expected: 42
+}
+
+void test_disjoint_borrows() {
+    println("Category 7: Disjoint Borrows (NLL Sensitivity)");
+    // Using Vector2 to test field-level disjointness [cite: 44, 45]
+    Vector2 p = new Vector2(0, 0);
+
+    {
+        *mut int mx = &p.x;
+        *mx = 1;                // Borrow of p.x ends at block exit
+    }
+
+    {
+        *mut int my = &p.y;
+        *my = 2;                // Valid reuse of p's origin for disjoint field
+    }
+    println(p.x + p.y);         // Expected: 3
+}
+
+void test_pointer_closure_capture() {
+    println("Category 8: Pointer Capture in Closure");
+    int x = 77;
+    *view int p = &x;           // [cite: 31]
+
+    // Capture the pointer itself by value into the closure [cite: 21, 27]
+    closure() -> int f = () => {
+        return *p;
+    };
+
+    println(f());               // Expected: 77
+}
+
+// --- Execution ---
+test_reborrow_chaining();
+test_mixed_alias();
+test_temporary_borrow();
+test_lock_borrow_interaction();
+test_valid_return_reuse();
+test_definite_assignment_borrow();
+test_disjoint_borrows();
+test_pointer_closure_capture();

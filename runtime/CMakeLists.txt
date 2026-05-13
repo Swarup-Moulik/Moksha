@@ -29,9 +29,12 @@ set(CORE_SOURCES
     src/core/map.c
     src/core/sync.c
     src/core/io.c
+    src/core/exceptions.c
+    src/core/channel.c
     src/memory/allocator.c
     src/async/task.c
     src/async/scheduler.c
+    src/async/async_builtins.c
     src/debug/log.c
     src/debug/trace.c
 )
@@ -46,6 +49,7 @@ if(MOKSHA_TARGET STREQUAL "windows")
         src/sys/windows/thread.c
         src/sys/windows/caps.c
         src/sys/windows/event_loop.c
+        src/sys/windows/time.c
     )
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
     set(PLATFORM_LIBS kernel32)
@@ -84,7 +88,7 @@ elseif(MOKSHA_TARGET STREQUAL "baremetal")
         src/sys/baremetal/platform/${MOKSHA_PLATFORM}/boot.S
     )
     # Freestanding flags for baremetal
-    add_compile_options(-ffreestanding -nostdlib -fno-stack-protector)
+    add_compile_options(-ffreestanding -nostdlib -fno-stack-protector -D__MOKSHA_BAREMETAL__)
 endif()
 
 # 5. Create the Library
@@ -98,9 +102,11 @@ target_include_directories(moksha_rt PUBLIC
 
 # 7. Compiler-specific settings
 if(MSVC)
-    target_compile_options(moksha_rt PRIVATE /W4 /Z7)
+    # /EHa enables asynchronous/SEH exception unwinding in MSVC
+    target_compile_options(moksha_rt PRIVATE /W4 /Z7 /EHa)
 else()
-    target_compile_options(moksha_rt PRIVATE -Wall -Wextra -g)
+    # -fexceptions forces GCC/Clang to emit unwind tables for C code
+    target_compile_options(moksha_rt PRIVATE -Wall -Wextra -g -fexceptions)
 endif()
 
 # 8. Output Naming (matches what mokshac.cpp expects)

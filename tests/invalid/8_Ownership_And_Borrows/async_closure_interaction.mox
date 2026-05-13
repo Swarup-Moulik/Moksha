@@ -1,0 +1,19 @@
+async void fetch_network() {}
+
+async void test_async_closure_capture() {
+    int local_state = 10;
+
+    // The closure captures 'local_state' by reference (implicit *mut or *view)
+    closure() -> void print_state = () => {
+        print(local_state);
+    };
+
+    // ERROR EXPECTED: Suspension Point Invalidation.
+    // 'await' packs the stack frame into a state machine. The physical address
+    // of 'local_state' may change, or the local stack may be popped.
+    // The compiler must invalidate the closure's captured environment here.
+    await fetch_network();
+
+    // FATAL: Calling the closure invokes a dangling pointer to the pre-await stack.
+    print_state();
+}

@@ -1,0 +1,5 @@
+from "cyclic_dependency_value" import { ClassA }
+
+class ClassB {
+    public ClassA a;
+}

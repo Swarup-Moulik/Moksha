@@ -1,0 +1,12 @@
+class Base1 { void start() { print("1"); } }
+class Base2 { void start() { print("2"); } }
+
+// ERROR: Class 'Controller' is abstract or invalid.
+// It fails to resolve the conflict between Base1::start and Base2::start.
+class Controller(Base1, Base2) {
+    // Missing: void start() override { ... }
+}
+
+void exec() {
+    Controller c = new Controller(); // ERROR: Cannot instantiate class with unresolved conflicts.
+}

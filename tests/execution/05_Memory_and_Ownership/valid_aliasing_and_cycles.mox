@@ -1,0 +1,51 @@
+// ==========================================
+// File: Valid\valid_aliasing_and_cycles.mox
+// ==========================================
+
+println("--- [E2E] valid_aliasing_and_cycles.mox ---")
+
+// 1. SELF-REFERENTIAL STRUCTURE (Leak / Cycle Test)
+// PASS (Runtime Check): Ensures the ARC system does not crash or infinite loop when a strong cycle exists.
+// Note: This WILL leak memory unless explicitly broken, but it should compile and run without segfaulting.
+ref class Node {
+    public Node? self_ref;
+    constructor() {}
+}
+
+void test_self_reference_cycle() {
+    Node n = new Node();
+    n.self_ref = n; // Strong reference cycle
+    println("Cycle Created");
+}
+
+// 2. MUTATION THROUGH ALIAS CHAIN (Valid Deep Aliasing)
+// PASS: Tracking multiple mutable pointers derived from the same source is valid
+// as long as their usage doesn't violate active borrows.
+void test_alias_chain_mutation() {
+    int x = 10;
+    *mut int p1 = &x;
+    *mut int p2 = p1; // Aliasing
+
+    *p1 = 20;
+    *p2 = 30; // Valid: Reassigning via alias
+    println(x); // Expected: 30
+}
+
+// 3. PARTIAL MOVES / SPLITTING
+// PASS: Validates field-level disjointness analysis.
+class SplitStruct { public int a; public int b; }
+
+void test_partial_splitting() {
+    SplitStruct s = new SplitStruct();
+    s.a = 1;
+    s.b = 2;
+
+    int x = s.a; // Read from field A
+    s.b = 3;     // Mutate field B
+    println(x + s.b); // Expected: 4 (No conflict, fields are disjoint)
+}
+
+// --- Execution ---
+test_self_reference_cycle();
+test_alias_chain_mutation();
+test_partial_splitting();

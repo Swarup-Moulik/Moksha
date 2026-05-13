@@ -1,0 +1,20 @@
+println("--- [E2E] short_circuit.mox ---")
+
+int side_effect(int val) {
+    print("Effect: ");
+    println(val);
+    return val;
+}
+
+void test_logic() {
+    // AND: Second half should NOT run
+    bool a = false && (side_effect(1) > 0);
+
+    // OR: Second half should NOT run
+    bool b = true || (side_effect(2) > 0);
+
+    // Order: Should print 10, then 20
+    bool c = (side_effect(10) > 0) && (side_effect(20) > 0);
+}
+
+test_logic();

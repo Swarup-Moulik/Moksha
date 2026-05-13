@@ -1,0 +1,99 @@
+println("--- [E2E] core_semantics_and_dispatch.mox ---");
+
+// ---------------------------------------------------------
+// 1 & 2. Value vs Reference Copying & Mutation
+// ---------------------------------------------------------
+class Vector2 {
+    public int x;
+    constructor(int x) { this.x = x; }
+}
+ref class Player {
+    public string name;
+    constructor(string n) { this.name = n; }
+}
+
+// LAW: 'class' is passed/copied by value (deep copy).
+void mutate_val(Vector2 v) { v.x = 50; }
+Vector2 v1 = new Vector2(1);
+Vector2 v2 = v1;
+v2.x = 99;
+mutate_val(v1);
+println("Value Class v1.x (Expected 1 - No alias, no mutation):");
+println(v1.x);
+
+// LAW: 'ref class' is passed/copied by reference (pointer copy).
+void mutate_ref(Player p) { p.name = "B"; }
+Player p1 = new Player("A");
+Player p2 = p1;
+p2.name = "C";
+mutate_ref(p1);
+println("Ref Class p1.name (Expected B - Aliased and mutated):");
+println(p1.name);
+
+// LAW: Arrays and Tables are Value Types unless prefixed with 'ref'
+void mutate_arr(int[] arr) { arr[0] = 999; }
+int[3] a = [1, 2, 3];
+int[3] b = a;
+b[0] = 100;
+mutate_arr(a);
+println("Array a[0] (Expected 1 - Deep copy semantics):");
+println(a[0]);
+
+// ---------------------------------------------------------
+// 3. Dynamic Dispatch (VTable Resolution)
+// ---------------------------------------------------------
+ref class Base {
+    public virtual string f() { return "Base"; }
+}
+ref class Derived(Base) {
+    public override string f() { return "Derived"; }
+}
+
+Base obj = new Derived();
+println("VTable Dynamic Dispatch (Expected Derived):");
+println(obj.f());
+
+// ---------------------------------------------------------
+// 4. Equality Semantics (==)
+// ---------------------------------------------------------
+Vector2 vecA = new Vector2(5);
+Vector2 vecB = new Vector2(5);
+// LAW: Value types compare structurally.
+println("Value Equality (Expected true):");
+println(vecA == vecB);
+
+Player pA = new Player("X");
+Player pB = new Player("X");
+// LAW: Ref types compare pointers (memory address).
+println("Reference Equality (Expected false):");
+println(pA == pB);
+
+// ---------------------------------------------------------
+// 5 & 6. Evaluation Order & Aliasing
+// ---------------------------------------------------------
+// LAW: Expressions evaluate strictly Left-to-Right.
+int[] spread_src = [1];
+int[] spread_res = [...spread_src, spread_src[0] = 5];
+println("Spread LTR Eval (Expected 1):");
+println(spread_res[0]);
+println("Spread LTR Mutated (Expected 5):");
+println(spread_res[1]);
+
+int[] self_arr = [1, 2];
+self_arr = [...self_arr, 1, 2];
+println("Self-spread length (Expected 4):");
+println(length(self_arr));
+
+// ---------------------------------------------------------
+// 10. Unions (C-Style Unsafe Punning)
+// ---------------------------------------------------------
+union ValueOverlay {
+    int int_val;
+    float float_val;
+}
+ValueOverlay u;
+unsafe {
+    u.float_val = 1.5;
+    println("Union Bitwise Reinterpretation:");
+    println(u.int_val);
+}

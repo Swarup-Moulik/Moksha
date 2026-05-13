@@ -10,7 +10,11 @@ using namespace moksha::hir;
 
 HIRModule::HIRModule(std::string moduleName) : name(std::move(moduleName)) {}
 
-HIRModule::~HIRModule() = default;
+HIRModule::~HIRModule() {
+  for (HIRType *type : allocatedTypes) {
+    type->~HIRType();
+  }
+}
 
 HIRFunction *HIRModule::getFunction(llvm::StringRef name) const {
   for (const auto &f : functions) {

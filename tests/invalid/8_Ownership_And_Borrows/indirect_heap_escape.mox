@@ -1,0 +1,16 @@
+ref class ConnectionContext {
+    public *mut int buffer_ptr = null;
+}
+
+ConnectionContext leak_stack_to_heap() {
+    int local_buffer_size = 1024;
+    ConnectionContext ctx = new ConnectionContext();
+
+    // Error: The heap object now holds a physical address pointing to the stack.
+    ctx.buffer_ptr = &local_buffer_size;
+
+    // ERROR EXPECTED: Indirect escape detected.
+    // Returning 'ctx' leaks the 'buffer_ptr' which points to a stack frame
+    // that is about to be popped.
+    return ctx;
+}

@@ -1,0 +1,67 @@
+println("--- [E2E] for_in_loops.mox ---")
+
+void test_string_iteration() {
+    println("Iterating over String:");
+
+    // 1. String Literal
+    for (ch in "Mox") {
+        println(ch);
+    }
+    // Expected: M \n o \n x
+
+    // 2. String Variable
+    string tech = "AI";
+    for (char c in tech) {
+        println(c);
+    }
+    // Expected: A \n I
+}
+
+void test_array_iteration() {
+    println("Iterating over Array:");
+
+    // 1. Array Literal (Elements only)
+    for (int val in [10, 20]) {
+        println(val);
+    }
+    // Expected: 10 \n 20
+
+    // 2. Array Variable (Index and Elements)
+    int[] nums = [100, 200, 300];
+    for (int idx, int item in nums) {
+        print(idx);
+        print(": ");
+        println(item);
+    }
+    // Expected: 0: 100 \n 1: 200 \n 2: 300
+}
+
+void test_table_iteration() {
+    println("Iterating over Tables:");
+
+    // 1. Typed Table (Keys only)
+    table<string, int> scores = {"Alice": 90, "Bob": 85};
+    for (string name in scores) {
+        println(name);
+    }
+    // Expected (Order may vary): Alice \n Bob
+
+    // 2. Default Table (any, any) (Keys and Values)
+    table metadata = {"version": 1.2, "stable": true};
+    for (string key, any val in metadata) {
+        print(key);
+        print(" -> ");
+        println(val);
+    }
+    // Expected: version -> 1.2 \n stable -> true
+
+    // 3. Table Literal (Direct iteration)
+    for (string k, v in {"ID": 500}) {
+        println(v);
+    }
+    // Expected: 500
+}
+
+test_string_iteration();
+test_table_iteration();
+test_array_iteration();

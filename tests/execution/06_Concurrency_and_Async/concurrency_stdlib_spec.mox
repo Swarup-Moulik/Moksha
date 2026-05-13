@@ -1,0 +1,95 @@
+println("--- [E2E] concurrency_stdlib_spec.mox ---")
+
+// Define the missing task for the timeout test
+async int some_long_task() {
+    await sleep(200);
+    return 1;
+}
+
+// 1. TIME-BASED EXECUTION & TIMEOUTS
+async void test_sleep_and_timeout() {
+    println("Task starting...");
+    // SUSPEND: Yields control back to the event loop for 50ms without blocking the OS thread.
+    await sleep(50);
+    println("Task woke up!");
+
+    // TIMEOUT: Wraps a promise. If some_long_task takes > 100ms, it throws/returns a timeout error.
+    promise<int> result = await timeout(some_long_task(), 100);
+}
+
+// 2. COOPERATIVE YIELDING (Scheduler fairness)
+async void test_cooperative_yield() {
+    int heavy_compute = 0;
+    while (heavy_compute < 10000) {
+        heavy_compute = heavy_compute + 1;
+        // SUSPEND: Puts this coroutine at the back of the scheduler's queue,
+        // allowing other async tasks to process so the event loop doesn't freeze.
+        if (heavy_compute % 1000 == 0) {
+            await yield();
+        }
+    }
+    println("Heavy compute finished fairly.");
+}
+
+// 3. CONCURRENCY COMBINATORS (Wait For Multiple)
+async int fast_task() { await sleep(10); return 1; }
+async int slow_task() { await sleep(50); return 2; }
+
+async void test_combinators() {
+    // JOIN (Promise.all): Suspends until ALL promises complete.
+    int[] results = await join(fast_task(), slow_task());
+    println(results[0] + results[1]); // Expected: 3
+
+    // SELECT (Promise.race): Suspends until the FIRST promise completes.
+    /* int winner = await select(fast_task(), slow_task());
+    println(winner);  */ // Expected: 1
+}
+
+// 4. TASK CANCELLATION (The Abort Model)
+async void infinite_task() {
+    bool running = true; // Fixed: bypasses static analysis "unreachable" error from while(true)
+    while (running) {
+        // If the promise is cancelled, `sleep` or `yield` should throw a CancellationException
+        // or safely unwind the coroutine frame.
+        await sleep(10);
+    }
+}
+
+void test_cancellation() {
+    // Spawn returns a Promise/Task handle
+    promise<void> task_handle = spawn(infinite_task());
+
+    // Explicitly cancel the task. The scheduler must mark the task's InternalPromise
+    // as aborted and clean up its memory during the next poll.
+    cancel(task_handle)
+    println("Task cancelled successfully.");
+}
+
+// 5. INTER-TASK COMMUNICATION (Message Passing)
+async void test_channels() {
+    // Create an async ring-buffer channel with a capacity of 2
+    shared Channel<int> ch = new Channel<int>(2);
+    shared Channel<int> ch_alias = ch;
+
+    // Producer Thread (Fixed to match fuzz target API: .send and .recv)
+    spawn(async () => {
+        await ch_alias.send(100);
+        await ch_alias.send(200);
+        // Queue is full! If we push again, the thread would block.
+    });
+
+    // Consumer Coroutine
+    int val1 = await ch.recv(); // Suspends if the queue is empty
+    int val2 = await ch.recv();
+
+    println(val1 + val2); // Expected: 300
+}
+
+println(">>> Executing Stdlib Spec Tests <<<");
+
+await test_sleep_and_timeout();
+await test_cooperative_yield();
+// await test_combinators();
+test_cancellation();
+await test_channels();
+println(">>> All Stdlib Spec Tests Completed <<<");

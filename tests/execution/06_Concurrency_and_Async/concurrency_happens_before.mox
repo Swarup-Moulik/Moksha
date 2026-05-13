@@ -1,0 +1,43 @@
+println("--- [E2E] concurrency_happens_before.mox ---")
+
+void test_acquire_release_semantics() {
+    int payload = 0;
+    int ready_flag = 0;
+
+    *mut int payload_ptr = &payload;
+    *mut int flag_ptr = &ready_flag;
+
+    // Writer Thread
+    new thread(() => {
+        // 1. Write the payload (Non-atomic, standard memory write)
+        *payload_ptr = 42;
+
+        // 2. Publish the flag (Atomic Release)
+        // A release fence ensures the payload write CANNOT be reordered after this flag.
+        atomic_fence_release();
+        atomic_store(flag_ptr, 1);
+    });
+
+    // Reader Thread
+    new thread(() => {
+        // 1. Spin until the flag is published
+        while (atomic_load(flag_ptr) == 0) {
+            // spin
+        }
+
+        // 2. Synchronize memory (Atomic Acquire)
+        // An acquire fence ensures the payload read CANNOT be reordered before this flag check.
+        atomic_fence_acquire();
+
+        // 3. Read the payload
+        int read_val = *payload_ptr;
+
+        // RED TEAM: If memory ordering is broken, read_val might still be 0.
+        if (read_val != 42) {
+            throw new Exception("HAPPENS-BEFORE VIOLATION: Memory ordering failed!");
+        }
+        println("Memory visibility guaranteed.");
+    });
+}
+
+test_acquire_release_semantics();

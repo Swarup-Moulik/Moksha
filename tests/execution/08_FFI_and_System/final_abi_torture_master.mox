@@ -1,0 +1,171 @@
+println("--- [E2E] final_abi_torture_master.mox ---")
+
+// ============================================================================
+// 1. ABI CLASSIFICATION: THE MEMORY FALLBACK TRAP
+// ============================================================================
+// SysV Rule: If a struct has an SSE + INTEGER mix across the same 8-byte boundary,
+// or exceeds register slots, it MUST fall back to 'sret' (memory)[cite: 7, 8, 30].
+struct WeirdCollision {
+    double a;  // Slot 0: SSE
+    int b;     // Slot 1: INTEGER
+    double c;  // Slot 1/2: SSE (Collides with Slot 1)
+}
+
+extern "C" WeirdCollision return_weird();
+
+// ============================================================================
+// 2. SRET & BYVAL: LLVM ATTRIBUTE VALIDATION
+// ============================================================================
+struct HugeData { long[16] data; } // [cite: 100]
+
+// Verifies that 'HugeData' is returned via hidden sret pointer
+extern "C" HugeData return_huge_sret();
+
+// Verifies that 'BigData' is passed via 'byval' (caller-allocated stack copy)
+extern "C" void take_huge_byval(HugeData d);
+
+// ============================================================================
+// 3. FLOATING POINT & SIMD: THE NATIVE REGISTER PATH
+// ============================================================================
+// On SysV, 'long double' (80-bit x87) is passed via ST0, not XMM[cite: 31, 32].
+extern "C" double pass_ld(double x);
+
+// Verifies 'vector' attribute lowers to LLVM <4 x float>, NOT an aggregate struct.
+struct Float4 { float x; float y; float z; float w; }
+extern "C" void pass_true_vector(Float4 v);
+
+// ============================================================================
+// 4. CALLER-SAVED & RED ZONE STRESS
+// ============================================================================
+extern "C" void clobber_registers();
+
+void test_reg_preservation() {
+    // Forces the compiler to pin 'x' into a callee-saved register (e.g., R12-R15).
+    int x = 42;
+    clobber_registers();
+    // If the backend fails to save/restore R12, 'x' will be corrupted here.
+    println(`Preservation check: ${x}`);
+}
+
+// x86_64 SysV has a 128-byte 'Red Zone' below RSP.
+// ISRs MUST NOT use the red zone as the CPU hardware interrupts don't respect it[cite: 45, 83].
+interrupt naked void check_red_zone_safety() {
+    // Backend MUST NOT emit red-zone-using code here.
+    asm("push %rax");
+    asm("pop %rax");
+    asm("iretq");
+}
+
+// ============================================================================
+// 5. CALLING CONVENTION & INDIRECT MISMATCHES
+// ============================================================================
+extern "stdcall" void win32_func(int a); // [cite: 98]
+extern "C" void c_func(int a);           // [cite: 1]
+
+void test_cc_mismatch() {
+    // RED TEAM: This cast should ideally be caught by the type system,
+    // but we test if the indirect call correctly lowers to 'call stdcall' vs 'call ccc'.
+    (int) => void fp = cast<(int) => void>(win32_func);
+    // fp(10); // UB if called as C-convention
+}
+
+// ============================================================================
+// 6. TAIL CALL & VARARG REG-SAVE-AREA
+// ============================================================================
+extern "C" int terminal_callee(int x);
+
+int test_tail_call(int x) {
+    // IR must show 'tail call' to ensure stack neutrality[cite: 135].
+    return terminal_callee(x);
+}
+
+extern "C" int printf(string fmt, ...); // [cite: 35, 61]
+void test_vararg_spill() {
+    // Interleaving forces filling both GPR (rdi, rsi...) and SSE (xmm0, xmm1...) save areas.
+    printf("%d %f %d %f %d %f", 1, 1.1, 2, 2.2, 3, 3.3);
+}
+
+// ============================================================================
+// 7. BITCAST VS CONVERSION
+// ============================================================================
+void test_bitcast() {
+    unsigned int raw_bits = 0x3f800000_u32;
+    // bitcast must NOT generate 'cvtsi2ss'. It must generate 'movd' or IR bitcast.
+    float f = bitcast<float>(raw_bits);
+    println(`Bitcast 1.0: ${f}`);
+}
+
+// ============================================================================
+// 8. VOLATILE BARRIERS & ALIASING
+// ============================================================================
+volatile int barrier_x;
+volatile int barrier_y;
+
+void test_volatile_reordering() {
+    // IR must strictly maintain this order to prevent hardware hazards[cite: 68, 69].
+    barrier_x = 100;
+    barrier_y = 200;
+}
+
+void test_strict_aliasing() {
+    int x = 0;
+    // TBAA Metadata check: If the compiler assumes 'int' and 'float' don't alias,
+    // the optimizer might incorrectly reorder these stores[cite: 73, 74].
+    *mut float p_f = cast<*mut float>(&x);
+    *p_f = 1.0f32;
+    // println(x);
+}
+
+// ============================================================================
+// 9. CROSS-MODULE ODR / TLS
+// ============================================================================
+// TU-1 defines 'Foo' with 'int'. TU-2 defines 'Foo' with 'float'.
+// Moksha must detect this mismatch during linking or CTU analysis[cite: 105, 108].
+struct Node {
+    int val;
+    *mut Node next; // Recursive type layout check [cite: 71, 72]
+}
+
+thread_local int tls_primary = 1;
+// Verifies 'initial-exec' vs 'global-dynamic' models[cite: 21].
+thread_local int tls_dependent = tls_primary + 1;
+
+// ============================================================================
+// MISSING TEST WRAPPERS
+// ============================================================================
+
+void test_memory_fallback() {
+    WeirdCollision w = return_weird();
+    // Verification: SysV requires this to be returned via a hidden memory pointer
+    // because Slot 1 contains both an int (INTEGER) and half a double (SSE)[cite: 7, 8].
+    println(`Memory fallback: a=${w.a}, b=${w.b}, c=${w.c}`);
+}
+
+void test_sret_byval() {
+    // Test SRET (Returned via pointer)
+    HugeData h = return_huge_sret();
+    println(`SRET data check: ${h.data[15]}`); // Expected: 165
+
+    // Test ByVal (Passed via stack copy)
+    take_huge_byval(h);
+}
+
+void test_simd_vectors() {
+    Float4 v;
+    v.x = 1.1; v.y = 2.2; v.z = 3.3; v.w = 4.4;
+    pass_true_vector(v);
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_reg_preservation();
+test_vararg_spill();
+test_bitcast();
+test_memory_fallback();  // <-- Added
+test_sret_byval();       // <-- Added
+test_simd_vectors();     // <-- Added
+test_tail_call(100);     // <-- Added call to existing test
+test_cc_mismatch();      // <-- Added call to existing test
+test_volatile_reordering();
+test_strict_aliasing();

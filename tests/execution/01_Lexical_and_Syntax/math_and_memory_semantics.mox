@@ -1,0 +1,73 @@
+println("--- [E2E] math_and_memory_semantics.mox ---");
+
+// ---------------------------------------------------------
+// 1. Mixed-Type Arithmetic (Implicit Promotions)
+// ---------------------------------------------------------
+int a = 10;
+float b = 2.5;
+float mixed_res = a + b; // Implicit promotion int -> float
+println(mixed_res); // Expected: 12.5
+
+decimal<5,2> d = 1.23d;
+decimal<6,2> mixed_dec = d + 10; // Int -> decimal promotion
+println(mixed_dec); // Expected: 11.23
+
+// ---------------------------------------------------------
+// 2. IEEE 754 Subtleties (-0.0 and NaN)
+// ---------------------------------------------------------
+float neg_zero = -0.0;
+float pos_zero = 0.0;
+println("-0.0 == 0.0:");
+println(neg_zero == pos_zero); // Expected: true
+
+println("1.0 / -0.0:");
+println(1.0 / neg_zero);       // Expected: -inf
+
+println("1.0 / 0.0:");
+println(1.0 / pos_zero);       // Expected: inf
+
+// ---------------------------------------------------------
+// 3. Precision Loss & Modulo Semantics
+// ---------------------------------------------------------
+float big_float = 1e20;
+float next_float = big_float + 1.0;
+println("Precision Loss Equality:");
+println(big_float == next_float); // Expected: true (Loss absorbed the +1)
+
+println("Negative Modulo:");
+println(-5 % 2); // Expected: -1 (Matches sign of dividend)
+println(5 % -2); // Expected: 1
+
+// ---------------------------------------------------------
+// 4. Signed Bitwise Shifts
+// ---------------------------------------------------------
+int neg_one = -1;
+println("Signed Bitwise Right-Shift:");
+println(neg_one >> 1); // Expected: -1 (Arithmetic shift preserves sign bit)
+
+// ---------------------------------------------------------
+// 5. Value vs. Reference Aliasing
+// ---------------------------------------------------------
+class ValueState {
+    public int val;
+    constructor(int v) { this.val = v; }
+}
+
+ref class RefState {
+    public int val;
+    constructor(int v) { this.val = v; }
+}
+
+// Stack-allocated value types copy memory
+ValueState v1 = new ValueState(1);
+ValueState v2 = v1;
+v2.val = 999;
+println("Value Type Aliasing:");
+println(v1.val); // Expected: 1 (Original untouched)
+
+// Heap-allocated reference types copy the pointer
+RefState r1 = new RefState(1);
+RefState r2 = r1;
+r2.val = 999;
+println("Ref Type Aliasing:");
+println(r1.val); // Expected: 999 (Original mutated)

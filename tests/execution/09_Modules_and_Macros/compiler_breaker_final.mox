@@ -1,0 +1,87 @@
+import { TestConfig } from "test"
+
+// 1. Macro with Control Flow Injection
+macro earlyReturnIf(cond) {
+    if (cond) {
+        println("Macro triggering early return...");
+        return;
+    }
+}
+
+// 2. Macro Argument Order and Evaluation
+macro orderTest(a, b) {
+    println(`First arg: ${a}`);
+    println(`Second arg: ${b}`);
+}
+
+// 3. Inheritance: Dynamic Dispatch and Field Shadowing
+ref class Parent {
+    public int value = 10;
+    public virtual void identify() { println("I am Parent"); }
+}
+
+ref class Child(Parent) {
+    public int value = 20; // Field Shadowing
+    public override void identify() { println("I am Child"); } // Override
+}
+
+// 4. Object Mutation Macro for Chaining
+macro incrementVersion(cfg) {
+    cfg.version = cfg.version + 1;
+    cfg // Return the object for the next pipe
+}
+
+int sideEffectCounter = 0;
+int next() {
+    sideEffectCounter = sideEffectCounter + 1;
+    return sideEffectCounter;
+}
+
+void run_compiler_breaker() {
+    println("--- [FINAL] Compiler Breaker Suite ---");
+
+    // --- TEST 1: Pipe Precedence ---
+    // Does (1 + 2) |> println() or 1 + (2 |> println()) happen?
+    // Correct behavior: 3
+    1 + 2 |> println();
+
+    // --- TEST 2: Macro Argument Evaluation Order ---
+    // Tests if arguments are evaluated left-to-right (1, then 2)
+    orderTest(next(), next());
+    println(`Final Counter: ${sideEffectCounter}`); // Expected: 2
+
+    // --- TEST 3: Any Type & Implicit Casting ---
+    any dynamicVar = 100;
+    int staticVar = dynamicVar; // Tests implicit downcasting from 'any'
+    println(`Cast result: ${staticVar}`);
+
+    // --- TEST 4: Method Dispatch & Shadowing ---
+    Parent p = new Child();
+    p.identify(); // Expected: "I am Child" (Dynamic Dispatch)
+    println(`Shadowed Value: ${p.value}`); // Checks if it accesses Parent.value or Child.value
+
+    // --- TEST 5: Macro Control Flow ---
+    earlyReturnIf(true);
+    println("ERROR: This line should never execute if macro return injected correctly.");
+
+    // --- TEST 6: The "Grand Chain" (Feature Collision) ---
+    // Combines Imports, Classes, Macros, and Pipes
+    TestConfig cfg = new TestConfig(10);
+    cfg
+    |> incrementVersion()
+    |> incrementVersion()
+    |> println(); // Expected: TestConfig object with version 12
+}
+
+// 5. Bounded Recursion (Observed)
+int factorial(int n) {
+    if (n <= 1) return 1;
+    return n * factorial(n - 1);
+}
+
+void test_recursion() {
+    println(`Factorial 5: ${factorial(5)}`); // Expected: 120
+}
+
+run_compiler_breaker();
+test_recursion();

@@ -20,7 +20,8 @@ public:
 
   bool isConstant() const { return isConstantFlag; }
   Linkage getLinkage() const { return linkage; }
-
+  void setLinkage(Linkage l) { linkage = l; }
+  bool isWeak() const { return linkage == Linkage::Weak; }
   bool isExtern() const { return isExternFlag; }
   void setExtern(bool e) { isExternFlag = e; }
 

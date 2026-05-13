@@ -32,6 +32,7 @@ enum class ValueKind {
   ConstantAnyCast,
   ConstantArrayToSlice,
   ConstantSliceToArray,
+  ConstantUpcast,
   BasicBlock,
   Function
 };

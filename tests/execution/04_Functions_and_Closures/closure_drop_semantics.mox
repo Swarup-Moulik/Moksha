@@ -1,0 +1,23 @@
+println("--- [E2E] closure_drop_semantics.mox ---")
+
+class Logger {
+    public string name;
+    constructor(string n) { this.name = n; println("Created: " + n); }
+    // Finalizer/Cleanup logic to observe destruction
+    destructor() { println("Destroyed: " + this.name); }
+}
+
+void test_move_drop() {
+    Logger log = new Logger("Resource1");
+
+    // Transfer ownership to the closure [cite: 11]
+    closure() -> void f = move () => {
+        println("Using: " + log.name);
+    };
+
+    f();
+    // After 'f' goes out of scope, the environment (and log) must be cleaned up.
+}
+
+test_move_drop();
+// Expected: Created: Resource1 \n Using: Resource1 \n Destroyed: Resource1

@@ -11,6 +11,7 @@ namespace moksha {
 class Stmt;
 class ASTVisitor;
 class FunctionDecl;
+class ClassDecl;
 
 /// Discriminator for LLVM-style RTTI (dyn_cast/isa)
 enum class ExprKind {
@@ -27,6 +28,7 @@ enum class ExprKind {
   UnaryExpr,
   TernaryExpr,
   CastExpr,
+  BitcastExpr,
   IdentifierExpr,
   CallExpr,
   MemberExpr,
@@ -39,7 +41,8 @@ enum class ExprKind {
   SuperExpr,
   AwaitExpr,
   SizeOfExpr,
-  InputExpr
+  InputExpr,
+  AsmExpr
 };
 
 /// Base Expression Node
@@ -304,6 +307,31 @@ private:
   ExprPtr expr;
 };
 
+class BitcastExpr : public Expr {
+public:
+  BitcastExpr(TypePtr target, ExprPtr expr, SourceLocation loc)
+      : Expr(ExprKind::BitcastExpr, loc), targetType(std::move(target)),
+        expr(std::move(expr)) {}
+
+  void accept(ASTVisitor &v) const override;
+
+  const Type *getTargetType() const { return targetType.get(); }
+  const Expr *getExpr() const { return expr.get(); }
+
+  std::unique_ptr<Expr> clone() const override {
+    return std::make_unique<BitcastExpr>(targetType->clone(), expr->clone(),
+                                         loc);
+  }
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == ExprKind::BitcastExpr;
+  }
+
+private:
+  TypePtr targetType;
+  ExprPtr expr;
+};
+
 // --- Variables & Calls ---
 
 class IdentifierExpr : public Expr {
@@ -375,6 +403,10 @@ public:
     memberIndex = vtableIdx;
   }
   void setType(const Type *t) { type = t; }
+  const ClassDecl *getQualifiedParent() const { return qualifiedParent; }
+  void setQualifiedParent(const ClassDecl *parent) { qualifiedParent = parent; }
+  bool isParentUpcast() const { return parentUpcast; }
+  void setParentUpcast(bool val) { parentUpcast = val; }
 
 private:
   ExprPtr object;
@@ -385,6 +417,8 @@ private:
   uint32_t bitWidth = 0;
   uint32_t bitOffset = 0;
   bool virtualMethod = false;
+  const ClassDecl *qualifiedParent = nullptr;
+  bool parentUpcast = false;
 };
 
 class IndexExpr : public Expr {
@@ -466,6 +500,8 @@ public:
     captures.push_back({std::move(name), type, mode});
   }
   CaptureMode getCaptureMode() const { return captureMode; }
+  bool isAsyncLambda() const { return isAsyncFlag; }
+  void setAsync(bool async) { isAsyncFlag = async; }
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::LambdaExpr;
   }
@@ -476,6 +512,7 @@ private:
   bool isExprBody;
   mutable std::vector<ASTCapture> captures;
   CaptureMode captureMode;
+  bool isAsyncFlag = false;
 };
 
 class NewExpr : public Expr {
@@ -597,6 +634,75 @@ public:
 
 private:
   ExprPtr prompt;
+};
+
+class AsmExpr : public Expr {
+public:
+  // Helper struct to map a constraint string to an expression
+  struct AsmOperand {
+    std::string constraint;
+    std::unique_ptr<Expr> expr;
+
+    AsmOperand(std::string c, std::unique_ptr<Expr> e)
+        : constraint(std::move(c)), expr(std::move(e)) {}
+
+    // Move semantics required for unique_ptr
+    AsmOperand(AsmOperand &&) = default;
+    AsmOperand &operator=(AsmOperand &&) = default;
+
+    AsmOperand clone() const {
+      return AsmOperand(constraint, expr ? expr->clone() : nullptr);
+    }
+  };
+
+  AsmExpr(std::string assemblyStr, std::vector<AsmOperand> outputs,
+          std::vector<AsmOperand> inputs, std::vector<AsmOperand> inouts,
+          std::vector<std::string> clobbers, bool isVolatile,
+          TypePtr returnType, SourceLocation loc)
+      : Expr(ExprKind::AsmExpr, loc), assemblyStr(std::move(assemblyStr)),
+        outputs(std::move(outputs)), inputs(std::move(inputs)),
+        inouts(std::move(inouts)), clobbers(std::move(clobbers)),
+        isVolatile(isVolatile) {
+    if (returnType)
+      this->type = returnType.get();
+  }
+
+  void accept(ASTVisitor &v) const override;
+
+  const std::string &getAssemblyStr() const { return assemblyStr; }
+  const std::vector<AsmOperand> &getOutputs() const { return outputs; }
+  const std::vector<AsmOperand> &getInputs() const { return inputs; }
+  const std::vector<AsmOperand> &getInouts() const { return inouts; }
+  const std::vector<std::string> &getClobbers() const { return clobbers; }
+  bool getIsVolatile() const { return isVolatile; }
+
+  std::unique_ptr<Expr> clone() const override {
+    std::vector<AsmOperand> outClone, inClone, inoutClone;
+    for (const auto &o : outputs)
+      outClone.push_back(o.clone());
+    for (const auto &i : inputs)
+      inClone.push_back(i.clone());
+    for (const auto &io : inouts)
+      inoutClone.push_back(io.clone());
+
+    auto expr = std::make_unique<AsmExpr>(
+        assemblyStr, std::move(outClone), std::move(inClone),
+        std::move(inoutClone), clobbers, isVolatile, nullptr, loc);
+    expr->setType(this->type);
+    return expr;
+  }
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == ExprKind::AsmExpr;
+  }
+
+private:
+  std::string assemblyStr;
+  std::vector<AsmOperand> outputs;
+  std::vector<AsmOperand> inputs;
+  std::vector<AsmOperand> inouts;
+  std::vector<std::string> clobbers;
+  bool isVolatile;
 };
 
 } // namespace moksha

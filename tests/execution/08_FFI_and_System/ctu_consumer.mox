@@ -1,0 +1,19 @@
+// Compilation Unit B
+struct Foo {
+    int a;
+    float b;
+}
+
+extern Foo make_foo(int x, float y);
+
+void test_ctu_consistency() {
+    Foo f = make_foo(10, 3.14);
+
+    if (f.a == 10) {
+        println("CTU Consistency: SUCCESS");
+    } else {
+        println("CTU Consistency: FAILED");
+    }
+}
+
+test_ctu_consistency();

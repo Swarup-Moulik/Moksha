@@ -1,0 +1,169 @@
+println("--- [E2E] abi_systems_edge_cases.mox ---")
+
+// ============================================================================
+// 1. ABI EDGE CASES & CLASSIFICATION
+// ============================================================================
+
+// (a) Mixed Integer + Float ABI Passing (Tests GPR vs XMM register splitting)
+extern "C" void mixed_args(int a, float b, double c, int d);
+
+// (b) Struct ABI Classification (Register packed vs memory passed)
+struct SmallPair { int a; int b; }
+struct MixedStruct { int a; float b; }
+
+extern "C" SmallPair return_small_pair();
+extern "C" void pass_mixed_struct(MixedStruct m);
+
+// (c) Pass-by-reference ABI (Mutability across boundary)
+extern "C" void modify_ptr(*mut int ptr) {
+    *ptr = 123;
+}
+
+// (d) Variadic Edge Cases (Multiple argument types)
+extern "C" int printf(string fmt, ...);
+
+void test_abi_edges() {
+    mixed_args(1, 3.14f32, 2.718, 4); // Forces correct interleaved registers
+    SmallPair sp = return_small_pair(); // Fits in 1 64-bit register (RAX)
+    MixedStruct ms; // Int in GPR, Float in XMM
+    ms.a = 10;
+    ms.b = 5.5f32;
+    pass_mixed_struct(ms);
+
+    int val = 0;
+    modify_ptr(&val);
+    println(val); // Expected: 123
+
+    // Tests vararg promotion (float -> double in C ABI)
+    printf("Variadic test: %d, %f, %s\n", 42, 3.14159, "hello");
+}
+
+// ============================================================================
+// 2. VOLATILE SEMANTICS (Ordering & No-Elision)
+// ============================================================================
+// Create a real variable in standard memory to act as our "hardware register"
+int dummy_hardware_memory = 0;
+
+// Point the volatile pointer to our safe memory
+volatile *mut int hardware_reg = &dummy_hardware_memory;
+
+void test_volatile_ordering() {
+    *hardware_reg = 10;
+    int readback = *hardware_reg;
+    *hardware_reg = 1;
+    *hardware_reg = 2;
+}
+
+// ============================================================================
+// 3. UNSAFE / POINTER SYSTEM
+// ============================================================================
+void test_pointer_system() {
+    // Null pointer initialization
+    *mut int null_p = null;
+
+    // Pointer arithmetic (p + 1 must add sizeof(int) bytes, not 1 byte)
+    *mut int base = cast<*mut int>(0x1000);
+    *mut int offset_p = base + 1;
+
+    // Strict Aliasing Violation Test (TBAA in LLVM)
+    int x = 42;
+    *mut int p_x = &x;
+    *mut float p_f = cast<*mut float>(p_x);
+    // *p_f = 3.14f; // If uncommented, tests undefined behavior handling / type-punning
+}
+
+// ============================================================================
+// 4. DEFER SEMANTICS EDGE CASES
+// ============================================================================
+int test_defer_early_return() {
+    int state = 0;
+    defer {
+        println("Defer on early return executing");
+    }
+    return state; // Return evaluates, defer executes, then frame pops
+}
+
+void test_defer_inside_loops() {
+    // Tests scope boundaries for defer.
+    // Defers must execute at the end of EACH iteration, not at the end of the function.
+    for (int i = 0; i < 2; i = i + 1) {
+        defer { println("Defer iter: " + string(i)); }
+    }
+}
+
+// ============================================================================
+// 5. INLINE ASSEMBLY CONSTRAINTS
+// ============================================================================
+void test_asm_constraints() {
+    int in_val = 5;
+    int out_val = 0;
+    asm("mov $1, ($0)") in("r"(&out_val)) in("r"(in_val));
+    println("Asm out: " + string(out_val)); // Expected: 5
+}
+
+// ============================================================================
+// 6. INTERRUPT ABI & STACK FRAMES
+// ============================================================================
+struct InterruptFrame {
+    int ip;
+    int cs;
+    int flags;
+}
+
+// Tests CPU-pushed parameters for ISRs. The LLVM `x86_intrcc` calling convention
+// strictly dictates how this frame is passed and how `iret` is emitted.
+interrupt void handle_page_fault(InterruptFrame* frame, int error_code) {
+    println("Fault at IP: " + string(frame.ip));
+    println("Error code: " + string(error_code));
+}
+
+// ============================================================================
+// 7. FREESTANDING / GLOBAL INITIALIZATION ORDER
+// ============================================================================
+// Tests LLVM `.init_array` / `@llvm.global_ctors` linking correctness.
+int init_global_x() { println("Init X"); return 100; }
+int init_global_y() { println("Init Y"); return 200; }
+
+int global_x = init_global_x();
+int global_y = init_global_y();
+
+// ============================================================================
+// 8. WEAK SYMBOL OVERRIDE
+// ============================================================================
+weak void default_handler() {
+    println("Weak handler (Should NOT print)");
+}
+
+// ============================================================================
+// 9. TYPE SYSTEM ABI INTEROP
+// ============================================================================
+enum Status { OK = 0, FAIL = 1 }
+
+extern "C" void log_status(Status s);    // Checks if Enum lowers to correct integer type ABI
+extern "C" void enable_feature(bool b);  // Checks bool ABI (i1 vs i8 promotion in C ABI)
+
+// ============================================================================
+// 10. ALIGNMENT & PACKING
+// ============================================================================
+packed struct UnalignedHeader {
+    char magic;       // 1 byte
+    int payload_size; // 4 bytes
+}
+
+void test_alignment_packing() {
+    // If not packed, ABI padding makes this 8 bytes.
+    // Because it is [packed], it MUST be exactly 5 bytes.
+    println("Packed size: " + string(sizeof(UnalignedHeader))); // Expected: 5
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_abi_edges();
+test_volatile_ordering();
+test_pointer_system();
+test_defer_early_return();
+test_defer_inside_loops();
+test_asm_constraints();
+default_handler(); // Expected to print the Strong version
+test_alignment_packing();

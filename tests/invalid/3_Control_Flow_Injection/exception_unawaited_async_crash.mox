@@ -1,0 +1,17 @@
+println("--- [CRASH E2E] exception_unawaited_async_crash.mox ---")
+
+async void ticking_timebomb() {
+    await yield();
+    throw "Critical Background Failure";
+}
+
+void test_unawaited_drop() {
+    // We call the async function but DO NOT await it.
+    // Ownership of the Promise drops immediately at the end of this scope.
+    any p = cast<any>(ticking_timebomb());
+}
+
+test_unawaited_drop();
+// RUNTIME EXPECTATION:
+// When ARC destroys the Promise, it detects `is_rejected == true` but `was_awaited == false`.
+// It calls `moksha_rt_panic("Unhandled Promise Rejection")` and terminates the OS thread.

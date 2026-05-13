@@ -1,0 +1,44 @@
+# Build directories
+build/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# Ninja
+.ninja_deps
+.ninja_log
+
+# Compile database
+compile_commands.json
+
+# Clangd index
+.cache/
+
+# Compiler artifacts
+*.o
+*.obj
+*.lo
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+*.pdb
+*.ilk
+
+# IR dumps
+*.ll
+*.bc
+*.mlir
+
+# Logs
+*.log
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db

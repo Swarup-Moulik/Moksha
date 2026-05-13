@@ -71,7 +71,6 @@ public:
   void visitSwitchStmt(const SwitchStmt *stmt) override;
   void visitDeferStmt(const DeferStmt *stmt) override;
   void visitTryCatchStmt(const TryCatchStmt *stmt) override;
-  void visitAsmStmt(const AsmStmt *stmt) override;
   void visitThrowStmt(const ThrowStmt *stmt) override;
   void visitDeclStmt(const DeclStmt *stmt) override;
   void visitLockStmt(const LockStmt *stmt) override;
@@ -93,6 +92,7 @@ public:
   void visitUnaryExpr(const UnaryExpr *expr) override;
   void visitMemberExpr(const MemberExpr *expr) override;
   void visitCastExpr(const CastExpr *expr) override;
+  void visitBitcastExpr(const BitcastExpr *expr) override;
   void visitCharLiteral(const CharLiteral *expr) override;
   void visitTemplateStringExpr(const TemplateStringExpr *expr) override;
   void visitArrayLiteral(const ArrayLiteral *expr) override;
@@ -105,6 +105,7 @@ public:
   void visitSuperExpr(const SuperExpr *expr) override;
   void visitAwaitExpr(const AwaitExpr *expr) override;
   void visitInputExpr(const InputExpr *expr) override;
+  void visitAsmExpr(const AsmExpr *expr) override;
 
   // ========================================================================
   // [Types] (Stubbed)

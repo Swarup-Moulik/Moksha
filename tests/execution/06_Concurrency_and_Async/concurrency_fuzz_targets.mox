@@ -1,0 +1,77 @@
+println("--- [FUZZ TARGETS] concurrency_fuzz_targets.mox ---");
+
+// 1. THE LOST WAKEUP PROBLEM (Condition Variable / Channel Fuzzing)
+async void fuzz_lost_wakeup() {
+    println("[1] Starting lost wakeup fuzzer...");
+
+    // Upgraded to 'shared' to safely capture the channel alias in the closure
+    shared Channel<int> ch = new Channel<int>(1);
+    shared Channel<int> ch_alias = ch;
+
+    spawn(async () => {
+        println("    -> Producer pushing 42 to buffer...");
+        await ch_alias.send(42);
+    });
+
+    int val = await ch.recv();
+    println("[1] Lost wakeup fuzzer finished. Received: " + string(val));
+}
+
+// 2. ORPHANED SELECT BRANCHES
+async void fuzz_select_orphans() {
+    println("[2] Starting select orphans fuzzer...");
+    promise<int> a = spawn(async () => { await sleep(100); return 1; });
+    promise<int> b = spawn(async () => { await sleep(10); return 2; });
+
+    int winner = await select(a, b);
+    println("[2] Select orphans fuzzer finished. Winner: " + string(winner));
+}
+
+// 3. SCHEDULER REENTRANCY (Iterator Invalidation)
+async void recursive_spawner(int depth) {
+    if (depth > 0) {
+        spawn(recursive_spawner(depth - 1));
+    }
+    await yield();
+}
+
+void fuzz_scheduler_reentrancy() {
+    println("[3] Starting scheduler reentrancy fuzzer...");
+    spawn(async () => { await recursive_spawner(5); });
+    println("[3] Scheduler reentrancy tasks spawned.");
+}
+
+// 4. CROSS-THREAD QUEUE MUTATION
+void fuzz_cross_thread_scheduling() {
+    println("[4] Starting cross-thread scheduling fuzzer...");
+    for (int i = 0; i < 10; i = i + 1) {
+        new thread(() => {
+            spawn(async () => { await yield(); });
+        });
+    }
+    println("[4] Cross-thread scheduling threads safely spawned.");
+}
+
+// 5. STACK / FRAME EXPLOSION (Linked Coroutines)
+async int deep_chain(int n) {
+    if (n == 0) return 0;
+    return 1 + await deep_chain(n - 1);
+}
+
+// Upgraded to 'async' so we can await the result and print it
+async void fuzz_deep_chain() {
+    println("[5] Starting deep chain fuzzer...");
+    int result = await deep_chain(5000);
+    println("[5] Deep chain fuzzer finished safely. Result: " + string(result));
+}
+
+// --- KICK OFF ALL FUZZ TARGETS ---
+println(">>> Executing Fuzz Targets <<<");
+
+await fuzz_lost_wakeup();
+await fuzz_select_orphans();
+fuzz_scheduler_reentrancy();
+fuzz_cross_thread_scheduling();
+await fuzz_deep_chain();
+
+println(">>> All Fuzz Targets Completed <<<");

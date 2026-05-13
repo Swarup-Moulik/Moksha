@@ -1,0 +1,19 @@
+class Payload { int data; }
+ref class NetworkNode { int id; }
+
+void test_sharing_rules() {
+    Payload p1 = new Payload(100);
+    Payload p2 = shared p1;
+
+    // ERROR: Implicit sharing loss.
+    // Re-assigning a shared object to a non-shared variable should trigger a compiler
+    // error or a forced deep-copy. You cannot silently drop the "shared" tracking.
+    Payload p3 = p2;
+
+    NetworkNode n1 = new NetworkNode(1);
+
+    // ERROR: Redundant or invalid sharing.
+    // 'NetworkNode' is a 'ref class' and is already implicitly shared/heap-allocated.
+    // The 'shared' operator is meant to escalate value classes, not double-wrap references.
+    NetworkNode n2 = shared n1;
+}

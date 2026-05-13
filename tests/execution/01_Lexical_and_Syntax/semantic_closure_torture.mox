@@ -1,0 +1,67 @@
+println("--- [E2E] semantic_closure_torture.mox ---");
+
+int id(int x) { return x; }
+
+ref class RefState {
+    public int val;
+    constructor(int v) { this.val = v; }
+}
+
+void run_law_definitions() {
+    // 1. Pipeline vs Arithmetic vs Coalescing Precedence
+    // Assumes |> binds looser than +, but tighter than ??
+    int pipe_test = 1 + 2 |> id();
+    int? null_val = null;
+    int coalescing_pipe = null_val ?? 20 |> id();
+
+    println(`Pipeline 1 (Expected 3): ${pipe_test}`);
+    println(`Pipeline 2 (Expected 20): ${coalescing_pipe}`);
+
+    // 2. Pre/Post Increment Evaluation Order & Temporaries
+    int x = 5;
+    int y = x++ + ++x; // Strict LTR should yield 5 + 7 = 12
+    println(`Increment Eval (Expected 12): ${y}`);
+
+    // 3. Cross-Type Comparisons (Promotion Hierarchy)
+    println(`Int == Float (Expected true): ${10 == 10.0}`);
+    // println(`Decimal == Float (Precision vs Exactness): ${1.23d == 1.23}`);
+    println(`Int < Float (Expected true): ${10 < 10.5}`);
+
+    // 4. Null-Coalescing Chaining Associativity (Right-associative check)
+    int? a = null;
+    int? b = null;
+    println(`Deep Coalescing (Expected 42): ${a ?? b ?? 42}`);
+
+    // 5. Bitwise vs Arithmetic Precedence Boundary
+    // If arithmetic binds tighter: (1+2)<<2 = 12. If bitwise: 1+(2<<2) = 9
+    println(`Bitwise Boundary (Expected 12): ${1 + 2 << 2}`);
+
+    // 6. Unary Operator Stacking (AST normalization)
+    int un = 5;
+    println(`Unary Stacking (Expected -4): ${- --un}`);
+
+    // 7. Array Mutation & Function-Based Length API
+    int[3] arr = [1, 2, 3];
+    arr[1] = 99; // Indexing write path
+    println(`Array Mutation (Expected 99): ${arr[1]}`);
+    println(`Array Length (Expected 3): ${length(arr)}`);
+
+    // 8. Chained Field Mutation (Read-Modify-Write)
+    RefState r = new RefState(5);
+    r.val = r.val + 10;
+    println(`Chained Mutation (Expected 15): ${r.val}`);
+
+    // 9. Decimal <-> Float Interaction (Which type wins?)
+    decimal<5,2> d = 1.23d;
+    float f = 1.23;
+    println(`Decimal + Float Interaction: ${d + f}`);
+
+    // 10. Boolean Precedence (&& binds tighter than ||)
+    // If LTR: (true || false) && false = false. If && tighter: true || (false && false) = true
+    println(`Boolean Precedence (Expected true): ${true || false && false}`);
+
+    // 11. Large Expression Depth (IR Builder / Recursive Descent Stress)
+    println(`Depth Stress (Expected 15): ${1+1+1+1+1+1+1+1+1+1+1+1+1+1+1}`);
+}
+
+run_law_definitions();

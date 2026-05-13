@@ -124,6 +124,11 @@ static cl::opt<std::string> InputFilename(cl::Positional,
                                           cl::Required,
                                           cl::cat(MokshaCategory));
 
+static cl::list<std::string>
+    ExtraLinkFiles(cl::Positional,
+                   cl::desc("[<extra C/C++/obj files to link>...]"),
+                   cl::ZeroOrMore, cl::cat(MokshaCategory));
+
 static cl::opt<bool> DumpAST("dump-ast", cl::desc("Print the AST"),
                              cl::cat(MokshaCategory));
 static cl::opt<bool> DumpHIR("dump-hir", cl::desc("Print the HIR"),
@@ -532,8 +537,14 @@ int main(int argc, char **argv) {
         }
 
         // Shell out to clang.exe to do the heavy lifting
-        std::string cmd = "clang++ -O2 -Wno-override-module " + llFilename + " " +
-                          resolvedRtLib + " -o " + exeFilename;
+        std::string extraFilesStr = "";
+        for (const auto &file : ExtraLinkFiles) {
+          extraFilesStr += " " + file;
+        }
+
+        std::string cmd = "clang++ -O2 -Wno-override-module " + llFilename +
+                          extraFilesStr + " " + resolvedRtLib + " -o " +
+                          exeFilename;
 
         int result = std::system(cmd.c_str());
 

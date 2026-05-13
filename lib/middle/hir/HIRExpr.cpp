@@ -195,10 +195,10 @@ void HIRThreadExpr::accept(ConstHIRVisitor &v) const {
 HIRLambdaExpr::HIRLambdaExpr(std::vector<HIRLambdaParam> params,
                              std::vector<HIRCapture> captures,
                              std::unique_ptr<HIRStmt> body, const HIRType *type,
-                             CaptureMode mode, SourceLocation loc)
+                             CaptureMode mode, bool isAsync, SourceLocation loc)
     : HIRExpr(Kind::Lambda, type, ValueCategory::RValue, loc),
       params(std::move(params)), captures(std::move(captures)),
-      body(std::move(body)), captureMode(mode) {}
+      body(std::move(body)), captureMode(mode), isAsync(isAsync) {}
 
 HIRLambdaExpr::~HIRLambdaExpr() = default;
 
@@ -407,12 +407,15 @@ void HIRNewExpr::dump(llvm::raw_ostream &os, int indent) const {
 
 void HIRLambdaExpr::dump(llvm::raw_ostream &os, int indent) const {
   printExprIndent(os, indent);
-  os << "LambdaExpr (Params: ";
+  os << "LambdaExpr ";
+  if (isAsync)
+    os << "[async] ";
+  os << "(Params: ";
   const auto &paramsList = getParams();
   for (size_t i = 0; i < paramsList.size(); ++i) {
     os << paramsList[i].name;
     if (paramsList[i].defaultValue) {
-      os << " = <default_val>"; // Indicate default value presence
+      os << " = <default_val>";
     }
     if (i < paramsList.size() - 1)
       os << ", ";
@@ -461,6 +464,69 @@ void HIRSpreadExpr::dump(llvm::raw_ostream &os, int indent) const {
   os << "SpreadExpr (...)\n";
   if (iterable)
     iterable->dump(os, indent + 1);
+}
+
+// ============================================================================
+// [HIRSharedExpr Implementation]
+// ============================================================================
+
+void HIRSharedExpr::accept(HIRVisitor &v) { v.visitSharedExpr(*this); }
+
+void HIRSharedExpr::accept(ConstHIRVisitor &v) const {
+  v.visitSharedExpr(*this);
+}
+
+void HIRSharedExpr::dump(llvm::raw_ostream &os, int indent) const {
+  printExprIndent(os, indent);
+  os << "SharedExpr\n";
+  if (getExpr()) {
+    getExpr()->dump(os, indent + 1);
+  }
+}
+
+void HIRAsmExpr::accept(HIRVisitor &v) { v.visitAsmExpr(*this); }
+void HIRAsmExpr::accept(ConstHIRVisitor &v) const { v.visitAsmExpr(*this); }
+
+void HIRAsmExpr::dump(llvm::raw_ostream &os, int indent) const {
+  printExprIndent(os, indent);
+  os << "AsmExpr: \"" << assemblyStr << "\"\n";
+
+  for (const auto &op : outputs) {
+    printExprIndent(os, indent + 1);
+    os << "out(\"" << op.constraint << "\")\n";
+    if (op.expr)
+      op.expr->dump(os, indent + 2);
+  }
+
+  for (const auto &op : inputs) {
+    printExprIndent(os, indent + 1);
+    os << "in(\"" << op.constraint << "\")\n";
+    if (op.expr)
+      op.expr->dump(os, indent + 2);
+  }
+
+  for (const auto &op : inouts) {
+    printExprIndent(os, indent + 1);
+    os << "inout(\"" << op.constraint << "\")\n";
+    if (op.expr)
+      op.expr->dump(os, indent + 2);
+  }
+
+  if (!clobbers.empty()) {
+    printExprIndent(os, indent + 1);
+    os << "clobber(";
+    for (size_t i = 0; i < clobbers.size(); ++i) {
+      if (i > 0)
+        os << ", ";
+      os << "\"" << clobbers[i] << "\"";
+    }
+    os << ")\n";
+  }
+
+  if (isVolatile) {
+    printExprIndent(os, indent + 1);
+    os << "[volatile]\n";
+  }
 }
 
 } // namespace hir

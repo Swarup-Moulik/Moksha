@@ -1,0 +1,26 @@
+println("--- [E2E] closure_fat_pointer_semantics.mox ---")
+
+void test_closure_copy_alias() {
+    int x = 0;
+    // Mutating a captured primitive requires &mut [cite: 2, 9]
+    closure() -> void inc = &mut () => { x = x + 1; };
+
+    // Copying the closure should copy the fat pointer (fn ptr + env ptr)
+    closure() -> void inc2 = inc;
+
+    inc();
+    inc2();
+    println(x); // Expected: 2 (Same environment shared by alias)
+}
+
+void test_move_lifetime() {
+    string s = "Hello Ownership";
+    // Move Capture transfers ownership
+    closure() -> string f = move () => { return s; };
+
+    println(f()); // Expected: Hello Ownership
+    // Internal Check: The backend must not allow 's' to be freed twice.
+}
+
+test_closure_copy_alias();
+test_move_lifetime();

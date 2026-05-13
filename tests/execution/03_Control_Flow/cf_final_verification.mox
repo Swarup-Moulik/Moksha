@@ -1,0 +1,126 @@
+println("--- [E2E] cf_final_verification.mox ---")
+
+int track(int x) {
+    print(x);
+    return x;
+}
+
+// 1. STRICT DEFER SEMANTICS (Function-Scoped LIFO)
+// Logic: Defers are collected and run in reverse order at function exit.
+void test_defer_loop_return() {
+    int i = 0;
+    while (i < 2) {
+        defer print(i);
+        if (i == 1) return; // Return early on second iteration
+        i = i + 1;
+    }
+}
+// Expected Output: 11
+// Reasoning: Both defers are registered. They must execute in LIFO order upon 'return'.
+
+// 2. SYMMETRIC TERNARY LAZINESS
+void test_ternary_symmetry() {
+    print("True: ");
+    int a = true ? track(1) : track(2);
+    print(" | False: ");
+    int b = false ? track(3) : track(4);
+    println("");
+}
+// Expected Output: True: 1 | False: 4
+
+// 3. DEEP PIPE CHAINING (Associativity Stress)
+void test_deep_pipe() {
+    int add1(int x) { return x + 1; }
+    int res = 1 |> add1() |> add1() |> add1() |> add1() |> add1();
+    println(res);
+}
+// Expected Output: 6
+
+// 4. CONTINUE INSIDE SWITCH INSIDE LOOP
+// Logic: 'continue' skips the rest of the switch AND the rest of the loop iteration.
+void test_switch_continue() {
+    int i = 0;
+    int hits = 0;
+    while (i < 2) {
+        i = i + 1;
+        switch (i) {
+            case 1:
+                continue; // Should jump to loop condition
+        }
+        hits = hits + 1;
+    }
+    println(hits);
+}
+// Expected Output: 1 (Iteration i=1 was skipped by continue)
+
+// 5. DEEPLY NESTED JUMP TARGETS (Loop -> Switch -> Loop)
+void test_nested_jump_resolution() {
+    int outer = 0;
+    while (outer < 1) {
+        switch (1) {
+            case 1:
+                int inner = 0;
+                while (inner < 10) {
+                    inner = inner + 1;
+                    if (inner == 2) break; // MUST break 'inner' loop only
+                }
+                print("InnerBreak-");
+                break; // Breaks the switch
+        }
+        outer = outer + 1;
+        print("OuterEnd");
+    }
+    println("");
+}
+// Expected Output: InnerBreak-OuterEnd
+
+// 6. SHORT-CIRCUIT VALUE VALIDATION
+void test_logic_values() {
+    bool t = true;
+    bool f = false;
+
+    if ((f && track(1) == 1) == false) print("A");
+    if ((t || track(2) == 2) == true)  print("B");
+}
+// Expected Output: AB (No numbers 1 or 2 should be printed)
+
+// 7. SWITCH: DEFAULT-ONLY & NO-FALLTHROUGH
+void test_switch_strict() {
+    // Default-only
+    switch (99) {
+        default: print("Def-");
+    }
+
+    // No-fallthrough enforcement
+    int x = 1;
+    switch (x) {
+        case 1: print("One");
+        // If fallthrough exists, "Two" would print.
+        case 2: print("Two");
+    }
+    println("");
+}
+// Expected Output: Def-One
+
+// 8. EXHAUSTIVENESS (Visual/Manual Verification)
+enum Status { OK, PENDING, FAIL }
+void test_exhaustiveness(Status s) {
+    switch (s) {
+        case Status.OK:      println("OK"); break;
+        case Status.PENDING: println("P"); break;
+        case Status.FAIL:    println("F"); break;
+        // COMPILER CHECK: Comment out one case.
+        // If it still compiles without a 'default', exhaustiveness is failing.
+    }
+}
+
+// EXECUTION
+test_defer_loop_return();     // Output: 11
+println("");
+test_ternary_symmetry();      // Output: True: 1 | False: 4
+test_deep_pipe();             // Output: 6
+test_switch_continue();       // Output: 1
+test_nested_jump_resolution();// Output: InnerBreak-OuterEnd
+test_logic_values();          // Output: AB
+println("");
+test_switch_strict();         // Output: Def-One

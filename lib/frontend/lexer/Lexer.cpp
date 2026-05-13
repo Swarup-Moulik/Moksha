@@ -239,6 +239,17 @@ Token Lexer::scanNumber() {
     hadLexicalError = true;
   }
 
+  // Catch consecutive underscores anywhere in the parsed numeric token
+  for (const char *p = start; p < curPtr - 1; ++p) {
+    if (*p == '_' && *(p + 1) == '_') {
+      Diags.report(SourceLocation::getFromPointer(p),
+                   DiagID::err_unexpected_char)
+          << "number cannot contain consecutive underscores";
+      hadLexicalError = true;
+      break; // Only report once per number to avoid spamming the console
+    }
+  }
+
   if (hadLexicalError)
     return errorAt(start);
 
@@ -810,6 +821,7 @@ Token Lexer::scanIdentifier() {
                        .Case("promise", TokenKind::KwPromise)
                        .Case("const", TokenKind::KwConst)
                        .Case("cast", TokenKind::KwCast)
+                       .Case("bitcast", TokenKind::KwBitcast)
                        .Case("static", TokenKind::KwStatic)
                        .Case("async", TokenKind::KwAsync)
                        .Case("await", TokenKind::KwAwait)
@@ -840,6 +852,9 @@ Token Lexer::scanIdentifier() {
                        .Case("input", TokenKind::KwInput)
                        .Case("closure", TokenKind::KwClosure)
                        .Case("move", TokenKind::KwMove)
+                       .Case("out", TokenKind::KwOut)
+                       .Case("inout", TokenKind::KwInout)
+                       .Case("clobber", TokenKind::KwClobber)
                        .Case("extern", TokenKind::KwExtern)
                        .Case("using", TokenKind::KwUsing)
                        .Case("asm", TokenKind::KwAsm)

@@ -1,0 +1,53 @@
+println("--- [E2E] cf_final_closure_stress.mox ---")
+
+class Vector2 {
+    int x;
+    int y;
+
+    constructor(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+
+    Vector2 operator+(Vector2 other) {
+        return new Vector2(this.x + other.x, this.y + other.y);
+    }
+
+    Vector2 operator-(Vector2 other) {
+        return new Vector2(this.x - other.x, this.y - other.y);
+    }
+}
+
+// --- Support Logic ---
+void configureWindow(int width = 800, int height = 600, string title = "Moksha App") {
+    println(`Window: ${title} (${width}x${height})`);
+}
+
+// 2. SHARED ENVIRONMENT
+// Tests that multiple closures capture the same memory location, not copies.
+void test_shared_state() {
+    int x = 0;
+    closure() -> void inc = &mut () => { x = x + 1; };
+    closure() -> int  get = &() => { return x; };
+
+    inc();
+    inc();
+    println(get()); // Expected: 2
+}
+
+// 4. CALL RESOLUTION & OPERATOR STRESS
+void test_resolution() {
+    // Default Overrides [cite: 20]
+    configureWindow(1024, 768); // Expected: Window: Moksha App (1024x768)
+
+    // Operator Chaining (Assumes Vector2 is defined [cite: 44-51])
+    Vector2 v1 = new Vector2(1, 1);
+    Vector2 v2 = new Vector2(2, 2);
+    Vector2 v3 = new Vector2(3, 3);
+    Vector2 res = v1 + v2 - v3;
+    println(res.x); // Expected: 0
+}
+
+// --- Execution ---
+test_shared_state();
+test_resolution();

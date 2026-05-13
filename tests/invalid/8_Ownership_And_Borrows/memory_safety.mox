@@ -1,0 +1,32 @@
+void test_safety() {
+    int base_val = 5
+    int mut_val = 10
+    lock int thread_safe = 50
+
+    // --- Rule 1: Default pointers are immutable ---
+    *int const_ptr = &base_val
+    *const_ptr = 10        // ERROR EXPECTED: Cannot mutate through immutable pointer
+
+    // --- Rule 2: Mutable pointers require mutable storage ---
+    *mut int invalid_mut = &base_val
+    *mut int valid_mut = &mut_val    // OK
+    *valid_mut = 20                  // OK
+
+    // --- Rule 3: Views can borrow from mutable, but cannot mutate ---
+    *view int read_only = valid_mut  // OK: Downgrading mut -> view is safe
+    *read_only = 30        // ERROR EXPECTED: Cannot mutate through a view
+
+    // --- Rule 4: Lock Safety (The most important fix) ---
+    *mut int bypass = &thread_safe   // ERROR EXPECTED: Cannot bypass lock storage with a raw mut pointer!
+
+    *lock int lock_ptr = &thread_safe
+    *lock_ptr = 60         // ERROR EXPECTED: Cannot dereference lock pointer outside a lock block
+
+    // Safe access
+    lock (lock_ptr) {
+        *lock_ptr = 60     // OK: Inside lock capability block
+
+        // Advanced: Inside the lock, you can temporarily take a mut pointer
+        *mut int temp_mut = lock_ptr // OK
+    }
+}

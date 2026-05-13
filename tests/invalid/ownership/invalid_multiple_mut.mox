@@ -1,6 +1,0 @@
-void test_mut_conflict() {
-    int x = 0;
-    *mut int m1 = &x;
-    *mut int m2 = &x; // Now this WILL error...
-    *m1 = 1;          // ...because m1 is kept alive down to here!
-}

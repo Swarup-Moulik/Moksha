@@ -77,6 +77,8 @@ std::string ASTPrinter::tokenToString(TokenKind kind) {
     return ">=";
   case TokenKind::FatArrow:
     return "=>";
+  case TokenKind::CaretEqual:
+    return "^=";
   case TokenKind::QuestionDot:
     return "?.";
   case TokenKind::QuestionQuestion:
@@ -85,6 +87,8 @@ std::string ASTPrinter::tokenToString(TokenKind kind) {
     return "...";
   case TokenKind::Colon:
     return ":";
+  case TokenKind::KwShared:
+    return "shared ";
   default:
     return "(unknown)";
   }
@@ -408,6 +412,9 @@ void ASTPrinter::visitIndexExpr(const IndexExpr *expr) {
 }
 
 void ASTPrinter::visitLambdaExpr(const LambdaExpr *expr) {
+  if (expr->isAsyncLambda()) {
+    OS << "async ";
+  }
   switch (expr->getCaptureMode()) {
   case CaptureMode::View:
     OS << "&";
@@ -450,6 +457,14 @@ void ASTPrinter::visitTernaryExpr(const TernaryExpr *expr) {
 
 void ASTPrinter::visitCastExpr(const CastExpr *expr) {
   OS << "cast<";
+  print(expr->getTargetType());
+  OS << ">(";
+  expr->getExpr()->accept(*this);
+  OS << ")";
+}
+
+void ASTPrinter::visitBitcastExpr(const BitcastExpr *expr) {
+  OS << "bitcast<";
   print(expr->getTargetType());
   OS << ">(";
   expr->getExpr()->accept(*this);
@@ -593,6 +608,10 @@ void ASTPrinter::visitForStmt(const ForStmt *stmt) {
 
 void ASTPrinter::visitForInStmt(const ForInStmt *stmt) {
   OS << "for (";
+  if (stmt->getIndexVariable()) {
+    stmt->getIndexVariable()->accept(*this);
+    OS << ", ";
+  }
   stmt->getVariable()->accept(*this);
   OS << " in ";
   stmt->getCollection()->accept(*this);
@@ -638,20 +657,42 @@ void ASTPrinter::visitUnsafeBlockStmt(const UnsafeBlockStmt *stmt) {
 }
 
 void ASTPrinter::visitTryCatchStmt(const TryCatchStmt *stmt) {
-  OS << "try";
-  stmt->getTryBody()->accept(*this);
-  if (stmt->getCatchBody()) {
-    OS << " catch";
-    if (stmt->getCatchVar()) {
-      OS << " (";
-      stmt->getCatchVar()->accept(*this);
-      OS << ")";
-    }
-    stmt->getCatchBody()->accept(*this);
+  printIndent();
+  OS << "try {\n";
+  indentLevel++;
+  if (stmt->getTryBody()) {
+    stmt->getTryBody()->accept(*this);
   }
+  indentLevel--;
+  printIndent();
+  OS << "}\n";
+
+  for (const auto &clause : stmt->getCatches()) {
+    printIndent();
+    OS << "catch ";
+    if (clause.var) {
+      OS << "(";
+      clause.var->accept(*this);
+      OS << ") ";
+    }
+    OS << "{\n";
+    indentLevel++;
+    if (clause.body) {
+      clause.body->accept(*this);
+    }
+    indentLevel--;
+    printIndent();
+    OS << "}\n";
+  }
+
   if (stmt->getFinallyBody()) {
-    OS << " finally";
+    printIndent();
+    OS << "finally {\n";
+    indentLevel++;
     stmt->getFinallyBody()->accept(*this);
+    indentLevel--;
+    printIndent();
+    OS << "}\n";
   }
 }
 
@@ -757,6 +798,8 @@ void ASTPrinter::visitVariableDecl(const VariableDecl *decl) {
   printIndent();
   if (decl->isExternVar())
     OS << "extern ";
+  if (decl->isWeakVar())
+    OS << "weak ";
   if (decl->isThreadLocalVar())
     OS << "thread_local ";
   if (decl->isUsedVar())
@@ -921,12 +964,49 @@ void ASTPrinter::visitUsingDecl(const UsingDecl *decl) {
   OS << ";";
 }
 
-void ASTPrinter::visitAsmStmt(const AsmStmt *stmt) {
-  OS << "asm(\"" << stmt->getAssemblyStr() << "\"";
-  if (!stmt->getConstraints().empty()) {
-    OS << ", \"" << stmt->getConstraints() << "\"";
+void ASTPrinter::visitAsmExpr(const AsmExpr *expr) {
+  OS << "asm";
+  if (expr->getType() && !expr->getType()->isVoid()) {
+    OS << "<";
+    print(expr->getType());
+    OS << ">";
   }
-  OS << ");";
+  OS << "(\"" << expr->getAssemblyStr() << "\")\n";
+
+  indentLevel++;
+  for (const auto &out : expr->getOutputs()) {
+    printIndent();
+    OS << "out(\"" << out.constraint << "\"(";
+    out.expr->accept(*this);
+    OS << "))\n";
+  }
+  for (const auto &in : expr->getInputs()) {
+    printIndent();
+    OS << "in(\"" << in.constraint << "\"(";
+    in.expr->accept(*this);
+    OS << "))\n";
+  }
+  for (const auto &inout : expr->getInouts()) {
+    printIndent();
+    OS << "inout(\"" << inout.constraint << "\"(";
+    inout.expr->accept(*this);
+    OS << "))\n";
+  }
+  if (!expr->getClobbers().empty()) {
+    printIndent();
+    OS << "clobber(";
+    for (size_t i = 0; i < expr->getClobbers().size(); ++i) {
+      if (i > 0)
+        OS << ", ";
+      OS << "\"" << expr->getClobbers()[i] << "\"";
+    }
+    OS << ")\n";
+  }
+  if (expr->getIsVolatile()) {
+    printIndent();
+    OS << "volatile";
+  }
+  indentLevel--;
 }
 
 void ASTPrinter::visitSizeOfExpr(const SizeOfExpr *expr) {
@@ -937,6 +1017,9 @@ void ASTPrinter::visitSizeOfExpr(const SizeOfExpr *expr) {
 
 void ASTPrinter::visitLockStmt(const LockStmt *stmt) {
   printIndent();
+  if (stmt->isAsyncLock()) {
+    OS << "async ";
+  }
   OS << "lock ";
   if (stmt->getTarget()) {
     OS << "(";

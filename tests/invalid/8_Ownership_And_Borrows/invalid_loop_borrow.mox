@@ -1,0 +1,11 @@
+void test_invalid_loop_lifetimes() {
+    int p = 10;
+    *view int v = &p;
+
+    while (p < 20) {
+        *mut int m = &p; // Now THIS will error!
+        *m = *m + 1;
+    }
+
+    print(*v); // Keeps 'v' alive across the whole loop!
+}

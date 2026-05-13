@@ -1,0 +1,13 @@
+from "cyclic_b" import { ClassB }
+
+class ClassA {
+    public ClassB b;
+
+    constructor() {
+        // ERROR: ClassB is not fully resolved at layout time.
+        // The symbol exists, but because of the cyclic import,
+        // the compiler cannot determine the size/layout of ClassB
+        // at the moment ClassA's constructor is being analyzed.
+        this.b = new ClassB();
+    }
+}

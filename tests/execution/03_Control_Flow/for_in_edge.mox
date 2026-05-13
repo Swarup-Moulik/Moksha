@@ -1,0 +1,23 @@
+println("--- [E2E] for_in_edge.mox ---")
+
+void test_shadowing() {
+    int x = 100;
+    for (int x in [1, 2]) {
+        println(x); // Should be 1, 2
+    }
+    println(x); // Should still be 100? Or 2? (Scope check)
+}
+
+void test_mutation() {
+    int[] list = [1, 2, 3];
+    for (int val in list) {
+        if (val == 1) {
+            // Can we modify the collection we are iterating?
+            list = [9, 9, 9];
+        }
+        println(val);
+    }
+}
+
+test_shadowing();
+test_mutation();

@@ -47,6 +47,7 @@ public:
   // Factory Methods
   const Type *createDecimalType(unsigned int precision, unsigned int scale);
   const Type *createPointerType(const Type *pointee);
+  const Type *createReferenceType(const Type *inner);
   const Type *createNullableType(const Type *inner);
   const Type *createMutType(const Type *inner);
   const Type *createViewType(const Type *inner);

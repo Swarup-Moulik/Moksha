@@ -1,0 +1,8 @@
+import { a_func } from "module_a"
+
+public void b_func() {
+    println("In B");
+    a_func();
+}
+
+b_func();

@@ -1,0 +1,11 @@
+int add(int a, int b) {
+    // Error: Returning string instead of int
+    return "result"
+}
+
+// Error: Missing return statement in non-void function
+int getVal() {
+    int x = 10;
+    // Error: Cannot assign string to int
+    x = "string";
+}

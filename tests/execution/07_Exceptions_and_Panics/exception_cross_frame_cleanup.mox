@@ -1,0 +1,39 @@
+println("--- [E2E] exception_cross_frame_cleanup.mox ---")
+
+// 1. CROSS-FUNCTION BOUNDARY UNWINDING
+void inner_throw() {
+    throw 42;
+}
+
+void outer_resource_holder(*mut int state) {
+    // This defer represents ARC decrements or lock releases
+    defer {
+        *state = 2; // Marks that cleanup ran
+    }
+    *state = 1; // Marks that resource is held
+    inner_throw();
+}
+
+void test_cross_frame_unwind() {
+    int state = 0;
+    try {
+        outer_resource_holder(&state);
+    } catch (int e) {
+        // If cleanup failed, state would still be 1.
+        println("State after catch: " + string(state)); // Expected: 2
+    }
+}
+
+// 2. EXCEPTION EQUALITY AND IDENTITY
+void test_exception_equality() {
+    int original = 999;
+    try {
+        throw original;
+    } catch (int caught) {
+        // Ensures the caught value preserves value-equality
+        println(original == caught); // Expected: true
+    }
+}
+
+test_cross_frame_unwind();
+test_exception_equality();

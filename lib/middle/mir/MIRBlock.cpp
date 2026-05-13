@@ -38,9 +38,15 @@ void MIRBlock::addInstruction(std::unique_ptr<MIRInst> inst) {
       dest->addPredecessor(this);
     }
   } else if (auto *invokeInst = llvm::dyn_cast<InvokeInst>(inst.get())) {
-    if (MIRBlock *dest = invokeInst->getUnwindDest()) {
-      this->addSuccessor(dest);
-      dest->addPredecessor(this);
+    // 1. Wire the normal continuation block
+    if (MIRBlock *normalDest = invokeInst->getNormalDest()) {
+      this->addSuccessor(normalDest);
+      normalDest->addPredecessor(this);
+    }
+    // 2. Wire the unwind/cleanup block
+    if (MIRBlock *unwindDest = invokeInst->getUnwindDest()) {
+      this->addSuccessor(unwindDest);
+      unwindDest->addPredecessor(this);
     }
   } else if (auto *br = llvm::dyn_cast<BranchInst>(inst.get())) {
     if (MIRBlock *dest = br->getTarget()) {

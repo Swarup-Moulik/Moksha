@@ -1,0 +1,17 @@
+void test_numbers() {
+    // ERROR EXPECTED: I64 Underflow / Lexer ambiguity.
+    // -9223372036854775809 is exactly 1 less than the 64-bit signed minimum.
+    // The parser must catch this before AST construction.
+    int underflow = -9223372036854775809;
+
+    // ERROR EXPECTED: Consecutive formatting underscores.
+    int bad_underscores = 1__000;
+
+    // ERROR EXPECTED: Trailing/Leading formatting underscores.
+    int leading_under = _100;
+    int trailing_under = 100_;
+
+    // ERROR EXPECTED: Malformed float edge cases.
+    float missing_base = .e10;
+    float malformed_exp = 1e10.5;
+}

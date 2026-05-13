@@ -1,0 +1,44 @@
+println("--- [E2E] deep_type_failures.mox ---");
+
+ref class Parent {
+    public virtual int process() { return 1; }
+}
+
+ref class Child(Parent) {
+    // EXPECTED ERROR: Mismatched override signature. Parent returns int.
+    public override string process() { return "bad"; }
+}
+
+void trigger_deep_compiler_errors() {
+    // 1. Fixed Array Size Enforcement
+    // EXPECTED ERROR: Array initializer length (4) exceeds fixed size (3).
+    int[3] too_many = [1, 2, 3, 4];
+
+    // 2. Shape Assignment Violations
+    int[] dynamic_arr = [1, 2, 3];
+    // EXPECTED ERROR: Cannot implicitly cast dynamic array to fixed-size array.
+    int[3] bad_shape_cast = dynamic_arr;
+
+    // 3. Null-Coalescing Type Resolution
+    int? nullable_int = null;
+    // EXPECTED ERROR: Type mismatch in null-coalescing. Cannot resolve int and string.
+    string bad_coalesce = nullable_int ?? "fallback";
+
+    // 4. Table Key Type Enforcement
+    table<string, int> strict_table = {"A": 1};
+    // EXPECTED ERROR: Invalid key type 'int'. Expected 'string'.
+    println(strict_table[123]);
+
+    // 5. Function Type Mismatch
+    // EXPECTED ERROR: Cannot assign (string) => string to (int) => int.
+    closure(int) -> int func_ptr = (string x) => x;
+}
+
+// 6. Missing Return Path Flow Analysis
+// EXPECTED ERROR: Not all control paths return a value.
+int bad_return_path(bool flag) {
+    if (flag) {
+        return 1;
+    }
+    // Missing return here
+}

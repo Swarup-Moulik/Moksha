@@ -1,0 +1,63 @@
+println("--- [E2E] stress_scheduler_atomics.mox ---")
+
+// 1. TASK EXPLOSION (Queue Stress)
+async void test_task_explosion() {
+    // RED TEAM: Removed the promise array to eliminate allocation overhead.
+    // We now spawn tasks directly to stress the scheduler.c queue.
+    for (int i = 0; i < 10000; i = i + 1) {
+        spawn(async () => {
+            await yield();
+            // Periodic print to track progress without flooding the console
+            if (i % 2500 == 0) {
+                println("Batch processed...");
+            }
+        });
+    }
+
+    await sleep(200); // Allow the micro-tasks time to clear the queue
+    println("10,000 tasks scheduled and destroyed");
+}
+
+// 2. ATOMIC CONTENTION (Hardware Memory Model Stress)
+async void test_atomic_contention() {
+    int shared_val = 0;
+    *mut int p = &shared_val;
+
+    // We spawn 50 OS threads using 'new thread'.
+    // Since we aren't using an array to 'join', we use a sleep buffer.
+    for (int i = 0; i < 50; i = i + 1) {
+        new thread(() => {
+            for (int j = 0; j < 1000; j = j + 1) {
+                atomic_add(p, 1);
+            }
+        });
+    }
+
+    // Give hardware threads time to finish their loops
+    await sleep(500);
+
+    // If the atomic lowering is correct, this will be exactly 50000
+    println(shared_val); // EXPECTED: 50000
+}
+
+// 3. RECURSIVE LOCK DEADLOCK DEFINITION
+/* void test_lock_reentrancy() {
+    lock int protec = 1;
+    *lock int p = &protec;
+
+    lock (p) {
+        try {
+            // Test: Attempting to lock an already locked mutex.
+            lock (p) {
+                println("Reentrant");
+            }
+        } catch (DeadlockPanic e) {
+            println("Caught recursive lock");
+        }
+    }
+} */
+
+// --- EXECUTION ---
+await test_task_explosion();
+// test_lock_reentrancy();
+await test_atomic_contention();

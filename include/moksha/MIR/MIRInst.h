@@ -31,7 +31,8 @@ protected:
 public:
   static bool classof(const MIRValue *v) {
     return v->getKind() >= ValueKind::ConstantInt &&
-           v->getKind() <= ValueKind::ConstantSliceToArray;
+           v->getKind() <= ValueKind::ConstantUpcast;
+    ;
   }
 };
 
@@ -233,6 +234,70 @@ private:
   MIRValue *value;
 };
 
+class ConstantUpcast : public MIRConstant {
+public:
+  ConstantUpcast(MIRValue *value, const hir::HIRType *destType)
+      : MIRConstant(ValueKind::ConstantUpcast, destType), value(value) {}
+
+  MIRValue *getValue() const { return value; }
+  void dump(llvm::raw_ostream &os) const override;
+
+  static bool classof(const MIRValue *v) {
+    return v->getKind() == ValueKind::ConstantUpcast;
+  }
+
+private:
+  MIRValue *value;
+};
+
+class ConstantAnyCast : public MIRConstant {
+public:
+  ConstantAnyCast(MIRValue *value, const hir::HIRType *destType)
+      : MIRConstant(ValueKind::ConstantAnyCast, destType), value(value) {}
+
+  MIRValue *getValue() const { return value; }
+  void dump(llvm::raw_ostream &os) const override;
+
+  static bool classof(const MIRValue *v) {
+    return v->getKind() == ValueKind::ConstantAnyCast;
+  }
+
+private:
+  MIRValue *value;
+};
+
+class ConstantArrayToSlice : public MIRConstant {
+public:
+  ConstantArrayToSlice(MIRValue *value, const hir::HIRType *destType)
+      : MIRConstant(ValueKind::ConstantArrayToSlice, destType), value(value) {}
+
+  MIRValue *getValue() const { return value; }
+  void dump(llvm::raw_ostream &os) const override;
+
+  static bool classof(const MIRValue *v) {
+    return v->getKind() == ValueKind::ConstantArrayToSlice;
+  }
+
+private:
+  MIRValue *value;
+};
+
+class ConstantSliceToArray : public MIRConstant {
+public:
+  ConstantSliceToArray(MIRValue *value, const hir::HIRType *destType)
+      : MIRConstant(ValueKind::ConstantSliceToArray, destType), value(value) {}
+
+  MIRValue *getValue() const { return value; }
+  void dump(llvm::raw_ostream &os) const override;
+
+  static bool classof(const MIRValue *v) {
+    return v->getKind() == ValueKind::ConstantSliceToArray;
+  }
+
+private:
+  MIRValue *value;
+};
+
 // ============================================================================
 // [Instruction Opcodes]
 // ============================================================================
@@ -294,6 +359,7 @@ enum class Opcode {
   AnyCast,
   ArrayToSlice,
   SliceToArray,
+  Upcast,
   Retain,
   Release,
   StoreWeak,
@@ -305,6 +371,7 @@ enum class Opcode {
   Throw,
   InlineAsm,
   MakeClosure,
+  MakeShared,
   Spawn,
   Await,
   AtomicLoad,
@@ -757,12 +824,14 @@ public:
            op == Opcode::FloatToInt || op == Opcode::Trunc ||
            op == Opcode::SExt || op == Opcode::ZExt || op == Opcode::PtrToInt ||
            op == Opcode::IntToPtr || op == Opcode::AnyCast ||
-           op == Opcode::ArrayToSlice || op == Opcode::SliceToArray;
+           op == Opcode::ArrayToSlice || op == Opcode::SliceToArray ||
+           op == Opcode::Upcast;
   }
-
   CastInst(Opcode op, MIRValue *value, const hir::HIRType *destType,
            std::string name, SourceLocation loc);
   MIRValue *getValue() const { return value; }
+  int32_t getByteOffset() const { return byteOffset; }
+  void setByteOffset(int32_t offset) { byteOffset = offset; }
   void dump(llvm::raw_ostream &os) const override;
   void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override {
     if (value == oldVal)
@@ -770,12 +839,15 @@ public:
   }
 
   std::unique_ptr<MIRInst> clone() const override {
-    return std::make_unique<CastInst>(getOpcode(), value, getType(), getName(),
-                                      loc);
+    auto cloned = std::make_unique<CastInst>(getOpcode(), value, getType(),
+                                             getName(), loc);
+    cloned->setByteOffset(byteOffset);
+    return cloned;
   }
 
 private:
   MIRValue *value;
+  int32_t byteOffset = 0;
 };
 
 class CompareInst : public MIRInst {
@@ -956,13 +1028,29 @@ class LandingPadInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(LandingPad)
 
-  explicit LandingPadInst(const hir::HIRType *catchType, std::string name,
+  // 'resultType' is the { i8*, i32 } struct returned by the landing pad.
+  explicit LandingPadInst(const hir::HIRType *resultType, std::string name,
                           SourceLocation loc);
+  void addCatchType(const hir::HIRType *catchType) {
+    catchTypes.push_back(catchType);
+  }
+
+  const std::vector<const hir::HIRType *> &getCatchTypes() const {
+    return catchTypes;
+  }
+
   void dump(llvm::raw_ostream &os) const override;
 
   std::unique_ptr<MIRInst> clone() const override {
-    return std::make_unique<LandingPadInst>(getType(), getName(), loc);
+    auto cloned = std::make_unique<LandingPadInst>(getType(), getName(), loc);
+    for (const auto *ct : catchTypes) {
+      cloned->addCatchType(ct);
+    }
+    return cloned;
   }
+
+private:
+  std::vector<const hir::HIRType *> catchTypes;
 };
 
 class ResumeInst : public MIRInst {
@@ -1014,12 +1102,14 @@ public:
   DECLARE_INST_CLASSOF(InlineAsm)
 
   InlineAsmInst(std::string asmStr, std::string constraints,
-                std::vector<MIRValue *> &&args, const hir::HIRType *retType,
-                SourceLocation loc);
+                std::vector<MIRValue *> &&args, bool isVolatile,
+                const hir::HIRType *retType, SourceLocation loc);
 
   const std::string &getAsmString() const { return asmString; }
   const std::string &getConstraints() const { return constraints; }
   const std::vector<MIRValue *> &getArgs() const { return args; }
+  bool getIsVolatile() const { return isVolatile; }
+
   void dump(llvm::raw_ostream &os) const override;
   void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override {
     for (auto &arg : args) {
@@ -1031,13 +1121,15 @@ public:
   std::unique_ptr<MIRInst> clone() const override {
     std::vector<MIRValue *> argsCopy = args;
     return std::make_unique<InlineAsmInst>(asmString, constraints,
-                                           std::move(argsCopy), getType(), loc);
+                                           std::move(argsCopy), isVolatile,
+                                           getType(), loc);
   }
 
 private:
   std::string asmString;
   std::string constraints;
   std::vector<MIRValue *> args;
+  bool isVolatile;
 };
 
 // ============================================================================
@@ -1074,6 +1166,31 @@ public:
 private:
   MIRValue *funcPtr;
   std::vector<MIRValue *> captures;
+};
+
+class MakeSharedInst : public MIRInst {
+public:
+  DECLARE_INST_CLASSOF(MakeShared)
+
+  MakeSharedInst(MIRValue *operand, const hir::HIRType *allocatedType,
+                 SourceLocation loc)
+      : MIRInst(Opcode::MakeShared, allocatedType, "", loc), operand(operand) {}
+
+  MIRValue *getOperand() const { return operand; }
+
+  void dump(llvm::raw_ostream &os) const override;
+
+  void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override {
+    if (operand == oldVal)
+      operand = newVal;
+  }
+
+  std::unique_ptr<MIRInst> clone() const override {
+    return std::make_unique<MakeSharedInst>(operand, getType(), loc);
+  }
+
+private:
+  MIRValue *operand;
 };
 
 class SpawnInst : public MIRInst {

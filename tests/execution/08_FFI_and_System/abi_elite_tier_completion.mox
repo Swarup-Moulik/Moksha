@@ -1,0 +1,110 @@
+println("--- [E2E] abi_elite_tier_completion.mox ---")
+
+// ============================================================================
+// 1. BROKEN HFA: THE "ONE ROGUE FIELD" TRAP
+// ============================================================================
+// Homogeneous Floating Aggregates (HFA) are passed in SIMD/XMM registers.
+// Adding even ONE non-float field (like an int) breaks this optimization,
+// forcing the entire struct into GPRs or Memory.
+struct BrokenHFA {
+    float a;
+    float b;
+    int c;   // This breaks HFA status on ARM64/x86_64
+}
+
+extern "C" void check_broken_hfa(BrokenHFA s);
+
+// ============================================================================
+// 2. REGISTER EXHAUSTION: STACK SPILLING
+// ============================================================================
+// Stresses the transition from registers to stack memory.
+// SysV uses 6 GPRs for integers. Arguments 7 and 8 MUST be on the stack.
+extern "C" void spill_args(
+    int a1, int a2, int a3, int a4, int a5, int a6, // Registers
+    int a7, int a8                                  // Must be Stack
+);
+
+void test_arg_spilling() {
+    // Verifies that the backend correctly calculates the stack offset for a7/a8
+    // and maintains the 16-byte alignment of the caller's frame.
+    spill_args(1, 2, 3, 4, 5, 6, 7, 8);
+}
+
+// ============================================================================
+// 3. INLINE ASM: CONDITION CODE (CC) CLOBBER
+// ============================================================================
+// Prevents the optimizer from reordering instructions across assembly that
+// modifies status flags (EFLAGS).
+void test_cc_clobber() {
+    int x = 10;
+    // Standard Moksha asm syntax.
+    // Note: The compiler backend will need to be updated to map local variables to these operands.
+    asm("add $$1, $0") inout("+r"(x)) clobber("cc") volatile;
+    println(`CC Clobber Check: ${x}`);
+}
+
+// ============================================================================
+// 4. TLS MODELS: FORCING GLOBAL-DYNAMIC
+// ============================================================================
+// Stresses thread-local storage models.
+thread_local int tls_complex = 42;
+
+void test_tls_dynamic() {
+    println(tls_complex);
+}
+
+// ============================================================================
+// 5. FP ENVIRONMENT: ROUNDING MODE PRESERVATION
+// ============================================================================
+// The ABI requires that the Floating Point Environment (rounding modes,
+// exception flags) remains stable across standard function calls.
+extern "C" void set_rounding_downward();
+extern "C" int get_rounding_mode();
+
+void test_fp_env() {
+    set_rounding_downward();
+    // A subsequent call to any function should not reset the rounding mode
+    // unless the calling convention explicitly allows it.
+    int mode = get_rounding_mode();
+    println(`Rounding Mode Preserved: ${mode}`);
+}
+
+// ============================================================================
+// 6. VARARGS + AGGREGATES
+// ============================================================================
+// Passing a struct to a variadic function is a common source of
+// "hidden" pointer bugs.
+struct Small { int a; int b; }
+
+extern "C" int printf(string fmt, ...);
+
+void test_vararg_struct() {
+    Small s;
+    s.a = 1;
+    s.b = 2;
+    // Verifies if the struct is passed by value (copied to register/stack)
+    // or if the compiler mistakenly passes a pointer.
+    printf("Struct in vararg: %d %d\n", s);
+}
+
+// ============================================================================
+// 7. TAIL CALL: STACK GROWTH STABILITY
+// ============================================================================
+// Validates that deep recursion with tail calls does not cause stack overflow.
+extern "C" int tail_recursive_sum(int count, int acc);
+
+void test_tail_call_stability() {
+    // Should be able to handle 1,000,000 iterations if tail-call is optimized.
+    int result = tail_recursive_sum(1000000, 0);
+    println(`Tail Call Result: ${result}`);
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_arg_spilling();
+test_cc_clobber();
+test_tls_dynamic();
+test_fp_env();
+test_vararg_struct();
+test_tail_call_stability();

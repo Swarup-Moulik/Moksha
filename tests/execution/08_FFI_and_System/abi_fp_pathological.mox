@@ -1,0 +1,15 @@
+extern "C" float pass_float(float f);
+
+void test_fp_boundaries() {
+    // 1. Signaling NaN: Tests if the ABI preserves the 'signaling' bit
+    // or if the frontend/backend accidentally quiets it.
+    float snan = cast<float>(0x7FA00000);
+
+    // 2. Denormalized Numbers: Tests if the backend sets subnormal flushing (FTZ/DAZ).
+    float denorm = 1.4e-45f32;
+
+    float res1 = pass_float(snan);
+    float res2 = pass_float(denorm);
+}
+
+test_fp_boundaries()

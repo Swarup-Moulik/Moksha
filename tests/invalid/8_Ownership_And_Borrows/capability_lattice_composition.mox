@@ -1,0 +1,26 @@
+async void heavy_compute() {}
+
+async void test_effect_composition() {
+    lock int db_state = 0;
+    *lock int safe_ptr = &db_state;
+
+    lock (safe_ptr) {
+        // Safe elevation to mut inside the lock
+        *mut int db_mut = safe_ptr;
+
+        // Closure copies db_mut by value.
+        // Effect: Escape(db_mut)
+        closure() -> void async_worker = () => {
+            *db_mut = 1;
+        };
+
+        // Effect: Suspend(db_state) + Freeze(safe_ptr)
+        // ERROR EXPECTED: Capability Collision.
+        // 1. You cannot suspend a frame while a lock is actively held.
+        // 2. You cannot serialize a *mut pointer into an async state machine
+        //    if it has already escaped into a closure.
+        await heavy_compute();
+
+        async_worker();
+    }
+}

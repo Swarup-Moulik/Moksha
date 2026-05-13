@@ -35,10 +35,14 @@ bool InliningPass::shouldInline(MIRFunction *callee) {
   if (!callee || callee->isDeclaration())
     return false;
 
+  if (callee->isVariadic())
+    return false;
+
   // Do not inline async functions
   if (callee->getType()) {
     std::string retStr = callee->getType()->toString();
-    if (retStr.find("Promise") != std::string::npos) {
+    if (retStr.find("promise") != std::string::npos ||
+        retStr.find("Promise") != std::string::npos) {
       return false; // Abort inlining!
     }
   }
@@ -63,10 +67,20 @@ bool InliningPass::runOnFunction(MIRFunction *F, MIRModule &M) {
   bool changed = false;
   bool localChanged = true;
 
-  while (localChanged) {
+  // [FIX 1]: Hard cap the number of inlining passes to prevent infinite loops
+  int iterationLimit = 0;
+
+  while (localChanged && iterationLimit++ < 10) {
     localChanged = false;
 
-    // Use indices to iterate to avoid iterator invalidation when adding blocks
+    // [FIX 2]: Prevent massive function growth (Circuit breaker)
+    size_t totalInsts = 0;
+    for (const auto &b : F->getBlocks()) {
+      totalInsts += b->getInstructions().size();
+    }
+    if (totalInsts > 2500)
+      break;
+
     for (size_t bIdx = 0; bIdx < F->getBlocks().size(); ++bIdx) {
       MIRBlock *block = F->getBlocks()[bIdx].get();
       auto &insts = block->getInstructionsMut();
@@ -75,36 +89,38 @@ bool InliningPass::runOnFunction(MIRFunction *F, MIRModule &M) {
         if (auto *call = llvm::dyn_cast<CallInst>(it->get())) {
           if (auto *callee =
                   llvm::dyn_cast_or_null<MIRFunction>(call->getCallee())) {
-            if (shouldInline(callee)) {
+
+            // [FIX 3]: DO NOT inline a function into itself (Self-Recursion
+            // Check)
+            if (callee != F && shouldInline(callee)) {
               localChanged = inlineCall(F, block, it, call, M);
               if (localChanged) {
                 changed = true;
-                break; // Restart loop because CFG changed
+                break;
               }
             }
           }
         } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(it->get())) {
           if (auto *callee =
                   llvm::dyn_cast_or_null<MIRFunction>(invoke->getCallee())) {
-            if (shouldInline(callee)) {
+
+            // [FIX 3]: Same check for Invoke instructions
+            if (callee != F && shouldInline(callee)) {
               localChanged = inlineInvoke(F, block, it, invoke, M);
               if (localChanged) {
                 changed = true;
-                break; // Restart loop because CFG changed
+                break;
               }
             }
           }
         }
       }
       if (localChanged)
-        break; // Break outer loop to restart
+        break;
     }
   }
-
-  if (changed) {
+  if (changed)
     F->numberUnnamedValues();
-  }
-
   return changed;
 }
 
@@ -122,7 +138,9 @@ bool InliningPass::inlineCall(
   std::unordered_map<MIRBlock *, MIRBlock *> blockMap;
 
   // 1. Map Arguments
-  for (size_t i = 0; i < call->getArgs().size(); ++i) {
+  size_t argCount =
+      std::min(call->getArgs().size(), callee->getRawArguments().size());
+  for (size_t i = 0; i < argCount; ++i) {
     valueMap[callee->getRawArguments()[i]] = call->getArgs()[i];
   }
 
@@ -156,8 +174,7 @@ bool InliningPass::inlineCall(
       if (auto *retInst = llvm::dyn_cast<ReturnInst>(clonedInst.get())) {
         returns.push_back(retInst);
       }
-
-      newBlock->addInstruction(std::move(clonedInst));
+      newBlock->getInstructionsMut().push_back(std::move(clonedInst));
     }
   }
 
@@ -315,6 +332,7 @@ bool InliningPass::inlineCall(
               auto castInst =
                   std::make_unique<CastInst>(Opcode::BitCast, retVal, retTy,
                                              "inline.ret.cast", ret->getLoc());
+              castInst->setParent(retBlock);
               retVal = castInst.get();
               auto &retInsts = retBlock->getInstructionsMut();
               // Insert the cast right before the ReturnInst
@@ -328,13 +346,15 @@ bool InliningPass::inlineCall(
         // Replace return with branch to the continuation block
         auto &retInsts = retBlock->getInstructionsMut();
         retInsts.pop_back();
-        retInsts.push_back(
-            std::make_unique<BranchInst>(returnBlockPtr, ret->getLoc()));
+        auto brInst =
+            std::make_unique<BranchInst>(returnBlockPtr, ret->getLoc());
+        brInst->setParent(retBlock);
+        retInsts.push_back(std::move(brInst));
 
         retBlock->addSuccessor(returnBlockPtr);
         returnBlockPtr->addPredecessor(retBlock);
       }
-
+      phi->setParent(returnBlockPtr);
       returnValue = phi.get();
       returnBlockPtr->getInstructionsMut().insert(
           returnBlockPtr->getInstructionsMut().begin(), std::move(phi));
@@ -345,8 +365,10 @@ bool InliningPass::inlineCall(
         MIRBlock *retBlock = ret->getParent();
         auto &retInsts = retBlock->getInstructionsMut();
         retInsts.pop_back();
-        retInsts.push_back(
-            std::make_unique<BranchInst>(returnBlockPtr, ret->getLoc()));
+        auto brInst =
+            std::make_unique<BranchInst>(returnBlockPtr, ret->getLoc());
+        brInst->setParent(retBlock);
+        retInsts.push_back(std::move(brInst));
 
         retBlock->addSuccessor(returnBlockPtr);
         returnBlockPtr->addPredecessor(retBlock);
@@ -360,6 +382,10 @@ bool InliningPass::inlineCall(
   // 9. Replace uses of the call and delete it
   if (returnValue) {
     replaceAllUsesInFunction(caller, call, returnValue);
+  } else if (call->getType() &&
+             call->getType()->getKind() != hir::TypeKind::Void) {
+    MIRValue *undef = M.getOrInsertConstant<ConstantUndef>(call->getType());
+    replaceAllUsesInFunction(caller, call, undef);
   }
 
   return true;
@@ -379,7 +405,9 @@ bool InliningPass::inlineInvoke(
   std::unordered_map<MIRBlock *, MIRBlock *> blockMap;
 
   // 1. Map Arguments
-  for (size_t i = 0; i < invoke->getArgs().size(); ++i) {
+  size_t argCount =
+      std::min(invoke->getArgs().size(), callee->getRawArguments().size());
+  for (size_t i = 0; i < argCount; ++i) {
     valueMap[callee->getRawArguments()[i]] = invoke->getArgs()[i];
   }
 
@@ -398,6 +426,7 @@ bool InliningPass::inlineInvoke(
   std::vector<MIRInst *> allClonedInsts;
   std::vector<ReturnInst *> returns;
   std::vector<ThrowInst *> throws;
+  std::vector<ResumeInst *> resumes;
 
   for (const auto &oldBlockPtr : callee->getBlocks()) {
     MIRBlock *newBlock = blockMap[oldBlockPtr.get()];
@@ -414,9 +443,11 @@ bool InliningPass::inlineInvoke(
       } else if (auto *throwInst =
                      llvm::dyn_cast<ThrowInst>(clonedInst.get())) {
         throws.push_back(throwInst);
+      } else if (auto *resumeInst =
+                     llvm::dyn_cast<ResumeInst>(clonedInst.get())) {
+        resumes.push_back(resumeInst);
       }
-
-      newBlock->addInstruction(std::move(clonedInst));
+      newBlock->getInstructionsMut().push_back(std::move(clonedInst));
     }
   }
 
@@ -517,8 +548,9 @@ bool InliningPass::inlineInvoke(
   auto &callBlockInsts = callBlock->getInstructionsMut();
   std::unique_ptr<MIRInst> savedInvoke = std::move(callBlockInsts.back());
   callBlockInsts.pop_back();
-  callBlockInsts.push_back(
-      std::make_unique<BranchInst>(calleeEntry, invoke->getLoc()));
+  auto brInst = std::make_unique<BranchInst>(calleeEntry, invoke->getLoc());
+  brInst->setParent(callBlock);
+  callBlockInsts.push_back(std::move(brInst));
 
   // Fix outgoing CFG
   callBlock->removeSuccessor(normalDest);
@@ -546,6 +578,7 @@ bool InliningPass::inlineInvoke(
               auto castInst =
                   std::make_unique<CastInst>(Opcode::BitCast, retVal, retTy,
                                              "inline.ret.cast", ret->getLoc());
+              castInst->setParent(retBlock);
               retVal = castInst.get();
               auto &retInsts = retBlock->getInstructionsMut();
               // Insert the cast right before the ReturnInst
@@ -558,12 +591,14 @@ bool InliningPass::inlineInvoke(
 
         auto &retInsts = retBlock->getInstructionsMut();
         retInsts.pop_back();
-        retInsts.push_back(
-            std::make_unique<BranchInst>(normalDest, ret->getLoc()));
+        auto brInst = std::make_unique<BranchInst>(normalDest, ret->getLoc());
+        brInst->setParent(retBlock);
+        retInsts.push_back(std::move(brInst));
 
         retBlock->addSuccessor(normalDest);
         normalDest->addPredecessor(retBlock);
       }
+      phi->setParent(normalDest);
       returnValue = phi.get();
       normalDest->getInstructionsMut().insert(
           normalDest->getInstructionsMut().begin(), std::move(phi));
@@ -572,8 +607,9 @@ bool InliningPass::inlineInvoke(
         MIRBlock *retBlock = ret->getParent();
         auto &retInsts = retBlock->getInstructionsMut();
         retInsts.pop_back();
-        retInsts.push_back(
-            std::make_unique<BranchInst>(normalDest, ret->getLoc()));
+        auto brInst = std::make_unique<BranchInst>(normalDest, ret->getLoc());
+        brInst->setParent(retBlock);
+        retInsts.push_back(std::move(brInst));
 
         retBlock->addSuccessor(normalDest);
         normalDest->addPredecessor(retBlock);
@@ -583,31 +619,143 @@ bool InliningPass::inlineInvoke(
     auto &retInsts = normalDest->getInstructionsMut();
     if (retInsts.empty() ||
         !llvm::isa<UnreachableInst>(retInsts.back().get())) {
-      retInsts.insert(retInsts.begin(),
-                      std::make_unique<UnreachableInst>(invoke->getLoc()));
+      auto unreachInst = std::make_unique<UnreachableInst>(invoke->getLoc());
+      unreachInst->setParent(normalDest);
+      retInsts.insert(retInsts.begin(), std::move(unreachInst));
     }
   }
 
-  // 7. Handle Throws -> Route to Unwind Dest
+  // 7. Handle Throws & Resumes -> Route to Unwind Dest
+  std::vector<MIRBlock *> newUnwindSources;
+
   for (ThrowInst *throwInst : throws) {
-    MIRBlock *throwBlock = throwInst->getParent();
+    // [FIX 2A]: Only hijack throws that DON'T have a local cleanup block!
+    if (throwInst->getUnwindDest() == nullptr) {
+      MIRBlock *throwBlock = throwInst->getParent();
+      throwInst->setUnwindDest(unwindDest);
+      throwBlock->addSuccessor(unwindDest);
+      unwindDest->addPredecessor(throwBlock);
+    }
+  }
 
-    // Redirect the throw to our caller's landing pad
-    throwInst->setUnwindDest(unwindDest);
+  MIRBlock *phiPatchBlock = unwindDest;
 
-    throwBlock->addSuccessor(unwindDest);
-    unwindDest->addPredecessor(throwBlock);
+  if (!resumes.empty()) {
+    MIRBlock *actualCleanupBlock = unwindDest;
+    PhiInst *exPhi = nullptr;
+
+    // [FIX 2B]: LLVM strictly forbids branching into a block that begins with a
+    // LandingPadInst. If the unwindDest has a landing pad, we MUST split the
+    // block and branch AFTER it!
+    if (!unwindDest->getInstructions().empty() &&
+        llvm::isa<LandingPadInst>(
+            unwindDest->getInstructions().front().get())) {
+
+      auto newBlock = std::make_unique<MIRBlock>(
+          caller->getUniqueName("inline.cleanup"), caller);
+      actualCleanupBlock = newBlock.get();
+
+      auto &unwindInsts = unwindDest->getInstructionsMut();
+
+      // [CRITICAL MISSING LINE ADDED HERE]:
+      auto *callerLpad = unwindInsts.front().get();
+
+      // Move all instructions AFTER the landing pad to actualCleanupBlock
+      auto splitIt = unwindInsts.begin() + 1;
+      for (auto it = splitIt; it != unwindInsts.end(); ++it) {
+        (*it)->setParent(actualCleanupBlock);
+        actualCleanupBlock->addInstruction(std::move(*it));
+      }
+      unwindInsts.erase(splitIt, unwindInsts.end());
+
+      // Insert the physical branch terminator to connect the split blocks!
+      auto brFallback = std::make_unique<BranchInst>(
+          actualCleanupBlock, unwindInsts.front()->getLoc());
+      brFallback->setParent(unwindDest);
+      unwindInsts.push_back(std::move(brFallback));
+
+      // Update CFG Topologies
+      actualCleanupBlock->getSuccessors() = unwindDest->getSuccessors();
+      for (MIRBlock *succ : actualCleanupBlock->getSuccessors()) {
+        auto &preds = succ->getPredecessors();
+        std::replace(preds.begin(), preds.end(), unwindDest,
+                     actualCleanupBlock);
+
+        // Patch Phis in successors
+        for (auto &inst : succ->getInstructionsMut()) {
+          if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
+            for (auto &[val, incBlock] : phi->getIncomingMut()) {
+              if (incBlock == unwindDest)
+                incBlock = actualCleanupBlock;
+            }
+          } else
+            break;
+        }
+      }
+      unwindDest->getSuccessors().clear();
+      unwindDest->addSuccessor(actualCleanupBlock);
+      actualCleanupBlock->addPredecessor(unwindDest);
+
+      // --- NEW: Exception Threading Fix ---
+      // Create a Phi node to merge the caller's landing pad and the callee's
+      // resumes
+      auto phiNode = std::make_unique<PhiInst>(callerLpad->getType(), "ex.phi",
+                                               callerLpad->getLoc());
+      phiNode->addIncoming(callerLpad, unwindDest);
+      exPhi = phiNode.get();
+
+      // Replace uses of the old LandingPad with the new Phi in the cleanup
+      // block
+      for (auto &inst : actualCleanupBlock->getInstructionsMut()) {
+        inst->replaceOperand(callerLpad, exPhi);
+      }
+
+      // Insert the Phi at the very top of the cleanup block
+      exPhi->setParent(actualCleanupBlock);
+      actualCleanupBlock->getInstructionsMut().insert(
+          actualCleanupBlock->getInstructionsMut().begin(), std::move(phiNode));
+
+      caller->addBlock(std::move(newBlock));
+    }
+
+    phiPatchBlock = actualCleanupBlock;
+
+    // Route resumes safely around the landing pad!
+    for (ResumeInst *resumeInst : resumes) {
+      MIRBlock *resumeBlock = resumeInst->getParent();
+
+      auto &insts = resumeBlock->getInstructionsMut();
+      insts.pop_back(); // Remove Resume
+
+      auto brInst = std::make_unique<BranchInst>(actualCleanupBlock,
+                                                 resumeInst->getLoc());
+      brInst->setParent(resumeBlock);
+      insts.push_back(std::move(brInst));
+
+      resumeBlock->addSuccessor(actualCleanupBlock);
+      actualCleanupBlock->addPredecessor(resumeBlock);
+      newUnwindSources.push_back(resumeBlock);
+
+      // Feed the callee's exception into the Phi if we created one
+      if (exPhi) {
+        exPhi->addIncoming(resumeInst->getException(), resumeBlock);
+      }
+    }
   }
 
   if (returnValue) {
     replaceAllUsesInFunction(caller, invoke, returnValue);
+  } else if (invoke->getType() &&
+             invoke->getType()->getKind() != hir::TypeKind::Void) {
+    MIRValue *undef = M.getOrInsertConstant<ConstantUndef>(invoke->getType());
+    replaceAllUsesInFunction(caller, invoke, undef);
   }
 
   // 8. Patch existing Phis in normalDest
   for (auto &inst : normalDest->getInstructionsMut()) {
     if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
       if (phi == returnValue)
-        continue; // Skip the return value Phi we just built
+        continue;
 
       MIRValue *valFromCallBlock = nullptr;
       for (auto &[val, incBlock] : phi->getIncoming()) {
@@ -624,12 +772,12 @@ bool InliningPass::inlineInvoke(
         }
       }
     } else {
-      break; // Phis are always at the top
+      break;
     }
   }
 
-  // 9. Patch existing Phis in unwindDest
-  for (auto &inst : unwindDest->getInstructionsMut()) {
+  // 9. Patch existing Phis in phiPatchBlock
+  for (auto &inst : phiPatchBlock->getInstructionsMut()) {
     if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
       MIRValue *valFromCallBlock = nullptr;
       for (auto &[val, incBlock] : phi->getIncoming()) {
@@ -641,8 +789,9 @@ bool InliningPass::inlineInvoke(
 
       if (valFromCallBlock) {
         phi->removeIncoming(callBlock);
-        for (ThrowInst *throwInst : throws) {
-          phi->addIncoming(valFromCallBlock, throwInst->getParent());
+        // [FIX 2C]: Wire the Phis to the new sources (Throws AND Resumes)
+        for (MIRBlock *srcBlock : newUnwindSources) {
+          phi->addIncoming(valFromCallBlock, srcBlock);
         }
       }
     } else {

@@ -1,0 +1,18 @@
+println("--- [E2E] borrow_conflict.mox ---")
+
+void test_borrow_conflict() {
+    int x = 42;
+
+    // Mutable capture
+    closure() -> void writer = &mut () => { x = x + 1; };
+
+    // Immutable capture
+    // COMPILER CHECK: Does this conflict with the mutable writer above?
+    closure() -> int reader = &() => { return x; };
+
+    writer();
+    println(reader());
+}
+
+test_borrow_conflict();
+println("Done")

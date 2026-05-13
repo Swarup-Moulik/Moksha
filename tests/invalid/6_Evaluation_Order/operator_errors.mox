@@ -1,0 +1,9 @@
+string s = "hello"
+int i = 10
+
+// Error: Invalid operation between string and int
+int val = s - i
+
+// Error: Bitwise op on floats
+float f = 10.5
+int res = f & 1

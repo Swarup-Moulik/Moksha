@@ -1,0 +1,8 @@
+// ERROR: Late-stage layout failure.
+// Parse Phase: OK
+// Symbol Resolution Phase: OK (ClassA is registered)
+// Type Checking: OK (Fields match declared types)
+// Layout/Lowering Phase: FATAL (Cannot compute byte size of ClassA)
+class ClassA {
+    public ClassA a;
+}

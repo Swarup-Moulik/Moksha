@@ -1,0 +1,63 @@
+println("--- [E2E] invalid_aliasing_and_escape.mox ---")
+
+// 1. ESCAPING BORROW VIA CLOSURE INDIRECTION
+// ERROR: A closure cannot escape its scope if it captures a view of a local stack variable.
+closure() -> *view int test_escape_via_closure() {
+    int x = 10;
+    *view int p = &x;
+    // FAIL: Returns a closure that holds a reference to the dead stack frame.
+    return () => { return p; };
+}
+
+// 2. MIXED CAPABILITY ALIASING CONFLICT
+// ERROR: Enforces strict Single-Writer OR Multiple-Readers within overlapping lifetimes.
+void test_simultaneous_alias_conflict() {
+    int x = 10;
+    *view int v = &x;
+    // FAIL: Cannot create a mutable pointer while a view pointer is still alive (NLL overlap).
+    *mut int m = &x;
+
+    println(*v); // Extends lifetime of 'v' past the creation of 'm'
+}
+
+// 3. POINTER + BORROW INTERACTION (Mutation during View)
+// ERROR: Pointer abstractions must still respect borrow checker rules.
+void test_mutation_during_view() {
+    int x = 10;
+    *mut int p = &x;
+    *view int v = &*p; // Borrowing from the pointer
+
+    // FAIL: Cannot mutate via '*p' while '*v' is actively holding a view.
+    *p = 20;
+    println(*v);
+}
+
+// 4. FUNCTION PARAMETER ALIASING (The Restrict Rule)
+// ERROR: Prevents accidental mutable aliasing across function boundaries.
+void mutate_pair(*mut int a, *mut int b) {
+    *a = 1;
+    *b = 2;
+}
+
+void test_param_aliasing() {
+    int x = 10;
+    // FAIL: Passing the same mutable reference to two different arguments violates exclusive mutability.
+    mutate_pair(&x, &x);
+}
+
+// 5. RETURNING POINTER TO STACK VIA INDIRECTION
+// ERROR: Escape analysis must track the root origin of a pointer, even if assigned to a local variable first.
+*mut int test_indirect_leak() {
+    int x = 10;
+    *mut int p = &x;
+    // FAIL: 'p' holds the address of local 'x'. Returning it causes a dangling pointer.
+    return p;
+}
+
+// --- Execution ---
+// Note: These should trigger Semantic/Lifetime compilation errors.
+test_escape_via_closure();
+test_simultaneous_alias_conflict();
+test_mutation_during_view();
+test_param_aliasing();
+test_indirect_leak();

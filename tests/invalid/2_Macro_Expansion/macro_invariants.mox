@@ -1,0 +1,34 @@
+// --- 1. Invalid Parameter Forms [ParseFail] ---
+// Assuming spec dictates macros only accept raw identifiers.
+macro typed_param(int a) { return a; }
+// [ParseFail]: Macros expect raw identifiers, not typed bindings.
+
+macro expr_param(a + b) { return a; }
+// [ParseFail]: Expressions not allowed in macro parameter lists.
+
+macro missing_comma(a b) { return a; }
+// [ParseFail]: Invalid token sequence in parameters.
+
+macro num_param(123) { return 123; }
+// [ParseFail]: Numeric literals are not valid parameter names.
+
+macro str_param("str") { return 1; }
+// [ParseFail]: String literals are not valid parameter names.
+
+// --- 2. Semantic Definition Errors [MacroValidationError] ---
+macro dup_param(a, a) { return a; }
+// [MacroValidationError]: Duplicate parameters defined in signature.
+
+// --- 3. Malformed Bodies [ParseFail] ---
+macro broken_syntax(a) { return a + ; }
+// [ParseFail]: Syntax inside the macro body must form valid AST nodes.
+
+// --- 4. Expansion-Time Validation [ASTValidationError / TypeError] ---
+macro id(a) { return a; }
+int valid_exp = id(10);
+// [Success]: Expands to `10`, valid assignment.
+
+macro add_ten(a) { return a - 10; }
+string bad_type = add_ten("hello");
+// [TypeError]: Expands to `"hello" + 10`. The macro expands cleanly,
+// but the resulting AST fails semantic type-checking.

@@ -75,14 +75,14 @@ void UnsafeBlockStmt::accept(ConstHIRVisitor &v) const {
 // --- LockStmt ---
 
 LockStmt::LockStmt(std::unique_ptr<HIRExpr> mutex,
-                   std::unique_ptr<HIRStmt> body, SourceLocation loc)
-    : HIRStmt(Kind::Lock, loc), mutex(std::move(mutex)), body(std::move(body)) {
-}
+                   std::unique_ptr<HIRStmt> body, bool isAsync,
+                   SourceLocation loc)
+    : HIRStmt(Kind::Lock, loc), mutex(std::move(mutex)), body(std::move(body)),
+      isAsync(isAsync) {}
 
 void LockStmt::dump(llvm::raw_ostream &os, int indent) const {
   printIndent(os, indent);
-  os << "(LockStmt)\n";
-
+  os << (isAsync ? "(AsyncLockStmt)\n" : "(LockStmt)\n");
   printLabel(os, indent + 1, "Mutex");
   printIndent(os, indent + 2);
   if (mutex)
@@ -276,10 +276,13 @@ void ForInStmt::dump(llvm::raw_ostream &os, int indent) const {
     printLabel(os, indent + 1, "Var");
     var->dump(os, indent + 2);
   }
+  if (indexVar) {
+    printLabel(os, indent + 1, "IndexVar");
+    indexVar->dump(os, indent + 2);
+  }
   if (collection) {
     printLabel(os, indent + 1, "Collection");
-    if (collection)
-      collection->dump(os, indent + 2);
+    collection->dump(os, indent + 2);
   }
   if (body) {
     printLabel(os, indent + 1, "Body");
@@ -357,47 +360,31 @@ void DeferStmt::accept(ConstHIRVisitor &v) const { v.visitDeferStmt(*this); }
 
 // --- TryCatch ---
 
-TryCatchStmt::TryCatchStmt(HIRStmtPtr tryBody,
-                           std::unique_ptr<HIRExpr> catchVar,
-                           HIRStmtPtr catchBody, HIRStmtPtr finallyBody,
-                           SourceLocation loc)
-    : HIRStmt(Kind::TryCatch, loc), tryBody(std::move(tryBody)),
-      catchVar(std::move(catchVar)), catchBody(std::move(catchBody)),
-      finallyBody(std::move(finallyBody)) {}
-
-const HIRStmt *TryCatchStmt::getTryBody() const { return tryBody.get(); }
-const HIRExpr *TryCatchStmt::getCatchVar() const { return catchVar.get(); }
-const HIRStmt *TryCatchStmt::getCatchBody() const { return catchBody.get(); }
-const HIRStmt *TryCatchStmt::getFinallyBody() const {
-  return finallyBody.get();
-}
-
-bool TryCatchStmt::hasCatch() const { return catchBody != nullptr; }
-bool TryCatchStmt::hasFinally() const { return finallyBody != nullptr; }
-
 void TryCatchStmt::dump(llvm::raw_ostream &os, int indent) const {
   printIndent(os, indent);
   os << "(TryCatchStmt)\n";
 
-  if (tryBody) {
-    printLabel(os, indent + 1, "TryBody");
-    tryBody->dump(os, indent + 2);
+  if (tryBlock) {
+    printLabel(os, indent + 1, "TryBlock");
+    tryBlock->dump(os, indent + 2);
   }
 
-  if (catchVar) {
-    printLabel(os, indent + 1, "CatchVar");
-    if (catchVar)
-      catchVar->dump(os, indent + 2);
+  for (size_t i = 0; i < catches.size(); ++i) {
+    printIndent(os, indent + 1);
+    os << "CatchClause (" << catches[i].varName;
+    if (catches[i].varType) {
+      os << ": " << catches[i].varType->toString();
+    }
+    os << "):\n";
+
+    if (catches[i].body) {
+      catches[i].body->dump(os, indent + 2);
+    }
   }
 
-  if (catchBody) {
-    printLabel(os, indent + 1, "CatchBody");
-    catchBody->dump(os, indent + 2);
-  }
-
-  if (finallyBody) {
-    printLabel(os, indent + 1, "FinallyBody");
-    finallyBody->dump(os, indent + 2);
+  if (finallyBlock) {
+    printLabel(os, indent + 1, "FinallyBlock");
+    finallyBlock->dump(os, indent + 2);
   }
 }
 
@@ -434,6 +421,8 @@ void HIRVarDeclStmt::dump(llvm::raw_ostream &os, int indent) const {
     os << " [static]";
   if (isUsed)
     os << " [used]";
+  if (isWeakLinkage)
+    os << " [weak]";
   if (!sectionName.empty())
     os << " [section(\"" << sectionName << "\")]";
 
@@ -460,13 +449,6 @@ void HIRThrowStmt::dump(llvm::raw_ostream &os, int indent) const {
 void HIRThrowStmt::accept(HIRVisitor &v) { v.visitThrowStmt(*this); }
 void HIRThrowStmt::accept(ConstHIRVisitor &v) const { v.visitThrowStmt(*this); }
 
-void HIRAsmStmt::dump(llvm::raw_ostream &os, int indent) const {
-  printIndent(os, indent);
-  os << "AsmStmt: \"" << assemblyStr << "\"\n";
-}
-void HIRAsmStmt::accept(HIRVisitor &v) { v.visitAsmStmt(*this); }
-void HIRAsmStmt::accept(ConstHIRVisitor &v) const { v.visitAsmStmt(*this); }
-
 // ============================================================================
 // [SwitchCase Implementation]
 // ============================================================================
@@ -492,7 +474,6 @@ SwitchStmt::~SwitchStmt() = default;
 BreakStmt::~BreakStmt() = default;
 ContinueStmt::~ContinueStmt() = default;
 DeferStmt::~DeferStmt() = default;
-TryCatchStmt::~TryCatchStmt() = default;
 HIRVarDeclStmt::~HIRVarDeclStmt() = default;
 ForInStmt::~ForInStmt() = default;
 

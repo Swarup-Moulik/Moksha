@@ -1,0 +1,9 @@
+void cycle_a() { cycle_b(); }
+void cycle_b() { cycle_a(); }
+
+void test_stack_limit() {
+    println("Testing runtime recursion limit...");
+    cycle_a(); // Uncomment to trigger stack overflow protection
+}
+
+test_stack_limit()

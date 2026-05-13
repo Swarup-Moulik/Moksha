@@ -1,0 +1,24 @@
+int x;
+bool condition1 = true;
+bool condition2 = false;
+
+if (condition1) {
+    x = 10;
+} else if (condition2) {
+    x = 20;
+}
+// FATAL: The implicit 'else' path leaves 'x' uninitialized!
+// The Definite Assignment pass MUST throw an error here.
+print(x);
+
+// Test try/catch assignment bypass
+int y;
+try {
+    // If riskyCall() throws, y = 5 is bypassed
+    riskyCall();
+    y = 5;
+} catch (any e) {
+    print("Error");
+}
+// FATAL: 'y' is uninitialized if the catch block executes
+print(y);

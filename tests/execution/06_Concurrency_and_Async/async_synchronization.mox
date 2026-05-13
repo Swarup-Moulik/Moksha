@@ -1,0 +1,44 @@
+println("--- [E2E] async_synchronization.mox ---")
+
+async void test_async_mutex() {
+    println("Main: Starting async mutex test...");
+
+    // AsyncMutex yields the coroutine instead of blocking the OS thread
+    AsyncMutex mtx = new AsyncMutex();
+    int shared_resource = 0;
+
+    println("Main: Spawning task t1...");
+    promise<void> t1 = spawn(async () => {
+        println("  [t1] Attempting to acquire lock...");
+        async lock(mtx) {
+            println("  [t1] Lock acquired! Incrementing resource by 1...");
+            shared_resource = shared_resource + 1;
+
+            println("  [t1] Resource is now " + shared_resource + ". Suspending for 10ms...");
+            await sleep(10); // Perfectly safe to suspend while holding an AsyncMutex
+
+            println("  [t1] Woke up. Releasing lock...");
+        } // mtx.unlock() is automatically called here
+        println("  [t1] Task complete.");
+    });
+
+    println("Main: Spawning task t2...");
+    promise<void> t2 = spawn(async () => {
+        println("  [t2] Attempting to acquire lock...");
+        async lock(mtx) { // Suspends until t1 finishes its async block
+            println("  [t2] Lock acquired! Incrementing resource by 2...");
+            shared_resource = shared_resource + 2;
+
+            println("  [t2] Resource is now " + shared_resource + ". Releasing lock...");
+        } // mtx.unlock() is automatically called here
+        println("  [t2] Task complete.");
+    });
+
+    println("Main: Awaiting both tasks to join...");
+    await join(t1, t2);
+
+    println("Main: Tasks joined successfully.");
+    println("Final shared_resource: " + shared_resource); // Expected: 3
+}
+
+await test_async_mutex()

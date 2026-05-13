@@ -96,6 +96,8 @@ private:
   llvm::BumpPtrAllocator typeAllocator;
   llvm::FoldingSet<HIRType> uniqueTypes;
 
+  std::vector<HIRType *> allocatedTypes;
+
   mutable std::vector<HIRClass *> classCache;
   std::vector<std::unique_ptr<HIRClass>> classes;
 };

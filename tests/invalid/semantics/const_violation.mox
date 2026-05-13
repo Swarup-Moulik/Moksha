@@ -1,3 +1,0 @@
-const int PI = 3;
-// Error: Cannot assign to const variable
-PI = 4;

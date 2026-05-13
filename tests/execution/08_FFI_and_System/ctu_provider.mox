@@ -1,0 +1,13 @@
+// Compilation Unit A
+struct Foo {
+    int a;
+    float b;
+}
+
+// Ensure this lowers to a GPR (a) and an XMM (b) consistently
+extern "C" Foo make_foo(int x, float y) {
+    Foo f;
+    f.a = x;
+    f.b = y;
+    return f;
+}

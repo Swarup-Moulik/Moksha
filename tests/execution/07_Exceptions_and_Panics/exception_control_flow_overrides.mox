@@ -1,0 +1,39 @@
+println("--- [E2E] exception_control_flow_overrides.mox ---")
+
+// 1. CONTROL FLOW INTERRUPTION INSIDE TRY
+int test_return_triggers_finally() {
+    int x = 0;
+    try {
+        return 10; // Breaks control flow
+    } finally {
+        x = 5;     // MUST execute before the return propagates
+        println("Finally ran: " + string(x));
+    }
+}
+
+// 2. FINALLY OVERRIDING AN EXCEPTION
+int test_finally_override() {
+    try {
+        throw "Initial Error";
+    } finally {
+        // Spec Decision: A return inside a finally block SUPPRESSES the unwinding exception.
+        return 42;
+    }
+}
+
+// 3. DOUBLE FAULT (EXCEPTION DURING DEFER)
+void test_double_fault() {
+    try {
+        defer {
+            throw "Defer Error"; // Throwing while already unwinding
+        }
+        throw "Original Error";
+    } catch (string e) {
+        // Spec Decision: The most recent exception (Defer Error) overwrites the previous one.
+        println("Caught: " + e); // Expected: Caught: Defer Error
+    }
+}
+
+println(test_return_triggers_finally()); // Expected: Finally ran: 5 \n 10
+println(test_finally_override());        // Expected: 42
+test_double_fault();

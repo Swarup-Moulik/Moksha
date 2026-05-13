@@ -1,0 +1,16 @@
+class ComponentA {
+    public int power;
+}
+
+class ComponentB {
+    public int power;
+}
+
+// FATAL: Member collision.
+// 'System' inherits 'power' from both ComponentA and ComponentB.
+// The compiler cannot determine the offset for 'this.power'.
+class HardSystem(ComponentA, ComponentB) {
+    void check() {
+        print(this.power); // ERROR: Ambiguous member access.
+    }
+}

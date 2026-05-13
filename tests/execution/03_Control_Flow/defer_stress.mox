@@ -1,0 +1,28 @@
+println("--- [E2E] defer_stress.mox ---")
+
+void test_lifo() {
+    defer println("Third");
+    defer println("Second");
+    println("First");
+}
+// Expected: First, Second, Third
+
+void test_defer_return(bool early) {
+    defer println("Cleanup Done");
+    if (early) return;
+    println("Normal Path");
+}
+
+void test_block_scope() {
+    if (true) {
+        defer println("Block Exit");
+        println("Inside Block");
+    }
+    println("Outside Block");
+}
+// Does Mox run 'Block Exit' here or at function end?
+// Standard 'defer' usually waits for function end.
+
+test_lifo();
+test_defer_return(true);
+test_block_scope();

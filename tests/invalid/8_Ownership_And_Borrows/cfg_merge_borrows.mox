@@ -1,0 +1,15 @@
+void test_cfg_merging(bool condition) { // Use a parameter
+    int data = 42;
+    *mut int p_mut = null;
+    *view int p_view = null;
+
+    if (condition) { // Compiler cannot prune this anymore
+        p_mut = &data;
+    } else {
+        p_view = &data;
+    }
+
+    // Now the NLL pass will run and see that 'data' is borrowed
+    // on BOTH paths, triggering your intended error here:
+    *mut int illegal_alias = &data;
+}

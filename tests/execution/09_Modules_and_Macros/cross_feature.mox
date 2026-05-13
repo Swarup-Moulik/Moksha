@@ -1,0 +1,19 @@
+import { TestConfig } from "test"
+
+macro updateAndLog(obj, val) {
+    obj.version = val;
+    obj.version |> println();
+}
+
+void test_integration() {
+    TestConfig cfg = new TestConfig(1);
+
+    // Macro + Class Field + Pipe
+    cfg |> updateAndLog(42); // Expected: 42
+
+    // Type transition across pipe
+    any raw = 100;
+    raw |> println(); // Testing 'any' to 'println' transition
+}
+
+test_integration()

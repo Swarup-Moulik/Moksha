@@ -1,0 +1,12 @@
+void test_deadlock_prevention() {
+    lock int data = 0;
+    *lock int p1 = &data;
+
+    lock (p1) {
+        // Attempting to lock the exact same pointer while it is
+        // already locked by the outer scope!
+        lock (p1) { // ERROR EXPECTED
+            *p1 = 1;
+        }
+    }
+}

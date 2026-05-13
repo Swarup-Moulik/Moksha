@@ -1,26 +1,229 @@
 #include "../../include/moksha_rt.h"
 #include "../abi/sys_caps.h"
 #include "../abi/sys_io.h"
-#include <inttypes.h>
 #include <stdarg.h>
 #include <stdbool.h>
-#include <stdio.h>
-#include <string.h>
+#include <stddef.h>
+#include <stdint.h>
 
 extern void *moksha_rt_alloc(size_t payload_size, uint32_t type_id);
 extern void moksha_rt_panic(const char *message);
-extern void *__moksha_alloc(uint32_t size);
+
+// ============================================================================
+// Bare-Metal Utility Functions (Replaces <string.h> and <stdio.h>)
+// ============================================================================
+
+static size_t internal_strlen(const char *s) {
+  size_t len = 0;
+  while (s[len])
+    len++;
+  return len;
+}
+
+static void internal_strcpy(char *dest, const char *src) {
+  while (*src)
+    *dest++ = *src++;
+  *dest = '\0';
+}
+
+static void internal_strcat(char *dest, const char *src) {
+  while (*dest)
+    dest++;
+  while (*src)
+    *dest++ = *src++;
+  *dest = '\0';
+}
+
+bool __moksha_string_eq(void *a_ptr, void *b_ptr) {
+  char *a = (char *)a_ptr;
+  char *b = (char *)b_ptr;
+
+  if (a == b)
+    return true; // Same identity
+  if (!a || !b)
+    return false; // One is null
+
+  while (*a && (*a == *b)) {
+    a++;
+    b++;
+  }
+  return (*(const unsigned char *)a - *(const unsigned char *)b) == 0;
+}
+
+static void sys_print(const char *str) {
+  if (!str)
+    return;
+  size_t written;
+  sys_io_write(1, str, internal_strlen(str), &written); // 1 = STDOUT
+}
+
+static int internal_utoa64(uint64_t val, char *buf) {
+  if (val == 0) {
+    buf[0] = '0';
+    buf[1] = '\0';
+    return 1;
+  }
+  char temp[32];
+  int i = 0, j = 0;
+  while (val > 0) {
+    temp[i++] = (val % 10) + '0';
+    val /= 10;
+  }
+  while (i > 0)
+    buf[j++] = temp[--i];
+  buf[j] = '\0';
+  return j;
+}
+
+static int internal_itoa64(int64_t val, char *buf) {
+  int j = 0;
+  if (val < 0) {
+    buf[j++] = '-';
+  }
+  uint64_t uval = (val < 0) ? ((uint64_t)(-(val + 1)) + 1) : (uint64_t)val;
+  j += internal_utoa64(uval, buf + j);
+  return j;
+}
+
+static int internal_ptrtoa(void *ptr, char *buf) {
+  uintptr_t val = (uintptr_t)ptr;
+  buf[0] = '0';
+  buf[1] = 'x';
+  if (val == 0) {
+    buf[2] = '0';
+    buf[3] = '\0';
+    return 3;
+  }
+  int i = 0, j = 2;
+  char temp[32];
+  while (val > 0) {
+    int rem = val % 16;
+    temp[i++] = (rem < 10) ? (rem + '0') : (rem - 10 + 'a');
+    val /= 16;
+  }
+  while (i > 0)
+    buf[j++] = temp[--i];
+  buf[j] = '\0';
+  return j;
+}
+
+static int internal_ftoa(double val, char *buf) {
+  // 1. Check for NaN
+  if (val != val) {
+    internal_strcpy(buf, "NaN");
+    return 3;
+  }
+
+  // 2. Check for Infinity (Bare-metal trick: Infinity - Infinity = NaN)
+  double test = val - val;
+  if (test != test) {
+    if (val > 0) {
+      internal_strcpy(buf, "Infinity");
+      return 8; // Length of "Infinity"
+    } else {
+      internal_strcpy(buf, "-Infinity");
+      return 9; // Length of "-Infinity"
+    }
+  }
+
+  int j = 0;
+  if (val < 0) {
+    buf[j++] = '-';
+    val = -val;
+  }
+
+  if (val == 0.0) {
+    buf[j++] = '0';
+    buf[j] = '\0';
+    return j;
+  }
+
+  int exponent = 0;
+  double temp = val;
+
+  // 1. Detect if we need Scientific Notation
+  bool use_scientific = (val >= 1e6 || val < 1e-4);
+
+  if (use_scientific) {
+    if (temp >= 10.0) {
+      while (temp >= 10.0) {
+        temp /= 10.0;
+        exponent++;
+      }
+    } else if (temp < 1.0) {
+      while (temp < 1.0) {
+        temp *= 10.0;
+        exponent--;
+      }
+    }
+  }
+
+  temp += 0.0000005;
+
+  // 2. Extract Integer and Fractional parts
+  uint64_t int_part = (uint64_t)temp;
+  double frac_part = temp - (double)int_part;
+
+  j += internal_utoa64(int_part, buf + j);
+
+  // 3. Print up to 6 decimal places
+  buf[j++] = '.';
+  for (int i = 0; i < 6; i++) {
+    frac_part *= 10;
+    int digit = (int)frac_part;
+    buf[j++] = digit + '0';
+    frac_part -= digit;
+  }
+
+  // 4. Strip trailing zeros and the decimal point if it's clean
+  while (buf[j - 1] == '0')
+    j--;
+  if (buf[j - 1] == '.')
+    j--;
+
+  // 5. Append the 'e' exponent if we used scientific notation
+  if (use_scientific) {
+    buf[j++] = 'e';
+    if (exponent >= 0) {
+      buf[j++] = '+';
+      j += internal_itoa64(exponent, buf + j);
+    } else {
+      // internal_itoa64 automatically adds the '-' for negative numbers
+      j += internal_itoa64(exponent, buf + j);
+    }
+  }
+
+  buf[j] = '\0';
+  return j;
+}
+
+// 1. Define the Global Spinlock
+static int stdout_lock = 0;
+
+static inline void acquire_print_lock(void) {
+  while (__atomic_exchange_n(&stdout_lock, 1, __ATOMIC_ACQUIRE)) {
+    // Spin lightly.
+  }
+}
+
+static inline void release_print_lock(void) {
+  __atomic_store_n(&stdout_lock, 0, __ATOMIC_RELEASE);
+}
+
+// ============================================================================
+// Core Formatter
+// ============================================================================
 
 void moksha_print_decimal128(__int128_t value, int scale) {
   if (value == 0) {
-    printf("0");
+    sys_print("0");
     return;
   }
 
   bool is_negative = value < 0;
   if (is_negative) {
     value = -value;
-    printf("-");
+    sys_print("-");
   }
 
   char buffer[45];
@@ -42,189 +245,72 @@ void moksha_print_decimal128(__int128_t value, int scale) {
   if (buffer[pos + 1] == '.') {
     buffer[pos--] = '0';
   }
-  printf("%s", &buffer[pos + 1]);
+  sys_print(&buffer[pos + 1]);
 }
 
-static float half_to_float(uint16_t h) {
-  uint32_t sign = (h >> 15) & 1;
-  uint32_t exp = (h >> 10) & 0x1F;
-  uint32_t mant = h & 0x3FF;
-
-  if (exp == 0) {
-    if (mant == 0) {
-      uint32_t res = sign << 31;
-      float f;
-      memcpy(&f, &res, 4);
-      return f;
-    } else {
-      while (!(mant & 0x400)) {
-        mant <<= 1;
-        exp -= 1;
-      }
-      exp += 1;
-      mant &= ~0x400;
-    }
-  } else if (exp == 31) {
-    if (mant == 0) {
-      uint32_t res = (sign << 31) | 0x7f800000;
-      float f;
-      memcpy(&f, &res, 4);
-      return f;
-    } else {
-      uint32_t res = (sign << 31) | 0x7f800000 | (mant << 13);
-      float f;
-      memcpy(&f, &res, 4);
-      return f;
-    }
-  }
-
-  exp = exp + (127 - 15);
-  uint32_t res = (sign << 31) | (exp << 23) | (mant << 13);
-  float f;
-  memcpy(&f, &res, 4);
-  return f;
-}
-
-int32_t moksha_rt_string_length(MokshaString *str) {
+int32_t moksha_rt_string_len(char *str) {
   if (!str)
     return 0;
-  return (int32_t)str->length;
+  return (int32_t)internal_strlen(str);
 }
 
-char moksha_rt_string_at(MokshaString *str, int32_t index) {
-  if (!str || index < 0 || (uint64_t)index >= str->length) {
+char moksha_rt_string_char_at(char *str, int32_t index) {
+  if (!str)
+    moksha_rt_panic("Null string access");
+  // Simple bounds check
+  if (index < 0 || index >= (int32_t)internal_strlen(str)) {
     moksha_rt_panic("String index out of bounds");
   }
-  return str->chars[index];
+  return str[index];
 }
 
-// Dynamically unpacks the data pointer using the hidden ARC header
-void print(void *any_ptr, ...) {
+void print(MokshaAny *any_val, ...) {
   if (!sys_get_caps()->has_stdout)
     return;
 
-  if (!any_ptr) {
-    printf("null");
+  // Handle nulls safely
+  if (!any_val || !any_val->data || !any_val->vtable) {
+    acquire_print_lock();
+    sys_print("null");
+    release_print_lock();
     return;
   }
 
-  // Extract the true type from the ARC allocator's memory header!
-  MokshaHeader *header = ((MokshaHeader *)any_ptr) - 1;
-  uint32_t type_id = header->type_id;
-  void *data = any_ptr;
+  // 1. Resolve the string BEFORE taking the lock
+  char *str = any_val->vtable->to_string(any_val->data);
 
-  switch (type_id) {
-  case MOKSHA_TYPE_BOOL: {
-    bool val = *(bool *)data;
-    printf("%s", val ? "true" : "false");
-    break;
-  }
-  case MOKSHA_TYPE_I8: {
-    int8_t val = *(int8_t *)data;
-    printf("%d", val);
-    break;
-  }
-  case MOKSHA_TYPE_U8: {
-    uint8_t val = *(uint8_t *)data;
-    printf("%u", val);
-    break;
-  }
-  case MOKSHA_TYPE_I16: {
-    int16_t val = *(int16_t *)data;
-    printf("%d", val);
-    break;
-  }
-  case MOKSHA_TYPE_U16: {
-    uint16_t val = *(uint16_t *)data;
-    printf("%u", val);
-    break;
-  }
-  case MOKSHA_TYPE_I32: {
-    int32_t val = *(int32_t *)data;
-    printf("%d", val);
-    break;
-  }
-  case MOKSHA_TYPE_U32: {
-    uint32_t val = *(uint32_t *)data;
-    printf("%u", val);
-    break;
-  }
-  case MOKSHA_TYPE_I64: {
-    int64_t val = *(int64_t *)data;
-    printf("%" PRId64, val);
-    break;
-  }
-  case MOKSHA_TYPE_U64: {
-    uint64_t val = *(uint64_t *)data;
-    printf("%" PRIu64, val);
-    break;
-  }
-  case MOKSHA_TYPE_ISIZE: {
-    intptr_t val = *(intptr_t *)data;
-    printf("%" PRIdPTR, val);
-    break;
-  }
-  case MOKSHA_TYPE_USIZE: {
-    size_t val = *(size_t *)data;
-    printf("%zu", val);
-    break;
-  }
-  case MOKSHA_TYPE_F8:
-  case MOKSHA_TYPE_F16: {
-    uint16_t val = *(uint16_t *)data;
-    printf("%g", half_to_float(val));
-    break;
-  }
-  case MOKSHA_TYPE_F32: {
-    float val = *(float *)data;
-    printf("%g", val);
-    break;
-  }
-  case MOKSHA_TYPE_F64: {
-    double val = *(double *)data;
-    printf("%g", val);
-    break;
-  }
-  case MOKSHA_TYPE_DECIMAL: {
-    struct {
-      __int128_t mantissa;
-      int32_t scale;
-    } *dec = data;
-    moksha_print_decimal128(dec->mantissa, dec->scale);
-    break;
-  }
-  case MOKSHA_TYPE_STRING: {
-    char *str = *(char **)data;
-    if (str) {
-      printf("%s", str);
-    } else {
-      printf("null");
-    }
-    break;
-  }
-  case MOKSHA_TYPE_POINTER: {
-    // Unbox the actual memory address from the heap allocation
-    void *actual_ptr = *(void **)data;
-    if (actual_ptr == NULL) {
-      printf("null");
-    } else {
-      printf("%p", actual_ptr);
-    }
-    break;
-  }
-  case MOKSHA_TYPE_TABLE:
-  default: {
-    printf("<type_id: %d, ptr: %p>", type_id, data);
-    break;
-  }
-  }
-  fflush(stdout);
+  // 2. Lock and write
+  acquire_print_lock();
+  sys_print(str);
+  release_print_lock();
+
+  // 3. Cleanup after the lock is released
+  moksha_rt_release(str);
 }
 
-void println(void *any_ptr, ...) {
-  print(any_ptr);
-  printf("\n");
-  fflush(stdout);
+void println(MokshaAny *any_val, ...) {
+  if (!sys_get_caps()->has_stdout)
+    return;
+
+  // Handle nulls safely with a built-in newline
+  if (!any_val || !any_val->data || !any_val->vtable) {
+    acquire_print_lock();
+    sys_print("null\n");
+    release_print_lock();
+    return;
+  }
+
+  // 1. Resolve the string BEFORE taking the lock
+  char *str = any_val->vtable->to_string(any_val->data);
+
+  // 2. Lock, write the string, AND write the newline atomically!
+  acquire_print_lock();
+  sys_print(str);
+  sys_print("\n");
+  release_print_lock();
+
+  // 3. Cleanup after the lock is released
+  moksha_rt_release(str);
 }
 
 void moksha_rt_close(void *any_ptr) {
@@ -239,20 +325,20 @@ void moksha_rt_close(void *any_ptr) {
 // ============================================================================
 
 char *__moksha_string_concat(char *a, char *b) {
-  size_t len_a = a ? strlen(a) : 0;
-  size_t len_b = b ? strlen(b) : 0;
-  char *str = (char *)__moksha_alloc(len_a + len_b + 1);
+  size_t len_a = a ? internal_strlen(a) : 0;
+  size_t len_b = b ? internal_strlen(b) : 0;
+  char *str = (char *)moksha_rt_alloc(len_a + len_b + 1, MOKSHA_TYPE_STRING);
   if (len_a > 0)
-    strcpy(str, a);
+    internal_strcpy(str, a);
   if (len_b > 0)
-    strcpy(str + len_a, b);
+    internal_strcpy(str + len_a, b);
   str[len_a + len_b] = '\0';
   return str;
 }
 
 char *__moksha_template_join_strs(int32_t count, ...) {
   if (count <= 0) {
-    char *empty = (char *)__moksha_alloc(1);
+    char *empty = (char *)moksha_rt_alloc(1, MOKSHA_TYPE_STRING);
     empty[0] = '\0';
     return empty;
   }
@@ -263,18 +349,18 @@ char *__moksha_template_join_strs(int32_t count, ...) {
   for (int i = 0; i < count; i++) {
     char *str = va_arg(args, char *);
     if (str)
-      total_len += strlen(str);
+      total_len += internal_strlen(str);
   }
   va_end(args);
 
-  char *result = (char *)__moksha_alloc(total_len + 1);
+  char *result = (char *)moksha_rt_alloc(total_len + 1, MOKSHA_TYPE_STRING);
   result[0] = '\0';
 
   va_start(args, count);
   for (int i = 0; i < count; i++) {
     char *str = va_arg(args, char *);
     if (str)
-      strcat(result, str);
+      internal_strcat(result, str);
   }
   va_end(args);
 
@@ -286,127 +372,133 @@ char *__moksha_template_join_strs(int32_t count, ...) {
 // ============================================================================
 
 char *__moksha_bool_to_string(bool val) {
-  char *str = (char *)__moksha_alloc(6);
-  strcpy(str, val ? "true" : "false");
+  char *str = (char *)moksha_rt_alloc(6, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, val ? "true" : "false");
   return str;
 }
 
 char *__moksha_char_to_string(int8_t val) {
-  char buf[16];
-  int len = snprintf(buf, sizeof(buf), "%d", val);
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  char *str = (char *)moksha_rt_alloc(2, MOKSHA_TYPE_STRING);
+  str[0] = (char)val;
+  str[1] = '\0';
   return str;
 }
 
 char *__moksha_uchar_to_string(uint8_t val) {
-  char buf[16];
-  int len = snprintf(buf, sizeof(buf), "%u", val);
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  char buf[32];
+  int len = internal_utoa64(val, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
 char *__moksha_short_to_string(int16_t val) {
-  char buf[16];
-  int len = snprintf(buf, sizeof(buf), "%d", val);
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  char buf[32];
+  int len = internal_itoa64(val, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
 char *__moksha_ushort_to_string(uint16_t val) {
-  char buf[16];
-  int len = snprintf(buf, sizeof(buf), "%u", val);
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  char buf[32];
+  int len = internal_utoa64(val, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
 char *__moksha_int_to_string(int32_t val) {
   char buf[32];
-  int len = snprintf(buf, sizeof(buf), "%d", val);
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  int len = internal_itoa64(val, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
 char *__moksha_uint_to_string(uint32_t val) {
   char buf[32];
-  int len = snprintf(buf, sizeof(buf), "%u", val);
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  int len = internal_utoa64(val, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
 char *__moksha_long_to_string(int64_t val) {
   char buf[32];
-  int len = snprintf(buf, sizeof(buf), "%" PRId64, val);
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  int len = internal_itoa64(val, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
 char *__moksha_ulong_to_string(uint64_t val) {
   char buf[32];
-  int len = snprintf(buf, sizeof(buf), "%" PRIu64, val);
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  int len = internal_utoa64(val, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
 char *__moksha_isize_to_string(intptr_t val) {
   char buf[32];
-  int len = snprintf(buf, sizeof(buf), "%" PRIdPTR, val);
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  int len = internal_itoa64(val, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
 char *__moksha_usize_to_string(size_t val) {
   char buf[32];
-  int len = snprintf(buf, sizeof(buf), "%zu", val);
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  int len = internal_utoa64(val, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
-char *__moksha_quarter_to_string(uint16_t val) {
+char *__moksha_quarter_to_string(float val) {
   char buf[64];
-  int len = snprintf(buf, sizeof(buf), "%g", half_to_float(val));
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  int len = internal_ftoa(val, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
-char *__moksha_half_to_string(uint16_t val) {
+char *__moksha_half_to_string(float val) {
   char buf[64];
-  int len = snprintf(buf, sizeof(buf), "%g", half_to_float(val));
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  int len = internal_ftoa(val, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
 char *__moksha_float_to_string(float val) {
   char buf[64];
-  int len = snprintf(buf, sizeof(buf), "%g", val);
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  int len = internal_ftoa(val, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
 char *__moksha_double_to_string(double val) {
   char buf[64];
-  int len = snprintf(buf, sizeof(buf), "%g", val);
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
+  int len = internal_ftoa(val, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
-char *__moksha_decimal_to_string(__int128_t value, int32_t scale) {
+char *moksha_rt_dec_to_string(MokshaDecimal *dec) {
+  if (!dec)
+    return NULL;
+
+  // Extract the values locally
+  __int128_t value = dec->mantissa;
+  int32_t scale = dec->scale;
+
   if (value == 0) {
-    char *str = (char *)__moksha_alloc(2);
-    strcpy(str, "0");
+    char *str = (char *)moksha_rt_alloc(2, MOKSHA_TYPE_STRING);
+    internal_strcpy(str, "0");
     return str;
   }
 
@@ -438,33 +530,43 @@ char *__moksha_decimal_to_string(__int128_t value, int32_t scale) {
   const char *final_str = &buffer[pos + 1];
   size_t len = (sizeof(buffer) - 1) - (pos + 1);
 
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, final_str);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, final_str);
   return str;
 }
 
 char *__moksha_ptr_to_string(void *ptr) {
   char buf[32];
-  // Format the pointer as a hex string (e.g., 0x000002A5B)
-  int len = snprintf(buf, sizeof(buf), "%p", ptr);
-
-  // Allocate memory using Moksha's allocator
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, buf);
-
+  int len = internal_ptrtoa(ptr, buf);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, buf);
   return str;
 }
 
-char *__moksha_cstr_to_string(char *cstr) {
+char *__moksha_cstr_to_string(const char *cstr) {
   if (!cstr) {
-    char *str = (char *)__moksha_alloc(5);
-    strcpy(str, "null");
+    char *str = (char *)moksha_rt_alloc(5, MOKSHA_TYPE_STRING);
+    internal_strcpy(str, "null");
     return str;
   }
 
-  size_t len = strlen(cstr);
-  char *str = (char *)__moksha_alloc(len + 1);
-  strcpy(str, cstr);
-
+  size_t len = internal_strlen(cstr);
+  char *str = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  internal_strcpy(str, cstr);
   return str;
+}
+
+char *__moksha_half_to_string_abi(float val) {
+  return __moksha_float_to_string(val);
+}
+
+char *__moksha_quarter_to_string_abi(float val) {
+  return __moksha_float_to_string(val);
+}
+
+char *__moksha_any_to_string(MokshaAny *any_val) {
+  if (!any_val || !any_val->data || !any_val->vtable) {
+    return __moksha_cstr_to_string("null");
+  }
+  return any_val->vtable->to_string(any_val->data);
 }

@@ -1,0 +1,37 @@
+void test_static_catch_ordering() {
+    // INVARIANT: Rule A - The compiler MUST statically reject unreachable catch blocks.
+    try {
+        throw "A";
+    } catch (any e) {
+        println("Caught all");
+    } catch (string e) {
+        // [TypeError / CFGError]: Unreachable catch block. `any` dominates `string`.
+        println("Dead catch");
+    }
+}
+
+void test_exception_dominance() {
+    // INVARIANT: An exception thrown inside a `catch` or `finally` block
+    // overrides the current in-flight exception.
+    try {
+        try {
+            throw "A";
+        } catch (any e) {
+            throw "B"; // Rethrow/Override
+        }
+    } catch (string e) {
+        // [Success]: Must catch "B", not "A".
+        println(e);
+    }
+}
+
+void test_unwinding_crash() {
+    // INVARIANT: Throwing while already unwinding from an unhandled exception
+    // causes an immediate, unrecoverable runtime panic (double fault).
+    try {
+        throw "Fatal A";
+    } finally {
+        throw "Fatal B"; // Unwinding collides
+    }
+    // [RuntimePanic]: Double fault during stack unwind. Exit code > 0.
+}

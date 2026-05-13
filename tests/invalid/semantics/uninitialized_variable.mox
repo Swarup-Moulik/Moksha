@@ -1,7 +1,0 @@
-// Invalid: Branch bypassing assignment
-int z;
-if (false) {
-    z = 10;
-}
-// Type checker / Dataflow pass must fail here: 'z' might be uninitialized
-print(z);

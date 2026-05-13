@@ -1,0 +1,33 @@
+println("--- [E2E] exception_async_panic_interop.mox ---")
+
+async void yield() {}
+
+// 1. ASYNC EXCEPTION PROPAGATION
+async void failing_task() {
+    await yield();
+    throw "Async Failure";
+}
+
+async void test_async_throw() {
+    try {
+        await failing_task(); // Awaiting a failed task unboxes the exception and throws it here
+    } catch (string e) {
+        println("Caught async: " + e); // Expected: Caught async: Async Failure
+    }
+}
+
+// 2. THE PANIC BRIDGE
+void test_panic_vs_throw() {
+    try {
+        // Spec Decision: panics are FATAL unrecoverable errors (like OOM or OutOfBounds).
+        // They CANNOT be caught by a standard catch block.
+        // panic("Fatal Memory Corruption");
+        println("Panic bypassed");
+    } catch (any e) {
+        println("Should never reach here if panic() is called");
+    }
+}
+
+// Execution requires an async runner, but tests the syntax/semantics
+test_async_throw();
+test_panic_vs_throw();

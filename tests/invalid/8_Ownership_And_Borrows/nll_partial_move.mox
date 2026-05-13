@@ -1,0 +1,14 @@
+class Pair {
+    int x;
+    int y;
+}
+
+void test_partial() {
+    Pair p = new Pair();
+    *view int vx = &p.x;
+
+    p.y = 20;
+    p.x = 10; // This will now correctly ERROR!
+
+    print(vx); // Keeps the borrow alive across the mutations!
+}

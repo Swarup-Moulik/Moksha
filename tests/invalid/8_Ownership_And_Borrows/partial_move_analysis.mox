@@ -1,0 +1,21 @@
+struct Pair {
+    string x;
+    string y;
+}
+
+// 1. 'extern' prevents the InliningPass from deleting the function body!
+extern void use_pair(Pair p);
+
+void test_partial_move() {
+    Pair p;
+    p.x = "Hello";
+    p.y = "World";
+
+    string moved_x = p.x;
+
+    // 2. Actually use 'moved_x' so Dead Code Elimination doesn't sweep it
+    print(moved_x);
+
+    // 3. This will now survive to the MIR phase and force the Borrow Checker to throw!
+    use_pair(p);
+}

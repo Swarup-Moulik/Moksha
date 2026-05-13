@@ -1,0 +1,7 @@
+*mut int global_ptr = null;
+
+*mut int test_return_escape() {
+    int local_var = 10;
+    global_ptr = &local_var; // Error 1
+    return &local_var;       // Error 2
+}

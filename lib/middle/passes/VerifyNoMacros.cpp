@@ -183,17 +183,28 @@ private:
   }
 
   void visitTryCatchStmt(hir::TryCatchStmt &stmt) override {
-    dispatch(stmt.getTryBody());
-    if (stmt.getCatchVar())
-      dispatch(stmt.getCatchVar());
-    dispatch(stmt.getCatchBody());
-    dispatch(stmt.getFinallyBody());
+    if (hasMacro)
+      return;
+
+    if (stmt.getTryBlock()) {
+      dispatch(stmt.getTryBlock());
+    }
+
+    // Iterate through all the catch clauses
+    for (const auto &clause : stmt.getCatches()) {
+      if (clause.body) {
+        dispatch(clause.body.get());
+      }
+    }
+
+    if (stmt.getFinallyBlock()) {
+      dispatch(stmt.getFinallyBlock());
+    }
   }
 
   // Leaves
   void visitBreakStmt(hir::BreakStmt &) override {}
   void visitContinueStmt(hir::ContinueStmt &) override {}
-  void visitAsmStmt(hir::HIRAsmStmt &) override {}
   void visitThrowStmt(hir::HIRThrowStmt &) override {}
 
   // --- Expression Traversal ---
@@ -297,11 +308,36 @@ private:
     dispatch(expr.getIterable());
   }
 
+  void visitSharedExpr(hir::HIRSharedExpr &expr) override {
+    if (hasMacro)
+      return;
+    dispatch(expr.getExpr());
+  }
+
   void visitInputExpr(hir::HIRInputExpr &expr) override {
     if (hasMacro)
       return;
     if (expr.getPrompt()) {
       dispatch(expr.getPrompt());
+    }
+  }
+
+  void visitAsmExpr(hir::HIRAsmExpr &expr) override {
+    if (hasMacro)
+      return;
+
+    // Traverse all the new structured operand vectors
+    for (auto &op : expr.getOutputs()) {
+      if (op.expr)
+        dispatch(op.expr.get());
+    }
+    for (auto &op : expr.getInputs()) {
+      if (op.expr)
+        dispatch(op.expr.get());
+    }
+    for (auto &op : expr.getInouts()) {
+      if (op.expr)
+        dispatch(op.expr.get());
     }
   }
 

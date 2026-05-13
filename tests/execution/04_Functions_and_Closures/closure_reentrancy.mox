@@ -1,0 +1,20 @@
+println("--- [E2E] closure_reentrancy.mox ---")
+
+void test_reentrancy() {
+    // Self-referencing closure
+    closure(int) -> void countdown = (int n) => { return; };
+
+    countdown = &(int n) => {
+        if (n <= 0) {
+            println("Liftoff!");
+            return;
+        }
+        print(string(n) + "... ");
+        countdown(n - 1); // Re-entrant call
+    };
+
+    countdown(3);
+}
+
+test_reentrancy();
+// Expected: 3... 2... 1... Liftoff!

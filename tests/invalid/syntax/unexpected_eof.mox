@@ -1,4 +1,0 @@
-// Syntax Error: Missing closing brace
-if (true) {
-   int x = 10
-// Error: Expected '}'

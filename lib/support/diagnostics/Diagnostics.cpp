@@ -103,8 +103,10 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
     return "Non-void function may end without returning a value";
   case DiagID::err_invalid_access:
     return "Invalid access to member";
-    case DiagID::err_argument_count_mismatch:
-        return "Function argument count mismatch: expected vs provided";
+  case DiagID::err_member_collision:
+    return "Member collision";
+  case DiagID::err_argument_count_mismatch:
+    return "Function argument count mismatch: expected vs provided";
   case DiagID::warn_implicit_bool_conv:
     return "Implicit conversion to boolean";
   case DiagID::err_array_length:
@@ -147,10 +149,10 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
     return "Cannot mutate variable while it is actively borrowed";
   case DiagID::err_borrow_escape:
     return "Borrow escape detected";
-    case DiagID::err_use_after_move:
-        return "Use of moved value";
-      case DiagID::err_partial_move:
-        return "Use of partially moved value";
+  case DiagID::err_use_after_move:
+    return "Use of moved value";
+  case DiagID::err_partial_move:
+    return "Use of partially moved value";
   case DiagID::note_borrow_occurred_here:
     return "Borrow occurred here";
 
@@ -161,6 +163,17 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
     return "Feature not yet implemented (Warning)";
   case DiagID::warn_unused_variable:
     return "Variable declared but never used";
+  case DiagID::err_missing_builtin:
+    return "Missing required compiler builtin or runtime function";
+
+  case DiagID::err_await_in_sync_lock:
+    return "Cannot use 'await' inside a synchronous 'lock' block (causes OS "
+           "thread deadlock)";
+  case DiagID::err_thread_in_async_lock:
+    return "Cannot spawn an OS thread inside an 'async lock' (causes scheduler "
+           "starvation)";
+  case DiagID::err_async_lock_target:
+    return "Target of 'async lock' must be an 'AsyncMutex'";
 
   // Notes
   case DiagID::note_previous_definition:

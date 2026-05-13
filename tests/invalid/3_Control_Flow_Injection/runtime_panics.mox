@@ -1,0 +1,28 @@
+println("--- [E2E] runtime_panics.mox ---");
+
+void trigger_runtime_panics() {
+    // EXPECTED TRAP: Index out of bounds.
+    int[] dynArr = [10, 20, 30];
+    // println(dynArr[-1]);
+    // println(dynArr[100]);s
+    // dynArr[5] = 99;
+
+    // EXPECTED TRAP: Inner array out of bounds.
+    int[][] dynamic2D = [[1, 2], [3]];
+    println(dynamic2D[1][1]);
+
+    // EXPECTED TRAP: Null pointer dereference.
+    int?[] null_arr = null;
+    // println(null_arr[0]);
+
+    // EXPECTED TRAP: Key not found in table.
+    table<string, int> scores = {"Alice": 100};
+    println(scores["Unknown"]);
+
+    // EXPECTED TRAP: Cannot spread a null array.
+    int?[] safe_but_empty = null;
+    // int?[] crashed_spread = [...safe_but_empty];
+}
+
+// Uncomment the lines inside the function one by one to verify your traps.
+trigger_runtime_panics();

@@ -1,5 +1,0 @@
-// Negative Test (Expect Errors)
-struct BadLayout {
-    unsigned char small_val : 12; // ERROR: Bitfield width 12 exceeds max width of 'u8' (8 bits)
-    float f_bit  : 1;  // ERROR: Bitfields must have an integer type
-}

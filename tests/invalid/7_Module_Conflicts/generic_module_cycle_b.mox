@@ -1,0 +1,12 @@
+from "generic_module_cycle_a" import { Box }
+
+generic Node<T> {
+    // ERROR: Mutually recursive generic instantiation.
+    // The type solver attempts to monomorphize Node<T>, which requires Box<T>,
+    // which requires Node<T>. This results in Box<Node<Box<Node<...>>>>
+    public Box<T> next;
+}
+
+void trigger() {
+    Node<int> n = new Node<int>(); // Initiates the infinite solver loop
+}

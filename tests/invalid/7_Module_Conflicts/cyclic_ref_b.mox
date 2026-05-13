@@ -1,0 +1,5 @@
+from "cyclic_module_b" import { RefA }
+
+ref class RefB {
+    public RefA a = new RefA();
+}

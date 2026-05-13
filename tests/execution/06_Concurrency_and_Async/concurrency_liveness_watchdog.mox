@@ -1,0 +1,30 @@
+println("--- [E2E] concurrency_liveness_watchdog.mox ---");
+
+// Pass the channel in so we can control it from the outside
+async void risky_deadlock_prone_task(Channel<int> ch) {
+    // Simulate a complex task that MIGHT hang if scheduler bugs exist
+    await ch.recv();
+}
+
+async void test_system_liveness() {
+    Channel<int> ch = new Channel<int>(1);
+
+    int result = await select(
+        async () => { await risky_deadlock_prone_task(ch); return 1; }(),
+        async () => { await sleep(500); return -1; }() // Watchdog
+    );
+
+    if (result == -1) {
+        println("LIVENESS GUARD: Task deadlocked and was successfully caught by watchdog.");
+
+        // [THE FIX]
+        // Resolve the orphaned task's promise so it can resume, finish,
+        // and safely decrement its `active_tasks` counter.
+        await ch.send(0);
+
+    } else {
+        println("Task completed.");
+    }
+}
+
+await test_system_liveness();

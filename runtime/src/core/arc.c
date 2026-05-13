@@ -9,16 +9,45 @@ extern void moksha_rt_panic(const char *message);
 extern void *moksha_mem_alloc(size_t size);
 extern void moksha_mem_free(void *ptr);
 
-// Fast heuristic to detect if a pointer lives on the stack.
-// Stack memory is kept safe from ARC manipulation and free().
+#if defined(__MOKSHA_BAREMETAL__)
+// On bare metal, the linker script defines the exact start and end of the
+// stack. e.g., in your linker script: _sstack = .; . = . + 0x4000; /* 16KB
+// Stack */ _estack = .;
+extern char _sstack[];
+extern char _estack[];
+
 bool is_stack_ptr(void *ptr) {
-  void *local_var = NULL;
-  uintptr_t local_addr = (uintptr_t)&local_var;
-  uintptr_t ptr_addr = (uintptr_t)ptr;
-  uintptr_t diff =
-      ptr_addr > local_addr ? ptr_addr - local_addr : local_addr - ptr_addr;
-  return diff < 1 * 1024 * 1024;
+  char *p = (char *)ptr;
+  // Stack typically grows downwards, so _sstack is the lowest address
+  // and _estack is the highest address.
+  return (p >= _sstack && p <= _estack);
 }
+
+#else
+// On a Host OS (Windows/Linux/Darwin), dynamic stacks and coroutines
+// make absolute address bounds impossible.
+// FIX: We use a 1MB proximity heuristic. If the pointer is within 1MB
+// of the current stack frame, we assume it is a stack allocation.
+#include <stddef.h> // for ptrdiff_t
+
+bool is_stack_ptr(void *ptr) {
+  if (!ptr)
+    return false;
+
+  // 1. Take the address of a local variable to get the current stack pointer
+  int local_sp_marker = 0;
+  char *current_sp = (char *)&local_sp_marker;
+  char *target_ptr = (char *)ptr;
+
+  // 2. Calculate the absolute distance between the pointer and our current
+  // stack frame
+  ptrdiff_t distance = (current_sp > target_ptr) ? (current_sp - target_ptr)
+                                                 : (target_ptr - current_sp);
+
+  // 3. Return true if it is within a 1MB (1 * 1024 * 1024) threshold
+  return distance < (1024 * 1024);
+}
+#endif
 
 void *moksha_rt_alloc(size_t payload_size, uint32_t type_id) {
   MokshaHeader *header =
@@ -29,7 +58,15 @@ void *moksha_rt_alloc(size_t payload_size, uint32_t type_id) {
   header->ref_count = 1;
   header->weak_count = 1;
   header->type_id = type_id;
-  return (void *)(header + 1);
+
+  void *payload = (void *)(header + 1);
+
+  char *p = (char *)payload;
+  for (size_t i = 0; i < payload_size; i++) {
+    p[i] = 0;
+  }
+
+  return payload;
 }
 
 void moksha_rt_retain(void *ptr) {
@@ -46,8 +83,14 @@ void moksha_rt_retain(void *ptr) {
 }
 
 void moksha_rt_release_with_dtor(void *ptr, void (*dtor)(void *)) {
-  if (!ptr || is_stack_ptr(ptr))
+  if (!ptr)
     return;
+
+  if (is_stack_ptr(ptr)) {
+    if (dtor)
+      dtor(ptr);
+    return;
+  }
 
   MokshaHeader *header = ((MokshaHeader *)ptr) - 1;
   uint32_t new_strong;
@@ -67,6 +110,32 @@ void moksha_rt_release_with_dtor(void *ptr, void (*dtor)(void *)) {
     if (dtor)
       dtor(ptr);
 
+    // Built-in Type Destructors
+    if (header->type_id == MOKSHA_TYPE_PROMISE) {
+      typedef struct {
+        void *coro_handle;
+        bool is_completed;
+        void *result_data;
+        void *waiting_coro;
+        bool is_rejected;
+        bool was_awaited;
+      } PromiseLayout;
+
+      PromiseLayout *prom = (PromiseLayout *)ptr;
+
+      // THE TICKING TIMEBOMB DETONATOR
+      if (prom->is_rejected && !prom->was_awaited) {
+        moksha_rt_panic("Unhandled Promise Rejection: An async function threw "
+                        "an exception that was never awaited!");
+      }
+    } else if (header->type_id == MOKSHA_TYPE_ARRAY) {
+    } else if (header->type_id == MOKSHA_TYPE_TABLE) {
+      // FIXED: Call an external cleanup function for the Map
+      extern void moksha_rt_map_free_internal(void *map_ptr);
+      moksha_rt_map_free_internal(ptr);
+    }
+
+    // --- Final Header Cleanup ---
     uint32_t new_weak;
     if (sys_get_caps()->has_threads) {
       new_weak = __atomic_sub_fetch(&header->weak_count, 1, __ATOMIC_ACQ_REL);
@@ -86,7 +155,9 @@ void moksha_rt_release(void *ptr) { moksha_rt_release_with_dtor(ptr, NULL); }
 
 // This ensures that raw allocations requested by the compiler
 // are compatible with the retain/release system.
-void *__moksha_alloc(uint32_t size) { return moksha_rt_alloc((size_t)size, 0); }
+void *__moksha_alloc(uint32_t size, uint32_t type_id) {
+  return moksha_rt_alloc((size_t)size, type_id);
+}
 
 void __moksha_free(void *ptr) {
   // Instead of raw free, use release to handle the header
@@ -167,4 +238,17 @@ void *moksha_rt_load_weak(void **src) {
       return obj;
     }
   }
+}
+
+int32_t __moksha_get_type(void *ptr) {
+  // If a null pointer somehow slips through, default to the 'Any/Pointer' type
+  // (19)
+  if (!ptr) {
+    return 19;
+  }
+
+  // Step backwards from the payload memory address to read the hidden header
+  MokshaHeader *header = ((MokshaHeader *)ptr) - 1;
+
+  return (int32_t)header->type_id;
 }

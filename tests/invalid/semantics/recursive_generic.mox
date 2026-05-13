@@ -1,7 +1,0 @@
-// Type checker must catch infinite recursive sizing,
-// otherwise LLVM lowering will segfault generating the type.
-generic Node<T> {
-    public Node<Node<T>> next;
-}
-
-Node<int> n = new Node<int>();

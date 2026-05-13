@@ -1,0 +1,32 @@
+println("--- [E2E] stress_channel_teardown.mox ---")
+
+async void test_channel_semantics() {
+    Channel<int> ch = new Channel<int>(2);
+
+    // 1. Send data
+    await ch.send(1);
+
+    // 2. Close the channel
+    ch.close();
+
+    // 3. Receive AFTER close (must drain remaining items)
+    int val = await ch.recv();
+    println(val); // Expected: 1
+
+    // 4. Receive on EMPTY CLOSED channel
+    try {
+        await ch.recv();
+    } catch (ChannelClosedException e) {
+        println("Recv blocked safely"); // Expected: Recv blocked safely
+    }
+
+    // 5. Send on CLOSED channel
+    try {
+        await ch.send(2);
+    } catch (ChannelClosedException e) {
+        println("Send blocked safely"); // Expected: Send blocked safely
+    }
+}
+
+// --- EXECUTION ---
+await test_channel_semantics()

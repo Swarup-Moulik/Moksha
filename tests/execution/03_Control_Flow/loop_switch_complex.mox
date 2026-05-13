@@ -1,0 +1,46 @@
+println("--- [E2E] loop_switch_complex.mox ---")
+
+void test_nested_break() {
+    int count = 0;
+    while (count < 2) {
+        int inner = 0;
+        while (inner < 10) {
+            if (inner == 1) break; // Must only exit inner loop
+            inner = inner + 1;
+        }
+        count = count + 1;
+    }
+    println(count); // Expected: 2
+}
+
+void test_break_in_switch_in_loop() {
+    int i = 0;
+    int hits = 0;
+    while (i < 2) {
+        i = i + 1;
+        switch (i) {
+            case 1:
+                break; // Should exit Switch, NOT the While loop
+            case 2:
+                hits = hits + 1;
+                break;
+        }
+        hits = hits + 1;
+    }
+    println(hits); // Expected: 3 (1 from case 1 fall-out, 2 from case 2)
+}
+
+void test_switch_fallthrough() {
+    int x = 1;
+    switch (x) {
+        case 1:
+            println("Caught 1");
+            // Should NOT fall through to case 2 automatically
+        case 2:
+            println("Caught 2");
+    }
+}
+
+test_nested_break();
+test_break_in_switch_in_loop();
+test_switch_fallthrough();

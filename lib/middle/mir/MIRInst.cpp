@@ -82,6 +82,10 @@ static void printOperand(llvm::raw_ostream &os, const MIRValue *val) {
   case ValueKind::ConstantUnion:
   case ValueKind::ConstantBitCast:
   case ValueKind::ConstantSlice:
+  case ValueKind::ConstantUpcast:
+  case ValueKind::ConstantAnyCast:
+  case ValueKind::ConstantArrayToSlice:
+  case ValueKind::ConstantSliceToArray:
     val->dump(os);
     break;
   case ValueKind::Function:
@@ -177,6 +181,8 @@ static std::string getOpcodeName(Opcode op) {
     return "inttoptr";
   case Opcode::AnyCast:
     return "anycast";
+  case Opcode::Upcast:
+    return "upcast";
   case Opcode::ArrayToSlice:
     return "array_to_slice";
   case Opcode::SliceToArray:
@@ -375,6 +381,46 @@ void ConstantUnion::dump(llvm::raw_ostream &os) const {
 
 void ConstantBitCast::dump(llvm::raw_ostream &os) const {
   os << "bitcast (";
+  printType(os, value->getType());
+  os << " ";
+  printOperand(os, value);
+  os << " to ";
+  printType(os, getType());
+  os << ")";
+}
+
+void ConstantUpcast::dump(llvm::raw_ostream &os) const {
+  os << "upcast (";
+  printType(os, value->getType());
+  os << " ";
+  printOperand(os, value);
+  os << " to ";
+  printType(os, getType());
+  os << ")";
+}
+
+void ConstantAnyCast::dump(llvm::raw_ostream &os) const {
+  os << "anycast (";
+  printType(os, value->getType());
+  os << " ";
+  printOperand(os, value);
+  os << " to ";
+  printType(os, getType());
+  os << ")";
+}
+
+void ConstantArrayToSlice::dump(llvm::raw_ostream &os) const {
+  os << "array_to_slice (";
+  printType(os, value->getType());
+  os << " ";
+  printOperand(os, value);
+  os << " to ";
+  printType(os, getType());
+  os << ")";
+}
+
+void ConstantSliceToArray::dump(llvm::raw_ostream &os) const {
+  os << "slice_to_array (";
   printType(os, value->getType());
   os << " ";
   printOperand(os, value);
@@ -706,6 +752,7 @@ CastInst::CastInst(Opcode op, MIRValue *value, const hir::HIRType *destType,
 
 void CastInst::dump(llvm::raw_ostream &os) const {
   os << "%" << getName() << " = ";
+  os << getOpcodeName(opcode) << " ";
   printType(os, value->getType());
   os << " ";
   printOperand(os, value);
@@ -932,13 +979,22 @@ void InvokeInst::replaceOperand(MIRValue *oldVal, MIRValue *newVal) {
     unwindDest = static_cast<MIRBlock *>(newVal);
 }
 
-LandingPadInst::LandingPadInst(const hir::HIRType *catchType, std::string name,
+LandingPadInst::LandingPadInst(const hir::HIRType *resultType, std::string name,
                                SourceLocation loc)
-    : MIRInst(Opcode::LandingPad, catchType, std::move(name), loc) {}
+    : MIRInst(Opcode::LandingPad, resultType, std::move(name), loc) {}
 
 void LandingPadInst::dump(llvm::raw_ostream &os) const {
   os << "%" << getName() << " = landingpad ";
   printType(os, getType());
+
+  if (catchTypes.empty()) {
+    os << " cleanup"; // If no catches, it's just a cleanup pad
+  } else {
+    for (const auto *ct : catchTypes) {
+      os << "\n          catch ";
+      printType(os, ct);
+    }
+  }
 }
 
 ResumeInst::ResumeInst(MIRValue *exception, SourceLocation loc)
@@ -980,17 +1036,25 @@ void ThrowInst::replaceOperand(MIRValue *oldVal, MIRValue *newVal) {
 // ============================================================================
 
 InlineAsmInst::InlineAsmInst(std::string asmStr, std::string constraints,
-                             std::vector<MIRValue *> &&args,
+                             std::vector<MIRValue *> &&args, bool isVolatile,
                              const hir::HIRType *retType, SourceLocation loc)
     : MIRInst(Opcode::InlineAsm, retType, "", loc),
       asmString(std::move(asmStr)), constraints(std::move(constraints)),
-      args(std::move(args)) {}
+      args(std::move(args)), isVolatile(isVolatile) {}
 
 void InlineAsmInst::dump(llvm::raw_ostream &os) const {
-  if (getType()) {
+  if (getType() && getType()->getKind() != hir::TypeKind::Void) {
     os << "%" << getName() << " = ";
   }
-  os << "call asm \"" << asmString << "\" (" << constraints << ")(";
+  os << "call ";
+  printType(os, getType());
+  os << " asm ";
+
+  if (isVolatile) {
+    os << "sideeffect ";
+  }
+
+  os << "\"" << asmString << "\" (\"" << constraints << "\")(";
   for (size_t i = 0; i < args.size(); ++i) {
     if (i > 0)
       os << ", ";
@@ -1068,6 +1132,13 @@ void MakeClosureInst::dump(llvm::raw_ostream &os) const {
     printOperand(os, captures[i]);
   }
   os << "]";
+}
+
+void MakeSharedInst::dump(llvm::raw_ostream &os) const {
+  os << "%" << getName() << " = make_shared ";
+  printType(os, operand->getType());
+  os << " ";
+  printOperand(os, operand);
 }
 
 void SpawnInst::dump(llvm::raw_ostream &os) const {

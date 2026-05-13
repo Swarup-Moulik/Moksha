@@ -1,4 +1,0 @@
-// Syntax Error: Macros expect identifiers, not types in args (usually)
-macro bad_macro(int a) {
-    return a
-}

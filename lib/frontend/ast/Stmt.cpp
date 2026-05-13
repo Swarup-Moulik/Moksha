@@ -34,7 +34,6 @@ void UnsafeBlockStmt::accept(ASTVisitor &v) const {
 }
 void TryCatchStmt::accept(ASTVisitor &v) const { v.visitTryCatchStmt(this); }
 void ThrowStmt::accept(ASTVisitor &v) const { v.visitThrowStmt(this); }
-void AsmStmt::accept(ASTVisitor &v) const { v.visitAsmStmt(this); }
 void LockStmt::accept(ASTVisitor &v) const { v.visitLockStmt(this); }
 
 // --- Helper Struct Clones ---
@@ -67,6 +66,7 @@ std::unique_ptr<Decl> VariableDecl::clone() const {
   cloned->setUsed(isUsedVar());
   cloned->setBitWidth(getBitWidth());
   cloned->setThreadLocal(isThreadLocalVar());
+  cloned->setWeakVar(isWeakVar());
   cloned->setBitfield(this->getBitWidth());
   cloned->setBitOffset(this->getBitOffset());
   cloned->setPhysicalIndex(this->getPhysicalIndex());
@@ -216,25 +216,15 @@ std::unique_ptr<Stmt> UnsafeBlockStmt::clone() const {
   return std::make_unique<UnsafeBlockStmt>(std::move(clonedStmts), loc);
 }
 
-std::unique_ptr<Stmt> TryCatchStmt::clone() const {
-  return std::make_unique<TryCatchStmt>(
-      tryBody->clone(), catchVar ? catchVar->clone() : nullptr,
-      catchBody ? catchBody->clone() : nullptr,
-      finallyBody ? finallyBody->clone() : nullptr, loc);
-}
-
 std::unique_ptr<Stmt> ThrowStmt::clone() const {
   return std::make_unique<ThrowStmt>(expression ? expression->clone() : nullptr,
                                      loc);
 }
 
-std::unique_ptr<Stmt> AsmStmt::clone() const {
-  return std::make_unique<AsmStmt>(getAssemblyStr(), getConstraints(), loc);
-}
-
 std::unique_ptr<Stmt> LockStmt::clone() const {
   return std::make_unique<LockStmt>(target ? target->clone() : nullptr,
-                                    body ? body->clone() : nullptr, loc);
+                                    body ? body->clone() : nullptr, isAsync,
+                                    loc);
 }
 
 std::unique_ptr<Expr> InputExpr::clone() const {

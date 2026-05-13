@@ -1,0 +1,101 @@
+println("--- [E2E] float_cast_torture.mox ---");
+
+void run_float_conversions() {
+    // ==========================================
+    // 0. Base Variable Initializations
+    // ==========================================
+    // Using values that can be safely represented across precisions
+    // Quarter (f8) is highly restricted, so we use a small clean fraction.
+    double dbl_base = 42.25;
+    float flt_base = 10.5;
+    half hlf_base = cast<half>(3.125);
+    quarter qrt_base = quarter(2.0);
+    decimal<6, 2> dec_base = 100.50d;
+
+    println(`Base Double:  ${dbl_base}`);
+    println(`Base Float:   ${flt_base}`);
+    println(`Base Half:    ${hlf_base}`);
+    println(`Base Quarter: ${qrt_base}`);
+    println(`Base Decimal: ${dec_base}`);
+    println("------------------------------------");
+
+    // ==========================================
+    // 1. Double (f64) Downcasting
+    // ==========================================
+    float d2f = float(dbl_base);                  // Functional
+    half d2h = cast<half>(dbl_base);              // Angle-bracket
+    quarter d2q = quarter(dbl_base);              // Functional
+    decimal<6, 2> d2dec = cast<decimal<6, 2>>(dbl_base);
+
+    println(`Double -> Float:   ${d2f}`);
+    println(`Double -> Half:    ${d2h}`);
+    println(`Double -> Quarter: ${d2q}`);
+    println(`Double -> Decimal: ${d2dec}`);
+    println("------------------------------------");
+
+    // ==========================================
+    // 2. Float (f32) Upcasting & Downcasting
+    // ==========================================
+    double f2d = cast<double>(flt_base);          // Angle-bracket
+    half f2h = half(flt_base);                    // Functional
+    quarter f2q = cast<quarter>(flt_base);        // Angle-bracket
+    decimal<5, 2> f2dec = cast<decimal<5, 2>>(flt_base);
+
+    println(`Float -> Double:   ${f2d}`);
+    println(`Float -> Half:     ${f2h}`);
+    println(`Float -> Quarter:  ${f2q}`);
+    println(`Float -> Decimal:  ${f2dec}`);
+    println("------------------------------------");
+
+    // ==========================================
+    // 3. Half (f16) Upcasting & Downcasting
+    // ==========================================
+    double h2d = double(hlf_base);                // Functional
+    float h2f = cast<float>(hlf_base);            // Angle-bracket
+    quarter h2q = quarter(hlf_base);              // Functional
+    decimal<4, 3> h2dec = cast<decimal<4, 3>>(hlf_base);
+
+    println(`Half -> Double:    ${h2d}`);
+    println(`Half -> Float:     ${h2f}`);
+    println(`Half -> Quarter:   ${h2q}`);
+    println(`Half -> Decimal:   ${h2dec}`);
+    println("------------------------------------");
+
+    // ==========================================
+    // 4. Quarter (f8) Upcasting
+    // ==========================================
+    double q2d = cast<double>(qrt_base);          // Angle-bracket
+    float q2f = float(qrt_base);                  // Functional
+    half q2h = cast<half>(qrt_base);              // Angle-bracket
+    decimal<4, 1> q2dec = cast<decimal<4, 1>>(qrt_base);
+
+    println(`Quarter -> Double: ${q2d}`);
+    println(`Quarter -> Float:  ${q2f}`);
+    println(`Quarter -> Half:   ${q2h}`);
+    println(`Quarter -> Decimal:${q2dec}`);
+    println("------------------------------------");
+
+    // ==========================================
+    // 5. Decimal<p,s> to Standard IEEE Floats
+    // ==========================================
+    double dec2d = double(dec_base);              // Functional
+    float dec2f = cast<float>(dec_base);          // Angle-bracket
+    half dec2h = half(dec_base);                  // Functional
+    quarter dec2q = cast<quarter>(dec_base);      // Angle-bracket
+
+    println(`Decimal -> Double: ${dec2d}`);
+    println(`Decimal -> Float:  ${dec2f}`);
+    println(`Decimal -> Half:   ${dec2h}`);
+    println(`Decimal -> Quarter:${dec2q}`);
+    println("------------------------------------");
+
+    // ==========================================
+    // 6. Chain Casting (Stress Test)
+    // ==========================================
+    // Parses functional cast inside an angle-bracket cast, inside a functional cast.
+    quarter chain_val = quarter(cast<half>(float(cast<double>(dec_base))));
+    println(`Chain Cast (Dec -> f64 -> f32 -> f16 -> f8) [Expected 96]: ${chain_val}`);
+}
+
+
+run_float_conversions();

@@ -52,6 +52,11 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
         defUse[gep->getPointer()].push_back(inst);
       } else if (auto *cast = llvm::dyn_cast<CastInst>(inst)) {
         defUse[cast->getValue()].push_back(inst);
+      } else if (auto *ins = llvm::dyn_cast<InsertValueInst>(inst)) {
+        defUse[ins->getAggregate()].push_back(inst);
+        defUse[ins->getValue()].push_back(inst);
+      } else if (auto *ext = llvm::dyn_cast<ExtractValueInst>(inst)) {
+        defUse[ext->getAggregate()].push_back(inst);
       } else if (auto *call = llvm::dyn_cast<CallInst>(inst)) {
         for (auto *arg : call->getArgs())
           defUse[arg].push_back(inst);
@@ -59,8 +64,35 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
         // Track Heap Allocations
         if (call->getCallee() &&
             call->getCallee()->getName() == "__moksha_alloc") {
-          allocations.push_back(call);
+          bool isArray = false;
+          if (call->getArgs().size() > 1) {
+            if (auto *typeId =
+                    llvm::dyn_cast_or_null<ConstantInt>(call->getArgs()[1])) {
+              if (typeId->getValue() == 3) {
+                isArray = true;
+              }
+            }
+          }
+
+          if (!isArray) {
+            allocations.push_back(call);
+          }
         }
+      } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(inst)) {
+        for (auto *arg : invoke->getArgs())
+          defUse[arg].push_back(inst);
+      } else if (auto *thr = llvm::dyn_cast<ThrowInst>(inst)) {
+        if (thr->getException())
+          defUse[thr->getException()].push_back(inst);
+      } else if (auto *res = llvm::dyn_cast<ResumeInst>(inst)) {
+        if (res->getException())
+          defUse[res->getException()].push_back(inst);
+      } else if (auto *asmInst = llvm::dyn_cast<InlineAsmInst>(inst)) {
+        for (auto *arg : asmInst->getArgs())
+          defUse[arg].push_back(inst);
+      } else if (auto *storeWk = llvm::dyn_cast<StoreWeakInst>(inst)) {
+        defUse[storeWk->getValue()].push_back(inst);
+        defUse[storeWk->getPointer()].push_back(inst);
       } else if (auto *arc = llvm::dyn_cast<ARCInst>(inst)) {
         defUse[arc->getObject()].push_back(inst);
       } else if (auto *ret = llvm::dyn_cast<ReturnInst>(inst)) {
@@ -104,7 +136,8 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
 
         // Trace through any instruction that aliases the memory
         if (llvm::isa<CastInst>(curr) || llvm::isa<GetElementPtrInst>(curr) ||
-            llvm::isa<StoreInst>(curr) || llvm::isa<LoadInst>(curr)) {
+            llvm::isa<StoreInst>(curr) || llvm::isa<InsertValueInst>(curr) ||
+            llvm::isa<ExtractValueInst>(curr)) {
           for (auto *nextUser : defUse[curr]) {
             worklist.push_back(nextUser);
           }
@@ -179,14 +212,20 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
                         castInsts.end());
       }
 
-      std::vector<CallInst *> freeCalls; // Track ALL frees
+      std::vector<MIRInst *> freeCalls;
+
       for (auto *bc : bitcasts) {
         if (defUse.count(bc)) {
           for (auto *user : defUse[bc]) {
             if (auto *call = llvm::dyn_cast<CallInst>(user)) {
               if (call->getCallee() &&
                   call->getCallee()->getName() == "__moksha_free") {
-                freeCalls.push_back(call); // Don't break!
+                freeCalls.push_back(call);
+              }
+            } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(user)) {
+              if (invoke->getCallee() &&
+                  invoke->getCallee()->getName() == "__moksha_free") {
+                freeCalls.push_back(invoke);
               }
             }
           }
@@ -201,12 +240,17 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
                 call->getCallee()->getName() == "__moksha_free") {
               freeCalls.push_back(call);
             }
+          } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(user)) {
+            if (invoke->getCallee() &&
+                invoke->getCallee()->getName() == "__moksha_free") {
+              freeCalls.push_back(invoke);
+            }
           }
         }
       }
 
       // Erase all found frees
-      for (CallInst *freeCall : freeCalls) {
+      for (MIRInst *freeCall : freeCalls) {
         auto &freeInsts = freeCall->getParent()->getInstructionsMut();
         freeInsts.erase(std::remove_if(freeInsts.begin(), freeInsts.end(),
                                        [&](const std::unique_ptr<MIRInst> &i) {
@@ -253,14 +297,15 @@ bool EscapeAnalysisPass::doesEscape(
         if (store->getValue() == curr)
           return true;
       } else if (auto *call = llvm::dyn_cast<CallInst>(user)) {
-        // Passing the pointer to any external/un-inlined function escapes it
         if (call->getCallee() &&
-            call->getCallee()->getName() != "__moksha_alloc") {
+            call->getCallee()->getName() != "__moksha_alloc" &&
+            call->getCallee()->getName() != "__moksha_free") {
           return true;
         }
       } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(user)) {
         if (invoke->getCallee() &&
-            invoke->getCallee()->getName() != "__moksha_alloc") {
+            invoke->getCallee()->getName() != "__moksha_alloc" &&
+            invoke->getCallee()->getName() != "__moksha_free") {
           return true;
         }
       } else if (llvm::isa<ReturnInst>(user)) {
@@ -273,14 +318,23 @@ bool EscapeAnalysisPass::doesEscape(
         if (ext->getIndex() == 0) {
           worklist.push_back(ext);
         }
+      } else if (auto *ins = llvm::dyn_cast<InsertValueInst>(user)) {
+        worklist.push_back(
+            ins); // Trace the aggregate the pointer was inserted into
       } else if (auto *makeClosure = llvm::dyn_cast<MakeClosureInst>(user)) {
         worklist.push_back(makeClosure); // Trace through the closure object
+      } else if (llvm::isa<MakeSharedInst>(user)) {
+        return true; // Sharing a reference escapes the allocation to the heap!
       } else if (llvm::isa<SpawnInst>(user)) {
         return true; // Spawning a thread escapes everything inside it
+      } else {
+        // CONSERVATIVE FALLBACK: If we don't recognize the instruction,
+        // we MUST assume the pointer escapes to memory.
+        return true;
       }
-      // LoadInst and ARCInst are safe; they don't leak the pointer identity
     }
   }
+
   return false;
 }
 

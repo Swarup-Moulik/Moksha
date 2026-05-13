@@ -1,0 +1,12 @@
+void consume_string(string s) {
+}
+
+void test_drop() {
+    string s = "hello";
+    *view string v = &s;
+
+    string s2 = s;
+    consume_string(s);
+
+    string read = *v; // Error
+}

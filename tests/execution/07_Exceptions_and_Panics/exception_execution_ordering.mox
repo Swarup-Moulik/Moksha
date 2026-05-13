@@ -1,0 +1,37 @@
+println("--- [E2E] exception_execution_ordering.mox ---")
+
+// 1. LIFO DEFER ORDERING
+int test_stacked_defers() {
+    int state = 0;
+    try {
+        defer { state = state * 2; } // Runs SECOND (LIFO)
+        defer { state = state + 5; } // Runs FIRST (LIFO)
+        throw "Trigger Unwind";
+    } catch (string e) {
+        // Expected math: (0 + 5) * 2 = 10
+        return state;
+    }
+}
+
+// 2. DEFER INSIDE FINALLY
+void test_defer_in_finally() {
+    int x = 0;
+    try {
+        throw "Error";
+    } finally {
+        defer {
+            x = 2;
+            println("Inner defer ran: " + string(x));
+        }
+        x = 1;
+        println("Finally block executing: " + string(x));
+        // The defer inside here MUST run when the finally block exits,
+        // BEFORE the exception resumes unwinding to the outer scope.
+    }
+}
+
+println(test_stacked_defers()); // Expected: 10
+test_defer_in_finally();
+// Expected Output:
+// Finally block executing: 1
+// Inner defer ran: 2

@@ -1,0 +1,23 @@
+async void yield_thread() {}
+
+async void test_suspend_vs_capture() {
+    int local_stack_var = 42;
+    *view int ptr = &local_stack_var;
+
+    // By-value capture default: copies the raw '*view int' capability.
+    // Effect: Capture(ptr)
+    closure() -> void print_val = () => {
+        print(*ptr);
+    };
+
+    // Effect: Suspend(local_stack_var)
+    // The stack frame is yielded. 'local_stack_var' transitions to State::Moved
+    // (into the async state machine heap allocation).
+    // ERROR EXPECTED: The GAG must trace the origin of 'ptr' inside the closure
+    // back to 'local_stack_var' and invalidate the closure's captured environment.
+    await yield_thread();
+
+    // FATAL: The physical address copied into the closure points to the old,
+    // now-popped stack frame.
+    print_val();
+}

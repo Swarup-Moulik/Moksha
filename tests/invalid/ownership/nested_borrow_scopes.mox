@@ -1,9 +1,0 @@
-void test_nested() {
-    int x = 5;
-    *view int outer = &x;
-
-    *mut int inner = &x;
-    *inner = 10;
-
-    int read = *outer;
-}

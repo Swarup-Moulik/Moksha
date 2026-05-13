@@ -1,0 +1,131 @@
+println("--- [E2E] concurrency_red_team_stress.mox ---")
+
+// 1. CHANNEL BACKPRESSURE (Producer Starvation)
+// Forces the runtime to suspend a producer when the ring-buffer is full,
+// and validates that the consumer correctly wakes the producer up.
+async void test_channel_backpressure() {
+    Channel<int> ch = new Channel<int>(1); // Capacity 1
+
+    await ch.send(10); // Succeeds immediately
+
+    spawn(async () => {
+        await sleep(50);
+        int val = await ch.recv(); // Consumes 10, freeing space
+        println("Consumed: " + string(val));
+    });
+
+    // RED TEAM: This must SUSPEND because capacity is 1.
+    // If it doesn't suspend, it overwrites data. If it doesn't wake up, it deadlocks.
+    await ch.send(20);
+    println("Backpressure relieved"); // Expected to print AFTER "Consumed: 10"
+}
+
+// 2. ASYNC INSIDE LOCK (The Deadlock Trap)
+// Suspending a coroutine while holding an OS mutex is fatal.
+// The compiler should either REJECT this at compile-time (like Rust),
+// or the runtime must use an async-aware Mutex that yields.
+void test_async_in_lock() {
+    lock int shd = 0;
+    *lock int p = &shd;
+
+    // RED TEAM: Does the semantic analyzer catch this?
+    // EXPECTED: Compile Error "Cannot await inside a synchronous lock block"
+    lock (p) {
+        // await sleep(10);
+        *p = 1;
+    }
+}
+
+// 3. EXCEPTION UNWINDING A LOCK (Poison Prevention)
+// If an exception is thrown inside a critical section, the RAII/Cleanup
+// logic must release the mutex. Otherwise, the next lock attempt deadlocks.
+void test_lock_unwind() {
+    lock int shd = 0;
+    *lock int p = &shd;
+
+    try {
+        lock (p) {
+            throw new Exception("Panic inside lock");
+        }
+    } catch (Exception e) {
+        println("Caught panic");
+    }
+
+    // RED TEAM: If the previous lock didn't unwind, this will hang forever.
+    lock (p) {
+        println("Lock safely reacquired");
+    }
+}
+
+// 4. DOUBLE RESUME / USE-AFTER-FREE
+// A malicious or buggy component attempts to resume a dead coroutine frame.
+async void dummy_task() { }
+
+void test_double_resume() {
+    promise<void> p = spawn(dummy_task());
+
+    // Assume p finishes very quickly
+
+    // RED TEAM: The scheduler or promise handle must have a tombstone check.
+    // If this hits `llvm.coro.resume` on a freed frame, it triggers a Segfault.
+    try {
+        // p.internal_resume(); // (Use your runtime's lowest level resume hook here)
+    } catch (RuntimePanic e) {
+        println("Double resume safely trapped");
+    }
+}
+
+// 5. TLS ASYNC MIGRATION (The Work-Stealing Trap)
+// Thread-local storage is incredibly dangerous in async contexts if the scheduler
+// moves the coroutine to a different OS thread after a suspension point.
+static thread_local int async_context_id = 0;
+
+async void test_tls_async() {
+    async_context_id = 999;
+
+    await sleep(10); // Suspension point
+
+    // RED TEAM: If the scheduler migrated this task to a different thread pool worker,
+    // this will print 0 instead of 999. The language must document if TLS is safe in async.
+    println(async_context_id);
+}
+
+// 6. PROMISE ARC CYCLES (Memory Leak)
+// Tests if the ARC garbage collector can handle async reference cycles,
+// or if awaiting yourself creates an uncatchable deadlock.
+async void test_promise_cycles() {
+    // RED TEAM: Task A awaits Task B, Task B awaits Task A.
+    // This should ideally trigger a DeadlockPanic from the scheduler.
+    /*
+    promise<void> a;
+    promise<void> b = spawn(async () => { await a; });
+    a = spawn(async () => { await b; });
+    await a;
+    */
+}
+
+println(">>> Executing Red Team Stress Tests <<<");
+
+// 1. Backpressure (Should suspend and resume safely)
+await test_channel_backpressure();
+
+// 2. Lock Unwinding (Should catch the panic and release the lock safely)
+test_lock_unwind();
+
+// 3. Double Resume (Should trap the panic safely)
+test_double_resume();
+
+// 4. TLS Migration (Should print 999 if thread-local storage is safe)
+await test_tls_async();
+
+println(">>> All Safe Red Team Tests Completed <<<");
+
+// =====================================================================
+// ⚠️ DANGER ZONE: Uncomment these one at a time to test your compiler/runtime panics!
+// =====================================================================
+
+// RED TEAM: Should throw a compile-time error: "Cannot await inside lock"
+// test_async_in_lock();
+
+// RED TEAM: Should trigger an uncatchable DeadlockPanic or memory leak
+// await test_promise_cycles();

@@ -285,6 +285,29 @@ CastInst *MIRBuilder::createBitCast(MIRValue *val, const hir::HIRType *destType,
       std::make_unique<CastInst>(Opcode::BitCast, val, destType, name, loc));
 }
 
+CastInst *MIRBuilder::createIntToFloat(MIRValue *val,
+                                       const hir::HIRType *destType,
+                                       const std::string &name,
+                                       SourceLocation loc) {
+  return insert(
+      std::make_unique<CastInst>(Opcode::IntToFloat, val, destType, name, loc));
+}
+
+CastInst *MIRBuilder::createFloatToInt(MIRValue *val,
+                                       const hir::HIRType *destType,
+                                       const std::string &name,
+                                       SourceLocation loc) {
+  return insert(
+      std::make_unique<CastInst>(Opcode::FloatToInt, val, destType, name, loc));
+}
+
+CastInst *MIRBuilder::createUpcast(MIRValue *val, const hir::HIRType *destType,
+                                   const std::string &name,
+                                   SourceLocation loc) {
+  return insert(
+      std::make_unique<CastInst>(Opcode::Upcast, val, destType, name, loc));
+}
+
 CastInst *MIRBuilder::createAnyCast(MIRValue *val, const hir::HIRType *destType,
                                     const std::string &name,
                                     SourceLocation loc) {
@@ -354,10 +377,10 @@ InvokeInst *MIRBuilder::createInvoke(MIRValue *callee,
       callee, std::move(args), normalDest, unwindDest, retType, name, loc));
 }
 
-LandingPadInst *MIRBuilder::createLandingPad(const hir::HIRType *catchType,
+LandingPadInst *MIRBuilder::createLandingPad(const hir::HIRType *resultType,
                                              const std::string &name,
                                              SourceLocation loc) {
-  return insert(std::make_unique<LandingPadInst>(catchType, name, loc));
+  return insert(std::make_unique<LandingPadInst>(resultType, name, loc));
 }
 
 ResumeInst *MIRBuilder::createResume(MIRValue *exception, SourceLocation loc) {
@@ -373,14 +396,13 @@ ThrowInst *MIRBuilder::createThrow(MIRValue *exception, MIRBlock *unwindDest,
   return insert(std::make_unique<ThrowInst>(exception, unwindDest, loc));
 }
 
-InlineAsmInst *MIRBuilder::createInlineAsm(std::string asmString,
-                                           std::string constraints,
-                                           std::vector<MIRValue *> args,
-                                           const hir::HIRType *retType,
-                                           SourceLocation loc) {
-  return insert(std::make_unique<InlineAsmInst>(std::move(asmString),
-                                                std::move(constraints),
-                                                std::move(args), retType, loc));
+InlineAsmInst *
+MIRBuilder::createInlineAsm(std::string asmString, std::string constraints,
+                            std::vector<MIRValue *> args, bool isVolatile,
+                            const hir::HIRType *retType, SourceLocation loc) {
+  return insert(std::make_unique<InlineAsmInst>(
+      std::move(asmString), std::move(constraints), std::move(args), isVolatile,
+      retType, loc));
 }
 
 // ========================================================================
@@ -394,6 +416,12 @@ MakeClosureInst *MIRBuilder::createMakeClosure(MIRValue *funcPtr,
                                                SourceLocation loc) {
   return insert(std::make_unique<MakeClosureInst>(funcPtr, std::move(captures),
                                                   closureType, name, loc));
+}
+
+MakeSharedInst *MIRBuilder::createMakeShared(MIRValue *operand,
+                                             const hir::HIRType *allocatedType,
+                                             SourceLocation loc) {
+  return insert(std::make_unique<MakeSharedInst>(operand, allocatedType, loc));
 }
 
 SpawnInst *MIRBuilder::createSpawn(MIRValue *closure,

@@ -38,7 +38,6 @@ enum class StmtKind {
   UnsafeBlockStmt,
   TryCatchStmt,
   ThrowStmt,
-  AsmStmt,
   LockStmt
 };
 
@@ -177,12 +176,15 @@ public:
   void setBitWidth(int bw) { bitWidth = bw; }
   bool isThreadLocalVar() const { return isThreadLocal; }
   void setThreadLocal(bool tl) { isThreadLocal = tl; }
+  bool isWeakVar() const { return isWeakLinkage; }
+  void setWeakVar(bool w) { isWeakLinkage = w; }
   bool isBitfield() const { return bitWidth != -1; }
   void setBitfield(uint32_t width) {
     bitfieldFlag = true;
     bitWidth = width;
   }
   void setType(TypePtr newType) { type = std::move(newType); }
+  void setName(std::string newName) { name = std::move(newName); }
   uint32_t getBitOffset() const { return bitOffset; }
   void setBitOffset(uint32_t offset) { bitOffset = offset; }
   uint32_t getPhysicalIndex() const { return physicalIndex; }
@@ -202,6 +204,7 @@ private:
   bool bitfieldFlag = false;
   int bitWidth = -1;
   bool isThreadLocal = false;
+  bool isWeakLinkage = false;
   uint32_t bitOffset = 0;
   uint32_t physicalIndex = 0;
 };
@@ -276,6 +279,8 @@ public:
   void setVTableIndex(int idx) { vtableIndex = idx; }
   void setReturnType(TypePtr newType) { returnType = std::move(newType); }
   void setName(std::string newName) { name = std::move(newName); }
+  bool isViewMethod() const { return isView; }
+  void setViewMethod(bool v) { isView = v; }
 
 private:
   std::vector<Param> params;
@@ -302,6 +307,7 @@ private:
   bool isVirtual = false;
   bool isOverride = false;
   int vtableIndex = -1;
+  bool isView = false;
 };
 
 class ClassDecl : public Decl {
@@ -531,6 +537,7 @@ public:
       : Stmt(StmtKind::ReturnStmt, loc), returnValue(std::move(value)) {}
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const Expr *getReturnValue() const { return returnValue.get(); }
+  ExprPtr &getReturnValueMut() { return returnValue; }
   std::unique_ptr<Stmt> clone() const override;
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::ReturnStmt;
@@ -733,27 +740,52 @@ public:
   }
 };
 
+struct CatchClause {
+  DeclPtr var;
+  StmtPtr body;
+  SourceLocation loc;
+
+  CatchClause(DeclPtr var, StmtPtr body, SourceLocation loc)
+      : var(std::move(var)), body(std::move(body)), loc(loc) {}
+
+  CatchClause clone() const {
+    return CatchClause(var ? var->clone() : nullptr,
+                       body ? body->clone() : nullptr, loc);
+  }
+};
+
 class TryCatchStmt : public Stmt {
 public:
-  TryCatchStmt(StmtPtr tryBlock, DeclPtr catchVar, StmtPtr catchBlock,
+  TryCatchStmt(StmtPtr tryBlock, std::vector<CatchClause> catchClauses,
                StmtPtr finallyBlock, SourceLocation loc)
       : Stmt(StmtKind::TryCatchStmt, loc), tryBody(std::move(tryBlock)),
-        catchVar(std::move(catchVar)), catchBody(std::move(catchBlock)),
-        finallyBody(std::move(finallyBlock)) {}
+        catches(std::move(catchClauses)), finallyBody(std::move(finallyBlock)) {
+  }
+
   void accept(ASTVisitor &v) const override;
+
   [[nodiscard]] const Stmt *getTryBody() const { return tryBody.get(); }
-  [[nodiscard]] const Decl *getCatchVar() const { return catchVar.get(); }
-  [[nodiscard]] const Stmt *getCatchBody() const { return catchBody.get(); }
+  [[nodiscard]] const std::vector<CatchClause> &getCatches() const {
+    return catches;
+  }
   [[nodiscard]] const Stmt *getFinallyBody() const { return finallyBody.get(); }
-  std::unique_ptr<Stmt> clone() const override;
+
+  std::unique_ptr<Stmt> clone() const override {
+    std::vector<CatchClause> clonedCatches;
+    for (const auto &c : catches)
+      clonedCatches.push_back(c.clone());
+    return std::make_unique<TryCatchStmt>(
+        tryBody ? tryBody->clone() : nullptr, std::move(clonedCatches),
+        finallyBody ? finallyBody->clone() : nullptr, loc);
+  }
+
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::TryCatchStmt;
   }
 
 private:
   StmtPtr tryBody;
-  DeclPtr catchVar;
-  StmtPtr catchBody;
+  std::vector<CatchClause> catches;
   StmtPtr finallyBody;
 };
 
@@ -772,47 +804,17 @@ private:
   ExprPtr expression;
 };
 
-class AsmStmt : public Stmt {
-public:
-  // 1. Update constructor to accept 'constraints'
-  AsmStmt(std::string assemblyStr, std::string constraints, SourceLocation loc)
-      : Stmt(StmtKind::AsmStmt, loc), assemblyStr(std::move(assemblyStr)),
-        constraints(std::move(constraints)) {}
-
-  void accept(ASTVisitor &v) const override;
-
-  [[nodiscard]] const std::string &getAssemblyStr() const {
-    return assemblyStr;
-  }
-
-  // 2. Add getter for constraints
-  [[nodiscard]] const std::string &getConstraints() const {
-    return constraints;
-  }
-  std::unique_ptr<Stmt> clone() const override;
-  static bool classof(const Stmt *S) {
-    return S->getKind() == StmtKind::AsmStmt;
-  }
-
-private:
-  std::string assemblyStr;
-  // 3. Add private member field
-  std::string constraints;
-};
-
 class LockStmt : public Stmt {
 public:
-  LockStmt(ExprPtr target, StmtPtr body, SourceLocation loc)
+  LockStmt(ExprPtr target, StmtPtr body, bool isAsync, SourceLocation loc)
       : Stmt(StmtKind::LockStmt, loc), target(std::move(target)),
-        body(std::move(body)) {}
+        body(std::move(body)), isAsync(isAsync) {}
 
   void accept(ASTVisitor &v) const override;
-
   [[nodiscard]] const Expr *getTarget() const { return target.get(); }
   [[nodiscard]] const Stmt *getBody() const { return body.get(); }
-
+  [[nodiscard]] bool isAsyncLock() const { return isAsync; }
   std::unique_ptr<Stmt> clone() const override;
-
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::LockStmt;
   }
@@ -820,6 +822,7 @@ public:
 private:
   ExprPtr target;
   StmtPtr body;
+  bool isAsync;
 };
 
 } // namespace moksha

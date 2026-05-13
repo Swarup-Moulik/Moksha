@@ -1,0 +1,100 @@
+println("--- [E2E] cf_edge_complete.mox ---")
+
+int side_effect(int val) {
+    print(val);
+    return val;
+}
+
+// 1. FOR-IN JUMP SEMANTICS
+// Verifies that 'continue' and 'break' correctly handle iterator advancement
+void test_for_jumps() {
+    int[] arr = [1, 2, 3];
+    int sum_cont = 0;
+    int sum_break = 0;
+
+    // Test Continue
+    for (x in arr) {
+        if (x == 2) continue;
+        sum_cont = sum_cont + x;
+    }
+
+    // Test Break
+    for (x in arr) {
+        if (x == 2) break;
+        sum_break = sum_break + x;
+    }
+
+    println(sum_cont);  // Expected: 4
+    println(sum_break); // Expected: 1
+}
+
+// 2. DEFER + CONTINUE INTERACTION
+void test_defer_continue() {
+    int i = 0;
+    while (i < 2) {
+        defer print(i);
+        i = i + 1;
+        continue; // Must NOT skip the defer registration
+    }
+}
+
+// 4. RETURN IN SWITCH (CFG Convergence)
+int test_return_switch(int val) {
+    switch (val) {
+        case 1:  return 10;
+        default: return 20;
+    }
+    // No trailing return needed; CFG knows this is exhaustive
+}
+
+// 5. BINDING & LIFETIME
+void test_binding() {
+    int x = 100;
+    for (x in [1, 2]) {
+        // Does this modify the outer 'x' or shadow it?
+        // Logic: For-loop variable should be block-scoped (shadowing).
+    }
+    println(x); // Expected: 100
+}
+
+// 6. TERNARY ASSOCIATIVITY (Right-Binding)
+void test_ternary_assoc() {
+    // false ? 1 : (false ? 2 : 3)
+    int res = false ? 1 : false ? 2 : 3;
+    println(res); // Expected: 3
+}
+
+// 7. NESTED DEFER PATHS
+void test_nested_defers(bool cond) {
+    defer print("A");
+    if (cond) {
+        defer print("B");
+        return;
+    }
+    defer print("C");
+}
+// cond=true  -> BA
+// cond=false -> CA
+
+// 8. PIPE GRAMMAR: IDENTIFIER VS CALL
+void test_pipe_grammar() {
+    int f(int n) { return n * 2; }
+
+    // Does |> allow bare identifiers or require call syntax?
+    // Decision: Require call syntax for clarity.
+    int res = 10 |> f();
+    println(res); // Expected: 20
+}
+
+// --- EXECUTION ---
+test_for_jumps();       // 4, 1
+test_defer_continue();  // 12
+println("");
+println(test_return_switch(1)); // 10
+test_binding();         // 100
+test_ternary_assoc();   // 3
+test_nested_defers(true);  // BA
+print("|");
+test_nested_defers(false); // CA
+println("");
+test_pipe_grammar();    // 20

@@ -1,0 +1,18 @@
+async void heavy_compute() {}
+
+async void test_lock_suspension() {
+    lock int shared_db_connection = 0;
+    *lock int p = &shared_db_connection;
+
+    lock (p) {
+        *p = 1;
+
+        // ERROR EXPECTED: Capability Lifetime Violation.
+        // A lock capability cannot span across a suspension point.
+        // The HIR must either force the lock to drop before the await,
+        // or reject the compilation entirely to prevent absolute deadlocks.
+        await heavy_compute();
+
+        *p = 2;
+    }
+}

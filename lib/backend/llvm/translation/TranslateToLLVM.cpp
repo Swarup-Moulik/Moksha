@@ -8,8 +8,10 @@
 #include "moksha/Dialect/MokshaDialect.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
@@ -97,12 +99,13 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
 
   llvm::errs() << "[DEBUG] Applying Post-Process Fixes...\n";
 
-  llvm::StringRef persFnName = "__gcc_personality_v0";
+  llvm::StringRef persFnName = "__gxx_personality_v0";
   if (targetTriple.isOSWindows()) {
     if (targetTriple.isGNUEnvironment()) {
-      persFnName = "__gcc_personality_seh0";
+      persFnName = "__gxx_personality_seh0"; // For Windows MinGW
+                                             // (x86_64-w64-windows-gnu)
     } else {
-      persFnName = "__CxxFrameHandler3";
+      persFnName = "__CxxFrameHandler3"; // For Windows MSVC
     }
   }
 
@@ -129,6 +132,49 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
     // --- Standard LLVM Keyword Bindings ---
     if (mlirFunc->hasAttr("moksha.async")) {
       llvmFunc->addFnAttr(llvm::Attribute::PresplitCoroutine);
+
+      // ====================================================================
+      // [FIX] SINK ALLOCAS BELOW COROUTINE SETUP
+      // MLIR translation aggressively hoists allocas to the top of the block.
+      // We must manually sink them below `coro.begin` so CoroSplit tracks them.
+      // ====================================================================
+      if (!llvmFunc->empty()) {
+        llvm::BasicBlock &entryBlock = llvmFunc->getEntryBlock();
+        llvm::Instruction *coroBoundary = nullptr;
+
+        // 1. Find the bottom of the coroutine header
+        for (llvm::Instruction &I : entryBlock) {
+          if (auto *call = llvm::dyn_cast<llvm::CallInst>(&I)) {
+            if (llvm::Function *callee = call->getCalledFunction()) {
+              llvm::StringRef name = callee->getName();
+              // Sink below your custom setup (or coro.begin as a fallback)
+              if (name == "moksha_rt_coro_setup" ||
+                  name.starts_with("llvm.coro.begin")) {
+                coroBoundary = &I;
+                break;
+              }
+            }
+          }
+        }
+
+        if (coroBoundary) {
+          // 2. Collect all allocas that MLIR incorrectly pushed to the top
+          std::vector<llvm::AllocaInst *> allocasToSink;
+          for (llvm::Instruction &I : entryBlock) {
+            if (&I == coroBoundary)
+              break; // Stop at the boundary
+            if (auto *allocaInst = llvm::dyn_cast<llvm::AllocaInst>(&I)) {
+              allocasToSink.push_back(allocaInst);
+            }
+          }
+
+          // 3. Move them immediately AFTER the coroutine boundary
+          llvm::Instruction *insertionPt = coroBoundary->getNextNode();
+          for (llvm::AllocaInst *allocaInst : allocasToSink) {
+            allocaInst->moveBefore(insertionPt);
+          }
+        }
+      }
     }
     if (mlirFunc->hasAttr("moksha.interrupt")) {
       llvmFunc->addFnAttr("interrupt"); // Arch-specific string attr
@@ -166,18 +212,38 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
         llvmFunc->setCallingConv(llvm::CallingConv::X86_FastCall);
       } else if (cc == "interrupt") {
         llvmFunc->setCallingConv(llvm::CallingConv::X86_INTR);
+        if (llvmFunc->arg_size() > 0) {
+          // Construct a generic 40-byte x86_64 interrupt frame type for the
+          // byval payload
+          llvm::Type *i64Ty = llvm::Type::getInt64Ty(llvmContext);
+          llvm::Type *frameTy = llvm::ArrayType::get(i64Ty, 5);
+          llvmFunc->addParamAttr(
+              0, llvm::Attribute::getWithByValType(llvmContext, frameTy));
+        }
       }
     }
 
     if (auto linkageAttr =
             mlirFunc->getAttrOfType<mlir::StringAttr>("moksha.linkage")) {
       llvm::StringRef linkage = linkageAttr.getValue();
+
       if (linkage == "weak") {
+        // [FIX] WeakAny allows strong C overrides without COMDAT collisions
         llvmFunc->setLinkage(llvm::GlobalValue::WeakAnyLinkage);
+      } else if (linkage == "linkonce") {
+        // LinkOnce requires COMDATs on Windows
+        llvmFunc->setLinkage(llvm::GlobalValue::LinkOnceODRLinkage);
+        if (targetTriple.isOSWindows()) {
+          llvm::Comdat *comdat =
+              llvmModule->getOrInsertComdat(llvmFunc->getName());
+          comdat->setSelectionKind(llvm::Comdat::Any);
+          llvmFunc->setComdat(comdat);
+        }
       } else if (linkage == "internal") {
         llvmFunc->setLinkage(llvm::GlobalValue::InternalLinkage);
+      } else if (linkage == "external") {
+        llvmFunc->setLinkage(llvm::GlobalValue::ExternalLinkage);
       }
-      // "external" is the LLVM default, so we don't strictly need to set it
     }
 
     if (auto secAttr =
@@ -191,6 +257,26 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
 
     if (hasLandingPad) {
       llvmFunc->setPersonalityFn(persFunc);
+
+      llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(llvmContext);
+      llvm::Constant *nullPtr = llvm::ConstantPointerNull::get(ptrTy);
+
+      for (llvm::BasicBlock &bb : *llvmFunc) {
+        if (auto *lpad =
+                llvm::dyn_cast<llvm::LandingPadInst>(bb.getFirstNonPHI())) {
+          bool hasCatchAll = false;
+          for (unsigned i = 0; i < lpad->getNumClauses(); ++i) {
+            if (lpad->isCatch(i) && lpad->getClause(i)->isNullValue()) {
+              hasCatchAll = true;
+              break;
+            }
+          }
+          // If it's a bare cleanup pad, inject the catch-all
+          if (!hasCatchAll) {
+            lpad->addClause(nullPtr);
+          }
+        }
+      }
     }
   });
 
@@ -217,12 +303,22 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
     if (auto linkAttr =
             mlirGlob->getAttrOfType<mlir::StringAttr>("moksha.linkage")) {
       llvm::StringRef linkage = linkAttr.getValue();
-      if (linkage == "internal") {
-        llvmGlob->setLinkage(llvm::GlobalValue::InternalLinkage);
-      } else if (linkage == "weak") {
+
+      if (linkage == "weak") {
+        // [FIX] WeakAny allows strong C overrides without COMDAT collisions
         llvmGlob->setLinkage(llvm::GlobalValue::WeakAnyLinkage);
+      } else if (linkage == "linkonce") {
+        // LinkOnce requires COMDATs on Windows
+        llvmGlob->setLinkage(llvm::GlobalValue::LinkOnceODRLinkage);
+        if (targetTriple.isOSWindows()) {
+          llvm::Comdat *comdat =
+              llvmModule->getOrInsertComdat(llvmGlob->getName());
+          comdat->setSelectionKind(llvm::Comdat::Any);
+          llvmGlob->setComdat(comdat);
+        }
+      } else if (linkage == "internal") {
+        llvmGlob->setLinkage(llvm::GlobalValue::InternalLinkage);
       } else if (linkage == "external") {
-        // --- FIX 2: Explicitly map external to prevent 'internal' default ---
         llvmGlob->setLinkage(llvm::GlobalValue::ExternalLinkage);
       }
     }

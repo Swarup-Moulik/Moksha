@@ -15,6 +15,14 @@ static uint64_t getMLIRTypeSize(::mlir::Type ty) {
   if (ty.isIntOrFloat()) {
     return (ty.getIntOrFloatBitWidth() + 7) / 8;
   }
+
+  // FIXED: Explicitly size Fat Pointers (Data + Metadata/VTable/Length)
+  if (::llvm::isa<::moksha::IR::AnyType>(ty) ||
+      ::llvm::isa<::moksha::IR::SliceType>(ty) ||
+      ::llvm::isa<::moksha::IR::ClosureType>(ty)) {
+    return 16;
+  }
+
   if (::llvm::isa<::moksha::IR::PointerType>(ty) ||
       ::llvm::isa<::mlir::LLVM::LLVMPointerType>(ty)) {
     return 8; // 64-bit pointers
@@ -159,8 +167,15 @@ TypeLowering::TypeLowering(::mlir::MLIRContext &ctx) : context(ctx) {}
     // 1. Handle Literal (Anonymous) Structs directly
     if (structType.getName().empty()) {
       llvm::SmallVector<::mlir::Type, 4> fieldTypes;
+
+      // Prevent Infinite Recursion on Anonymous Types
+      thread_local llvm::DenseSet<llvm::StringRef> activeFlattening;
+
       std::function<void(const hir::StructType &)> flattenFields =
           [&](const hir::StructType &st) {
+            if (!activeFlattening.insert(st.getName()).second) {
+              return; // Break the cycle safely!
+            }
             for (const auto *parentTy : st.getParentTypes()) {
               const hir::HIRType *resolvedParent = parentTy;
               if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(
@@ -177,8 +192,28 @@ TypeLowering::TypeLowering(::mlir::MLIRContext &ctx) : context(ctx) {}
               }
             }
             for (auto *field : st.getFields()) {
-              fieldTypes.push_back(lowerHIRType(*field));
+              // --- [CRITICAL FIX] SAFE RECURSION CHECK ---
+              // If the field is a pointer to a struct we are actively building,
+              // immediately return an opaque pointer instead of recursing!
+              bool emitOpaque = false;
+              const hir::HIRType *checkTy = field;
+              if (auto *ptrTy = llvm::dyn_cast<hir::PointerType>(checkTy)) {
+                checkTy = ptrTy->getPointee();
+              }
+              if (auto *st = llvm::dyn_cast<hir::StructType>(checkTy)) {
+                if (activeFlattening.count(st->getName())) {
+                  emitOpaque = true;
+                }
+              }
+
+              if (emitOpaque) {
+                fieldTypes.push_back(::moksha::IR::PointerType::get(
+                    &context, ::mlir::IntegerType::get(&context, 8)));
+              } else {
+                fieldTypes.push_back(lowerHIRType(*field));
+              }
             }
+            activeFlattening.erase(st.getName());
           };
 
       flattenFields(structType);
@@ -195,7 +230,7 @@ TypeLowering::TypeLowering(::mlir::MLIRContext &ctx) : context(ctx) {}
       return llvmStruct;
     }
 
-    // --- [FIX]: Prevent Infinite Recursion on Self-Referential Types ---
+    // --- Prevent Infinite Recursion on Self-Referential Types ---
     thread_local llvm::DenseSet<llvm::StringRef> activeStructs;
     if (!activeStructs.insert(structType.getName()).second) {
       // We are already actively lowering this struct higher up the call stack!
@@ -229,7 +264,27 @@ TypeLowering::TypeLowering(::mlir::MLIRContext &ctx) : context(ctx) {}
 
           // 2. Inject Subclass Fields
           for (auto *field : st.getFields()) {
-            fieldTypes.push_back(lowerHIRType(*field));
+            // --- [CRITICAL FIX] SAFE RECURSION CHECK ---
+            // If the field is a pointer to a struct we are actively building,
+            // immediately return an opaque pointer instead of recursing!
+            bool emitOpaque = false;
+            const hir::HIRType *checkTy = field;
+            if (auto *ptrTy = llvm::dyn_cast<hir::PointerType>(checkTy)) {
+              checkTy = ptrTy->getPointee();
+            }
+            if (auto *childSt = llvm::dyn_cast<hir::StructType>(checkTy)) {
+              if (activeStructs.count(childSt->getName())) {
+                emitOpaque = true;
+              }
+            }
+
+            if (emitOpaque) {
+              fieldTypes.push_back(::moksha::IR::PointerType::get(
+                  &context,
+                  ::mlir::IntegerType::get(&context, 8))); // Opaque Pointer
+            } else {
+              fieldTypes.push_back(lowerHIRType(*field));
+            }
           }
         };
 
@@ -307,8 +362,9 @@ TypeLowering::TypeLowering(::mlir::MLIRContext &ctx) : context(ctx) {}
     return ::moksha::IR::MapType::get(&context, keyType, valType);
   }
   case hir::TypeKind::Promise: {
-    auto i8Ty = ::mlir::IntegerType::get(&context, 8);
-    return ::moksha::IR::PointerType::get(&context, i8Ty);
+    auto &promType = static_cast<const hir::HIRPromiseType &>(type);
+    ::mlir::Type inner = lowerHIRType(*promType.getInnerType());
+    return ::moksha::IR::PromiseType::get(&context, inner);
   }
   default:
     return ::mlir::NoneType::get(&context);
@@ -326,6 +382,7 @@ bool TypeLowering::isTriviallyCopyable(const hir::HIRType &type) const {
   case hir::TypeKind::String:
   case hir::TypeKind::Array:
   case hir::TypeKind::Map:
+  case hir::TypeKind::Slice:
   case hir::TypeKind::Closure:
   case hir::TypeKind::Any:
   case hir::TypeKind::Promise:
@@ -351,7 +408,10 @@ bool TypeLowering::isTriviallyCopyable(const hir::HIRType &type) const {
 bool TypeLowering::requiresOwnership(const hir::HIRType &type) const {
   if (type.getKind() == hir::TypeKind::Pointer ||
       type.getKind() == hir::TypeKind::String ||
-      type.getKind() == hir::TypeKind::Closure) {
+      type.getKind() == hir::TypeKind::Closure ||
+      type.getKind() == hir::TypeKind::Any ||
+      type.getKind() == hir::TypeKind::Map ||
+      type.getKind() == hir::TypeKind::Promise) {
     return true;
   }
   if (type.getKind() == hir::TypeKind::Struct) {

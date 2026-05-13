@@ -158,25 +158,9 @@ bool SROAPass::runOnFunction(MIRFunction *F, MIRModule &M) {
 
       AllocaInst *replacement = newAllocas[fieldIdx];
 
-      // [FIX] Handle nested struct accesses (Deep GEPs)
-      if (gep->getIndices().size() == 2) {
-        replaceAllUsesInFunction(F, gep, replacement);
-        toDelete.push_back(gep);
-      } else {
-        // Rewrite the GEP to use the new base and shift the remaining indices
-        std::vector<MIRValue *> newIdx;
-        auto *i32Ty =
-            reinterpret_cast<hir::HIRModule *>(&M)->getIntType(32, true);
-
-        newIdx.push_back(
-            M.getOrInsertConstant<ConstantInt>(0, i32Ty)); // New Base 0
-        for (size_t i = 2; i < gep->getIndices().size(); ++i) {
-          newIdx.push_back(gep->getIndices()[i]);
-        }
-
-        gep->setPointer(replacement); // Change base to the shattered field
-        gep->setIndices(newIdx);      // Apply remaining path
-      }
+      // Since Phase 3a guaranteed this is a flat struct GEP, just replace it!
+      replaceAllUsesInFunction(F, gep, replacement);
+      toDelete.push_back(gep);
     }
 
     toDelete.push_back(alloca);

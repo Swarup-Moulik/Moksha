@@ -35,6 +35,8 @@ MIRValue *getBaseAlloca(MIRValue *val) {
       return val;
     if (auto *load = llvm::dyn_cast<LoadInst>(val))
       val = load->getPointer();
+    else if (auto *gep = llvm::dyn_cast<GetElementPtrInst>(val))
+      val = gep->getPointer();
     else if (auto *cast = llvm::dyn_cast<CastInst>(val))
       val = cast->getValue();
     else if (auto *ext = llvm::dyn_cast<ExtractValueInst>(val))
@@ -75,9 +77,20 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
       MIRBlock *block = blockPtr.get();
 
       std::unordered_set<MIRValue *> inSet;
+      bool firstPred = true;
       for (auto *pred : preds[block]) {
-        for (auto *movedVal : blockMovedOut[pred]) {
-          inSet.insert(movedVal);
+        if (firstPred) {
+          inSet = blockMovedOut[pred];
+          firstPred = false;
+        } else {
+          // Intersection: Only keep values moved in ALL incoming paths
+          for (auto it = inSet.begin(); it != inSet.end();) {
+            if (blockMovedOut[pred].find(*it) == blockMovedOut[pred].end()) {
+              it = inSet.erase(it);
+            } else {
+              ++it;
+            }
+          }
         }
       }
       blockMovedIn[block] = inSet;
@@ -95,21 +108,31 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
 
           // GEN: Moving a value
           if (auto *sourceLoad = llvm::dyn_cast<LoadInst>(store->getValue())) {
-            if (sourceLoad->getName() != "cleanup_val" &&
-                sourceLoad->getName() != "old_val") {
+            std::string loadName = sourceLoad->getName();
+            if (loadName.find("cleanup") == std::string::npos &&
+                loadName.find("old") == std::string::npos) {
               if (sourceLoad->getBorrowKind() != BorrowKind::View) {
 
                 // [FIX] Do not elide drops for ARC/Shared types! They are
                 // copied, not moved.
                 bool isShared = false;
-                if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(
-                        sourceLoad->getType())) {
+                const hir::HIRType *checkTy = sourceLoad->getType();
+                if (auto *ptrTy =
+                        llvm::dyn_cast_or_null<hir::PointerType>(checkTy)) {
                   if (ptrTy->getOwnership() == hir::Ownership::Shared)
                     isShared = true;
-                } else if (sourceLoad->getType() &&
-                           sourceLoad->getType()->toString().find("shared ") !=
-                               std::string::npos) {
-                  isShared = true;
+                } else if (checkTy) {
+                  auto kind = checkTy->getKind();
+                  if (kind == hir::TypeKind::Slice ||
+                      kind == hir::TypeKind::Array ||
+                      kind == hir::TypeKind::String ||
+                      kind == hir::TypeKind::Map ||
+                      kind == hir::TypeKind::Any ||
+                      kind == hir::TypeKind::Promise ||
+                      checkTy->toString().find("shared ") !=
+                          std::string::npos) {
+                    isShared = true;
+                  }
                 }
 
                 if (!isShared) {
@@ -126,19 +149,31 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
           if (auto *call = llvm::dyn_cast<CallInst>(inst)) {
             for (auto *arg : call->getArgs()) {
               if (auto *argLoad = llvm::dyn_cast<LoadInst>(arg)) {
-                if (argLoad->getName() != "cleanup_val") {
+                std::string argName = argLoad->getName();
+                if (argName.find("cleanup") == std::string::npos &&
+                    argName.find("old") == std::string::npos) {
                   if (argLoad->getBorrowKind() != BorrowKind::View) {
 
                     // [FIX] Prevent moving Shared types into functions
                     bool isShared = false;
-                    if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(
-                            argLoad->getType())) {
+                    const hir::HIRType *checkTy = argLoad->getType();
+
+                    if (auto *ptrTy =
+                            llvm::dyn_cast_or_null<hir::PointerType>(checkTy)) {
                       if (ptrTy->getOwnership() == hir::Ownership::Shared)
                         isShared = true;
-                    } else if (argLoad->getType() &&
-                               argLoad->getType()->toString().find("shared ") !=
-                                   std::string::npos) {
-                      isShared = true;
+                    } else if (checkTy) {
+                      auto kind = checkTy->getKind();
+                      if (kind == hir::TypeKind::Slice ||
+                          kind == hir::TypeKind::Array ||
+                          kind == hir::TypeKind::String ||
+                          kind == hir::TypeKind::Map ||
+                          kind == hir::TypeKind::Any ||
+                          kind == hir::TypeKind::Promise ||
+                          checkTy->toString().find("shared ") !=
+                              std::string::npos) {
+                        isShared = true;
+                      }
                     }
 
                     if (!isShared) {
@@ -151,22 +186,38 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
                 }
               }
             }
-          } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(inst)) {
-            for (auto *arg : invoke->getArgs()) {
-              if (auto *argLoad = llvm::dyn_cast<LoadInst>(arg)) {
-                if (argLoad->getName() != "cleanup_val" &&
-                    argLoad->getBorrowKind() != BorrowKind::View) {
-                  bool isShared = false;
-                  if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(
-                          argLoad->getType())) {
-                    if (ptrTy->getOwnership() == hir::Ownership::Shared)
-                      isShared = true;
+          }
+        } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(inst)) {
+          for (auto *arg : invoke->getArgs()) {
+            if (auto *argLoad = llvm::dyn_cast<LoadInst>(arg)) {
+              if (argLoad->getName() != "cleanup_val" &&
+                  argLoad->getBorrowKind() != BorrowKind::View) {
+
+                bool isShared = false;
+                const hir::HIRType *checkTy = argLoad->getType();
+
+                if (auto *ptrTy =
+                        llvm::dyn_cast_or_null<hir::PointerType>(checkTy)) {
+                  if (ptrTy->getOwnership() == hir::Ownership::Shared)
+                    isShared = true;
+                } else if (checkTy) {
+                  auto kind = checkTy->getKind();
+                  if (kind == hir::TypeKind::Slice ||
+                      kind == hir::TypeKind::Array ||
+                      kind == hir::TypeKind::String ||
+                      kind == hir::TypeKind::Map ||
+                      kind == hir::TypeKind::Any ||
+                      kind == hir::TypeKind::Promise ||
+                      checkTy->toString().find("shared ") !=
+                          std::string::npos) {
+                    isShared = true;
                   }
-                  if (!isShared) {
-                    if (MIRValue *sourceAlloca =
-                            getBaseAlloca(argLoad->getPointer())) {
-                      currentOut.insert(sourceAlloca);
-                    }
+                }
+
+                if (!isShared) {
+                  if (MIRValue *sourceAlloca =
+                          getBaseAlloca(argLoad->getPointer())) {
+                    currentOut.insert(sourceAlloca);
                   }
                 }
               }
@@ -255,15 +306,24 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
         if (call->getCallee()) {
           std::string calleeName = call->getCallee()->getName();
 
-          // [FIX] Elide BOTH the memory free AND the custom class destructor!
+          // [FIX] Ensure we do not elide ARC retains/releases!
+          // Only elide unique destructors.
           if (calleeName == "__moksha_free" ||
               calleeName.find(".destructor_ret_void") != std::string::npos ||
               calleeName.find(".drop_ret_void") != std::string::npos) {
 
             if (call->getArgs().size() > 0) {
               if (MIRValue *base = getBaseAlloca(call->getArgs()[0])) {
-                if (movedAllocas.count(base))
-                  elideInstruction = true;
+                // Ensure this is not a shared/ARC pointer before eliding
+                if (base->getType()->toString().find("shared") ==
+                        std::string::npos &&
+                    base->getType()->toString().find("Arc<") ==
+                        std::string::npos) {
+
+                  if (movedAllocas.count(base)) {
+                    elideInstruction = true;
+                  }
+                }
               }
             }
           }

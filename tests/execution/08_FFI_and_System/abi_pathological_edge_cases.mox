@@ -1,0 +1,131 @@
+println("--- [E2E] abi_pathological_edge_cases.mox ---")
+
+// ============================================================================
+// 1. ABI CLASSIFICATION: STRUCT BOUNDARIES
+// ============================================================================
+
+// (a) Exactly 128-bit Struct (Two Registers)
+// SysV ABI requires this to be returned in RAX + RDX, NOT via hidden memory pointer.
+struct TwoRegStruct {
+    long a; // 64-bit
+    long b; // 64-bit
+}
+extern "C" TwoRegStruct return_two_reg();
+
+// (b) Homogeneous Floating Aggregates (HFA)
+// ARM64 and x86_64 require this to be passed/returned exclusively in XMM/SIMD registers.
+struct Float4 {
+    float x; float y; float z; float w;
+}
+extern "C" Float4 process_hfa(Float4 input1);
+
+// (c) Zero-Sized Types (ZST)
+// C++ allows empty structs (size 1). Rust allows size 0.
+// Your ABI must decide if this consumes a register/stack slot or is completely elided.
+struct Empty {}
+extern "C" void pass_empty(Empty e);
+
+// ============================================================================
+// 2. VARIADIC PROMOTION RULES
+// ============================================================================
+extern "C" int printf(string fmt, ...);
+
+void test_variadic_promotion() {
+    char c = 10;
+    short s = 20;
+    // C ABI mandates that chars and shorts MUST be promoted to 32-bit 'int'
+    // before being pushed to variadic functions.
+    printf("Promotions: %d, %d\n", c, s);
+}
+
+// ============================================================================
+// 3. HARDWARE & VOLATILE ALIASING
+// ============================================================================
+
+volatile *mut int hw_reg = cast<volatile *mut int>(0x40022000);
+
+void test_volatile_alias_loss() {
+    // RED TEAM: Does casting away the explicit volatile keyword drop the
+    // volatile flag in the LLVM IR load/store instructions?
+    *mut int stripped_ptr = cast<*mut int>(hw_reg);
+
+    // If the optimizer elides this write because of the cast, you have a major bug.
+    *stripped_ptr = 42;
+}
+
+// ============================================================================
+// 4. INLINE ASM MEMORY CLOBBERS
+// ============================================================================
+void test_asm_clobber() {
+    int secret = 1;
+
+    // The "memory" clobber acts as a compiler optimization barrier.
+    // LLVM is strictly forbidden from caching `secret` in a register across this instruction.
+    asm(" ") clobber("memory");
+
+    secret = 2;
+}
+
+// ============================================================================
+// 5. INTERRUPT + NAKED INTERACTION
+// ============================================================================
+// Combining these two is famously fragile in LLVM.
+// [interrupt] wants to emit `pusha` and `iret`.
+// [naked] tells the compiler "emit absolutely no prologue/epilogue".
+// The compiler must prioritize [naked] and let the developer write the raw assembly.
+
+interrupt naked void extreme_custom_isr() {
+    asm("push %rax"); // Added % prefix
+    // ... custom handler ...
+    asm("pop %rax");  // Added % prefix
+    asm("iretq");
+}
+
+// ============================================================================
+// 6. GLOBAL INITIALIZATION DEPENDENCY ORDER
+// ============================================================================
+// If your compiler emits these into `@llvm.global_ctors` in the wrong order,
+// `global_b` will be initialized with garbage data (0 + 5 instead of 10 + 5).
+int init_a() { return 10; }
+
+int global_a = init_a();
+int global_b = global_a + 5;
+
+void test_init_order() {
+    println("Dependent Global: " + string(global_b)); // Expected: 15
+}
+
+// ============================================================================
+// 7. FUNCTION POINTERS ACROSS FFI
+// ============================================================================
+extern "C" void register_os_callback((int) => void callback);
+
+void my_callback(int status) {
+    println("OS Status: " + string(status));
+}
+
+void test_ffi_callbacks() {
+    // Ensures the function pointer correctly resolves to an address and passes ABI checks
+    register_os_callback(my_callback);
+}
+
+// ============================================================================
+// 8. OVER-ALIGNMENT
+// ============================================================================
+// Forces LLVM to align this struct to a 16-byte boundary, critical for SIMD ops.
+align(16) struct SimdData {
+    int[4] vectors;
+}
+
+void test_over_alignment() {
+    SimdData data;
+    // Un-testable at runtime without pointer math, but IR should emit `align 16`
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_variadic_promotion();
+test_init_order();
+test_ffi_callbacks();
+test_volatile_alias_loss();
