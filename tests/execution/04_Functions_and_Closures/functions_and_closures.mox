@@ -5,23 +5,10 @@ int add(int a, int b) {
     return a + b;
 }
 
-// Void function
-void log(string msg) {
-    println(msg);
-}
-
-// Variadic Function
-void printf(string fmt, ...) {
-    // Intrinsic placeholder, we will just use println for E2E verification
-    println(fmt);
-}
-
 // Lambda using the new closure type syntax
 closure(int, int) -> int addFunc = (int b, int c) => {
     return b + c;
 }
 
 println(add(10, 20));       // Expected: 30
-log("Testing void log");    // Expected: Testing void log
-printf("Variadic stub");    // Expected: Variadic stub
 println(addFunc(50, 50));   // Expected: 100

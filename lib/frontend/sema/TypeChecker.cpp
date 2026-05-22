@@ -435,6 +435,15 @@ bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
   const Type *rawExp = unwrapConcurrency(expected);
   const Type *rawAct = unwrapConcurrency(actual);
 
+  if (auto ptrExp = llvm::dyn_cast<const PointerType>(rawExp)) {
+    const Type *pointeeTy = unwrapConcurrency(ptrExp->getPointee());
+    if (pointeeTy->is<SliceType>() || pointeeTy->is<ArrayType>()) {
+      if (isCompatible(pointeeTy, rawAct)) {
+        return true;
+      }
+    }
+  }
+
   // Ensures we can safely pass decimal<5,2> into a function expecting
   // decimal<9,2>
   if (auto expDec = llvm::dyn_cast<const DecimalType>(rawExp)) {
@@ -691,10 +700,9 @@ bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
   // 1. Allow assigning a String to a Char Array/Slice (char[6] = "Hello" or
   // char[] = "Hello")
   if (expIsArray) {
-    const Type *expElem = rawExp->is<SliceType>()
-                              ? llvm::cast<SliceType>(rawExp)->getElementType()
-                              : llvm::cast<ArrayType>(rawExp)->getElementType();
-    if (isCharType(expElem) && rawAct->isString()) {
+    // FIX: Safely use the pre-computed logical element to avoid pointer cast
+    // crashes!
+    if (isCharType(expLogicalElem) && rawAct->isString()) {
       return true;
     }
   }
@@ -702,11 +710,7 @@ bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
   // 2. Allow implicitly using a Char Array/Slice as a String
   if (rawExp->isString()) {
     if (actIsArray) {
-      const Type *actElem =
-          rawAct->is<SliceType>()
-              ? llvm::cast<SliceType>(rawAct)->getElementType()
-              : llvm::cast<ArrayType>(rawAct)->getElementType();
-      if (isCharType(actElem)) {
+      if (isCharType(actLogicalElem)) {
         return true;
       }
     }
@@ -735,6 +739,18 @@ bool TypeChecker::isCastAllowed(const Type *src, const Type *dst) {
 
   if (dst->isString()) {
     return true;
+  }
+
+  if (auto srcArr = llvm::dyn_cast<const ArrayType>(src)) {
+    if (auto dstSlice = llvm::dyn_cast<const SliceType>(dst)) {
+      return isCompatible(srcArr->getElementType(), dstSlice->getElementType());
+    }
+  }
+  if (auto srcSlice = llvm::dyn_cast<const SliceType>(src)) {
+    if (auto dstSlice = llvm::dyn_cast<const SliceType>(dst)) {
+      return isCompatible(srcSlice->getElementType(),
+                          dstSlice->getElementType());
+    }
   }
 
   // 2. Allow casting between any numeric types (int to float, etc.)
@@ -1309,7 +1325,7 @@ void TypeChecker::visitIdentifierExpr(const IdentifierExpr *expr) {
   } else {
     if (!isLHSOfAssignment && sym->kind == SymbolKind::Variable && sym->decl) {
       if (auto varDecl = llvm::dyn_cast<const VariableDecl>(sym->decl)) {
-        if (!initializedVars.count(varDecl)) {
+        if (!initializedVars.count(varDecl) && !varDecl->isExternVar()) {
           Diags.report(expr->getLoc(), DiagID::err_uninitialized_var)
               << " '" << expr->getName()
               << "' used before being definitely assigned";
@@ -2411,6 +2427,16 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
     if (isCompatible(expected, actual))
       return true;
 
+    if (auto *ptrExp =
+            llvm::dyn_cast<const PointerType>(unwrapConcurrency(expected))) {
+      const Type *pointeeTy = unwrapConcurrency(ptrExp->getPointee());
+      if (pointeeTy->is<SliceType>() || pointeeTy->is<ArrayType>()) {
+        if (isCompatible(pointeeTy, actual)) {
+          return true; // Accept passing the array/slice directly!
+        }
+      }
+    }
+
     // Support Lock Elevation during function calls
     if (auto id = llvm::dyn_cast<const IdentifierExpr>(argExpr)) {
       if (hasLock(actual) && activeLocks.count(id->getName()) &&
@@ -2696,119 +2722,133 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
            funcName == "select" || funcName == "yield" ||
            funcName == "sleep")) {
 
-        // --- Parameterless/Simple builtins ---
-        if (funcName == "yield") {
-          lastComputedType = context.saveType(std::make_unique<PromiseType>(
-              std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void,
-                                              expr->getLoc()),
-              expr->getLoc()));
-          const_cast<IdentifierExpr *>(idExpr)->setType(
-              context.createFunctionType(argTypes, lastComputedType));
-          setAndReturn();
-          return;
-        }
-        if (funcName == "sleep") {
-          if (argTypes.empty() || !argTypes[0]->isInteger()) {
-            Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
-                << "sleep expects (i32)";
-            hasError = true;
-          }
-          lastComputedType = context.saveType(std::make_unique<PromiseType>(
-              std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void,
-                                              expr->getLoc()),
-              expr->getLoc()));
-          const_cast<IdentifierExpr *>(idExpr)->setType(
-              context.createFunctionType(argTypes, lastComputedType));
-          setAndReturn();
-          return;
-        }
-
-        if (expr->getArgs().empty()) {
-          Diags.report(expr->getLoc(), DiagID::err_argument_count_mismatch);
-          hasError = true;
-          lastComputedType = context.getAnyType();
-          setAndReturn();
-          return;
-        }
-
-        // 1. Verify argument is a promise<T> OR an async closure func() ->
-        // promise<T>
-        const Type *firstArgTy = argTypes[0];
-        const Type *rawFirstArg = unwrapConcurrency(firstArgTy);
-        const PromiseType *promiseTy = llvm::dyn_cast<PromiseType>(rawFirstArg);
-
-        if (!promiseTy && (funcName == "spawn" || funcName == "timeout" ||
-                           funcName == "join" || funcName == "select")) {
-          if (auto *closTy = llvm::dyn_cast<ClosureType>(rawFirstArg)) {
-            promiseTy = llvm::dyn_cast<PromiseType>(closTy->getReturnType());
-          } else if (auto *funcTy = llvm::dyn_cast<FunctionType>(rawFirstArg)) {
-            promiseTy = llvm::dyn_cast<PromiseType>(funcTy->getReturnType());
+        // --- NEW: Bypass concurrency logic if it's the String Join method ---
+        bool isStringJoin = false;
+        if (funcName == "join" && !argTypes.empty()) {
+          const Type *rawFirst = unwrapConcurrency(argTypes[0]);
+          if (rawFirst->is<SliceType>() || rawFirst->is<ArrayType>()) {
+            isStringJoin = true;
           }
         }
 
-        if (!promiseTy) {
-          Diags.report(expr->getArgs()[0]->getLoc(), DiagID::err_type_mismatch)
-              << "expected a promise or async closure, got "
-              << firstArgTy->toString();
-          hasError = true;
-          lastComputedType = context.getAnyType(); // Prevent cascade errors
-          setAndReturn();
-          return;
-        }
-
-        const Type *innerTy = promiseTy->getInner();
-
-        // 2. Validate logic and compute the STRONG return type
-        if (funcName == "spawn") {
-          lastComputedType = context.saveType(
-              std::make_unique<PromiseType>(innerTy->clone(), expr->getLoc()));
-        } else if (funcName == "cancel") {
-          lastComputedType = context.getVoidType();
-        } else if (funcName == "timeout") {
-          if (expr->getArgs().size() != 2 || !argTypes[1]->isInteger()) {
-            Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
-                << "timeout expects (promise<T>, i32)";
-            hasError = true;
+        if (!isStringJoin) {
+          // --- Parameterless/Simple builtins ---
+          if (funcName == "yield") {
+            lastComputedType = context.saveType(std::make_unique<PromiseType>(
+                std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void,
+                                                expr->getLoc()),
+                expr->getLoc()));
+            const_cast<IdentifierExpr *>(idExpr)->setType(
+                context.createFunctionType(argTypes, lastComputedType));
+            setAndReturn();
+            return;
           }
-          lastComputedType = context.saveType(std::make_unique<PromiseType>(
-              std::make_unique<PromiseType>(innerTy->clone(), expr->getLoc()),
-              expr->getLoc()));
-        } else if (funcName == "join" || funcName == "select") {
-          for (size_t i = 1; i < expr->getArgs().size(); ++i) {
-            const Type *ithPromise = unwrapConcurrency(argTypes[i]);
-            if (auto *closTy = llvm::dyn_cast<ClosureType>(ithPromise)) {
-              ithPromise = closTy->getReturnType();
-            } else if (auto *funcTy =
-                           llvm::dyn_cast<FunctionType>(ithPromise)) {
-              ithPromise = funcTy->getReturnType();
-            }
-
-            if (!ithPromise || !ithPromise->isEquivalent(*promiseTy)) {
-              Diags.report(expr->getArgs()[i]->getLoc(),
-                           DiagID::err_type_mismatch)
-                  << funcName
-                  << " requires all promises to have the exact same type. "
-                  << "Found " << argTypes[i]->toString() << ", expected "
-                  << firstArgTy->toString();
+          if (funcName == "sleep") {
+            if (argTypes.empty() || !argTypes[0]->isInteger()) {
+              Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
+                  << "sleep expects (i32)";
               hasError = true;
             }
+            lastComputedType = context.saveType(std::make_unique<PromiseType>(
+                std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void,
+                                                expr->getLoc()),
+                expr->getLoc()));
+            const_cast<IdentifierExpr *>(idExpr)->setType(
+                context.createFunctionType(argTypes, lastComputedType));
+            setAndReturn();
+            return;
           }
 
-          if (funcName == "join") {
-            lastComputedType = context.saveType(std::make_unique<PromiseType>(
-                context.getSliceType(innerTy)->clone(), expr->getLoc()));
-          } else {
+          if (expr->getArgs().empty()) {
+            Diags.report(expr->getLoc(), DiagID::err_argument_count_mismatch);
+            hasError = true;
+            lastComputedType = context.getAnyType();
+            setAndReturn();
+            return;
+          }
+
+          // 1. Verify argument is a promise<T> OR an async closure func() ->
+          // promise<T>
+          const Type *firstArgTy = argTypes[0];
+          const Type *rawFirstArg = unwrapConcurrency(firstArgTy);
+          const PromiseType *promiseTy =
+              llvm::dyn_cast<PromiseType>(rawFirstArg);
+
+          if (!promiseTy && (funcName == "spawn" || funcName == "timeout" ||
+                             funcName == "join" || funcName == "select")) {
+            if (auto *closTy = llvm::dyn_cast<ClosureType>(rawFirstArg)) {
+              promiseTy = llvm::dyn_cast<PromiseType>(closTy->getReturnType());
+            } else if (auto *funcTy =
+                           llvm::dyn_cast<FunctionType>(rawFirstArg)) {
+              promiseTy = llvm::dyn_cast<PromiseType>(funcTy->getReturnType());
+            }
+          }
+
+          if (!promiseTy) {
+            Diags.report(expr->getArgs()[0]->getLoc(),
+                         DiagID::err_type_mismatch)
+                << "expected a promise or async closure, got "
+                << firstArgTy->toString();
+            hasError = true;
+            lastComputedType = context.getAnyType(); // Prevent cascade errors
+            setAndReturn();
+            return;
+          }
+
+          const Type *innerTy = promiseTy->getInner();
+
+          // 2. Validate logic and compute the STRONG return type
+          if (funcName == "spawn") {
             lastComputedType = context.saveType(std::make_unique<PromiseType>(
                 innerTy->clone(), expr->getLoc()));
-          }
-        }
+          } else if (funcName == "cancel") {
+            lastComputedType = context.getVoidType();
+          } else if (funcName == "timeout") {
+            if (expr->getArgs().size() != 2 || !argTypes[1]->isInteger()) {
+              Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
+                  << "timeout expects (promise<T>, i32)";
+              hasError = true;
+            }
+            lastComputedType = context.saveType(std::make_unique<PromiseType>(
+                std::make_unique<PromiseType>(innerTy->clone(), expr->getLoc()),
+                expr->getLoc()));
+          } else if (funcName == "join" || funcName == "select") {
+            for (size_t i = 1; i < expr->getArgs().size(); ++i) {
+              const Type *ithPromise = unwrapConcurrency(argTypes[i]);
+              if (auto *closTy = llvm::dyn_cast<ClosureType>(ithPromise)) {
+                ithPromise = closTy->getReturnType();
+              } else if (auto *funcTy =
+                             llvm::dyn_cast<FunctionType>(ithPromise)) {
+                ithPromise = funcTy->getReturnType();
+              }
 
-        // 3. MAGIC: Override the AST node types and short-circuit the
-        // typechecker
-        const_cast<IdentifierExpr *>(idExpr)->setType(
-            context.createFunctionType(argTypes, lastComputedType));
-        setAndReturn();
-        return;
+              if (!ithPromise || !ithPromise->isEquivalent(*promiseTy)) {
+                Diags.report(expr->getArgs()[i]->getLoc(),
+                             DiagID::err_type_mismatch)
+                    << funcName
+                    << " requires all promises to have the exact same type. "
+                    << "Found " << argTypes[i]->toString() << ", expected "
+                    << firstArgTy->toString();
+                hasError = true;
+              }
+            }
+
+            if (funcName == "join") {
+              lastComputedType = context.saveType(std::make_unique<PromiseType>(
+                  context.getSliceType(innerTy)->clone(), expr->getLoc()));
+            } else {
+              lastComputedType = context.saveType(std::make_unique<PromiseType>(
+                  innerTy->clone(), expr->getLoc()));
+            }
+          }
+
+          // 3. MAGIC: Override the AST node types and short-circuit the
+          // typechecker
+          const_cast<IdentifierExpr *>(idExpr)->setType(
+              context.createFunctionType(argTypes, lastComputedType));
+          setAndReturn();
+          return;
+        } // End of !isStringJoin block
       }
     }
 
@@ -2831,6 +2871,7 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
         bool isGeneric = false;
         const GenericDecl *genericDecl = nullptr;
         std::vector<const Type *> inferredArgs;
+        int score = 0; // <--- ADDED: Overload resolution score
       };
       std::vector<OverloadMatch> validMatches;
 
@@ -2865,6 +2906,13 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
             if (auto expPtr = llvm::dyn_cast<const PointerType>(expected)) {
               if (auto actPtr = llvm::dyn_cast<const PointerType>(actual)) {
                 self(expPtr->getPointee(), actPtr->getPointee(), self);
+              } else {
+                // --- [NEW FIX] Allow array/slice value to infer against a
+                // pointer expected type! ---
+                const Type *pointeeTy = unwrapConcurrency(expPtr->getPointee());
+                if (pointeeTy->is<SliceType>() || pointeeTy->is<ArrayType>()) {
+                  self(pointeeTy, actual, self);
+                }
               }
             }
             if (auto expArr = llvm::dyn_cast<const ArrayType>(expected)) {
@@ -2923,7 +2971,6 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
               minRequiredArgs++;
           }
 
-          // [FIX] Allow variadic functions to exceed parameter count
           if (!innerFunc->isVariadicFunc()) {
             if (argTypes.size() < minRequiredArgs ||
                 argTypes.size() > sig.paramTypes.size()) {
@@ -2935,7 +2982,6 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
 
           bool match = true;
           for (size_t i = 0; i < argTypes.size(); ++i) {
-            // [FIX] For variadic args, check against the last parameter type
             size_t paramIdx =
                 (innerFunc->isVariadicFunc() && i >= sig.paramTypes.size())
                     ? sig.paramTypes.size() - 1
@@ -2946,7 +2992,7 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
 
             if (!isArgCompatible(sig.paramTypes[paramIdx].get(), argTypes[i],
                                  expr->getArgs()[i].get())) {
-              match = false; // Inference failed
+              match = false;
               break;
             }
           }
@@ -2957,13 +3003,34 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
               if (substitutions.count(tp.name)) {
                 inferredArgs.push_back(substitutions[tp.name]);
               } else {
-                match = false; // Failed to infer a required generic parameter
+                match = false;
                 break;
               }
             }
             if (match) {
+              // --- NEW: Calculate generic score ---
+              int score = 0;
+              for (size_t i = 0; i < argTypes.size(); ++i) {
+                size_t paramIdx =
+                    (innerFunc->isVariadicFunc() && i >= sig.paramTypes.size())
+                        ? sig.paramTypes.size() - 1
+                        : i;
+                if (paramIdx < sig.paramTypes.size()) {
+                  const Type *expected = sig.paramTypes[paramIdx].get();
+                  const Type *actual = argTypes[i];
+                  if (expected->isEquivalent(*actual))
+                    score += 10;
+                  else if (expected->getKind() == actual->getKind())
+                    score += 5;
+                  else if (expected->is<AnyType>())
+                    score += 1;
+                  else
+                    score += 2;
+                }
+              }
+
               validMatches.push_back({sig.returnType.get(), std::move(sig),
-                                      true, genericDecl, inferredArgs});
+                                      true, genericDecl, inferredArgs, score});
             }
           }
         }
@@ -2995,22 +3062,70 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
 
           if (match) {
             auto sig = resolver.resolveFunctionSignature(fn, {});
-            validMatches.push_back(
-                {sig.returnType.get(), std::move(sig), false, nullptr, {}});
+
+            // --- NEW: Calculate standard score ---
+            int score = 0;
+            for (size_t i = 0; i < argTypes.size(); ++i) {
+              size_t paramIdx =
+                  (fn->isVariadicFunc() && i >= sig.paramTypes.size())
+                      ? sig.paramTypes.size() - 1
+                      : i;
+              if (paramIdx < sig.paramTypes.size()) {
+                const Type *expected = sig.paramTypes[paramIdx].get();
+                const Type *actual = argTypes[i];
+                if (expected->isEquivalent(*actual))
+                  score += 10;
+                else if (expected->getKind() == actual->getKind())
+                  score += 5;
+                else if (expected->is<AnyType>())
+                  score += 1;
+                else
+                  score += 2;
+              }
+            }
+
+            validMatches.push_back({sig.returnType.get(),
+                                    std::move(sig),
+                                    false,
+                                    nullptr,
+                                    {},
+                                    score});
           }
         }
       }
 
       // Evaluate the collected matches
       if (validMatches.size() > 1) {
-        Diags.report(expr->getLoc(), DiagID::err_ambiguous_reference)
-            << "Ambiguous call to overloaded function '" << idExpr->getName()
-            << "'. Multiple signatures are compatible with the provided "
-               "arguments.";
-        hasError = true;
-        lastComputedType = context.getAnyType();
-        return;
-      } else if (validMatches.size() == 1) {
+        int bestScore = -1;
+        int tieCount = 0;
+        size_t bestIdx = 0;
+
+        for (size_t i = 0; i < validMatches.size(); ++i) {
+          if (validMatches[i].score > bestScore) {
+            bestScore = validMatches[i].score;
+            bestIdx = i;
+            tieCount = 1;
+          } else if (validMatches[i].score == bestScore) {
+            tieCount++;
+          }
+        }
+
+        if (tieCount > 1) {
+          Diags.report(expr->getLoc(), DiagID::err_ambiguous_reference)
+              << "Ambiguous call to overloaded function '" << idExpr->getName()
+              << "'. Multiple signatures are equally compatible with the "
+                 "provided arguments.";
+          hasError = true;
+          lastComputedType = context.getAnyType();
+          return;
+        }
+
+        // Isolate the undisputed best match
+        std::swap(validMatches[0], validMatches[bestIdx]);
+        validMatches.resize(1); // Discard the weaker overloads
+      }
+
+      if (validMatches.size() == 1) {
         auto *mutExpr = const_cast<CallExpr *>(expr);
         auto &match = validMatches[0];
 
@@ -3030,6 +3145,46 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
         }
 
         auto fnDecl = static_cast<const FunctionDecl *>(match.sig.decl);
+
+        if (fnDecl->isBuiltinFunc()) {
+          llvm::StringRef name = fnDecl->getName();
+
+          // Identify all heap-mutating built-in functions
+          bool isDynamicMethod =
+              (name == "push" || name == "pop" || name == "insert" ||
+               name == "remove" || name == "clear" || name == "capacity" ||
+               name == "resize" || name == "extend");
+
+          if (isDynamicMethod && !expr->getArgs().empty()) {
+            const Type *firstArgTy = argTypes[0]; // Already evaluated above
+            if (firstArgTy) {
+              const Type *rawFirstArg = unwrapConcurrency(firstArgTy);
+
+              // Peel away any pointer or reference layers if passed by
+              // address/borrow
+              if (auto *ptrTy =
+                      llvm::dyn_cast<const PointerType>(rawFirstArg)) {
+                rawFirstArg = unwrapConcurrency(ptrTy->getPointee());
+              } else if (auto *refTy =
+                             llvm::dyn_cast<const ReferenceType>(rawFirstArg)) {
+                rawFirstArg = unwrapConcurrency(refTy->getInner());
+              }
+
+              // Statically reject if the underlying type is a fixed-size
+              // ArrayType
+              if (llvm::isa<const ArrayType>(rawFirstArg)) {
+                Diags.report(expr->getArgs()[0]->getLoc(),
+                             DiagID::err_type_mismatch)
+                    << ("Cannot call dynamic heap-allocating method '" +
+                        name.str() + "' on a fixed-size stack array.");
+                hasError = true;
+                lastComputedType = context.getAnyType();
+                const_cast<CallExpr *>(expr)->setType(lastComputedType);
+                return; // Abort type-checking for this invalid node
+              }
+            }
+          }
+        }
 
         std::vector<const Type *> pTypes;
         for (auto &p : validMatches[0].sig.paramTypes)
@@ -4510,9 +4665,10 @@ void TypeChecker::visitIfStmt(const IfStmt *stmt) {
   stmt->getCondition()->accept(*this);
   const Type *condType = unwrapModifiers(lastComputedType);
 
-  if (!condType->isBool()) {
+  if (!lastComputedType->isBool() && !lastComputedType->is<AnyType>()) {
     Diags.report(stmt->getCondition()->getLoc(), DiagID::err_type_mismatch)
         << "If condition must be boolean";
+    hasError = true;
   }
 
   // --- [NEW] Evaluate constant false conditions to flag dead code ---
@@ -4570,9 +4726,10 @@ void TypeChecker::visitWhileStmt(const WhileStmt *stmt) {
   stmt->getCondition()->accept(*this);
   const Type *condType = unwrapModifiers(lastComputedType);
 
-  if (!condType->isBool()) {
+  if (!lastComputedType->isBool() && !lastComputedType->is<AnyType>()) {
     Diags.report(stmt->getCondition()->getLoc(), DiagID::err_type_mismatch)
-        << "While condition must be boolean";
+        << "If condition must be boolean";
+    hasError = true;
   }
 
   // --- [NEW] Evaluate constant true conditions for infinite loops ---
@@ -4620,9 +4777,10 @@ void TypeChecker::visitDoWhileStmt(const DoWhileStmt *stmt) {
   loopDepth--;
   stmt->getCondition()->accept(*this);
   const Type *condType = unwrapModifiers(lastComputedType);
-  if (!condType->isBool()) {
+  if (!lastComputedType->isBool() && !lastComputedType->is<AnyType>()) {
     Diags.report(stmt->getCondition()->getLoc(), DiagID::err_type_mismatch)
-        << "Do-While condition must be boolean";
+        << "If condition must be boolean";
+    hasError = true;
   }
 }
 

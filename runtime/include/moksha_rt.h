@@ -50,6 +50,17 @@ typedef struct {
   const AnyVTable *vtable; // Pointer to the type's specific VTable
 } MokshaAny;
 
+typedef unsigned __int128 MokshaAnyRet;
+
+static inline MokshaAnyRet moksha_pack_any(void *data,
+                                           const AnyVTable *vtable) {
+  MokshaAnyRet ret = 0;
+  ret = (MokshaAnyRet)(uintptr_t)vtable;
+  ret <<= 64;
+  ret |= (MokshaAnyRet)(uintptr_t)data;
+  return ret;
+}
+
 typedef struct {
   __int128 mantissa; // 128-bit signed integer
   int32_t scale;     // 32-bit signed scale
@@ -129,6 +140,30 @@ void *moksha_rt_array_pop(MokshaSlice *slice, size_t element_size);
 int32_t moksha_rt_array_length(MokshaSlice *slice);
 void *moksha_rt_array_at(MokshaSlice *slice, int32_t index,
                          size_t element_size);
+bool moksha_rt_array_is_empty(MokshaSlice *slice);
+int32_t moksha_rt_array_capacity(MokshaSlice *slice);
+void moksha_rt_array_clear(MokshaSlice *slice);
+void moksha_rt_array_copy(MokshaSlice *dest, MokshaSlice *src,
+                          size_t element_size);
+void *moksha_rt_array_slice(MokshaSlice *slice, int32_t start, int32_t end,
+                            size_t element_size);
+void moksha_rt_array_insert(MokshaSlice *slice, int32_t index, void *value_ptr,
+                            size_t element_size);
+void *moksha_rt_array_remove(MokshaSlice *slice, int32_t index,
+                             size_t element_size);
+void moksha_rt_array_fill(MokshaSlice *slice, void *value_ptr,
+                          size_t element_size);
+void moksha_rt_array_reverse(MokshaSlice *slice, size_t element_size);
+void *moksha_rt_array_clone(MokshaSlice *slice, size_t element_size);
+void moksha_rt_array_extend(MokshaSlice *dest, MokshaSlice *src,
+                            size_t element_size);
+void moksha_rt_array_resize(MokshaSlice *slice, int32_t new_len,
+                            size_t element_size);
+bool moksha_rt_array_contains(MokshaSlice *slice, void *value_ptr,
+                              size_t element_size);
+int32_t moksha_rt_array_index(MokshaSlice *slice, void *value_ptr,
+                              size_t element_size);
+void moksha_rt_array_sort(MokshaSlice *slice, size_t element_size);
 
 // ============================================================================
 // Strings & I/O
@@ -175,6 +210,25 @@ char *__moksha_any_to_string(MokshaAny *any_val);
 void moksha_print_decimal128(__int128_t value, int scale);
 
 // ============================================================================
+// Moksha String Builtins
+// ============================================================================
+char *moksha_string_substring(char *str, int32_t start, int32_t end);
+char *moksha_string_slice(char *str, int32_t start, int32_t end);
+bool moksha_string_contains(char *str, char *sub);
+int32_t moksha_string_index(char *str, char *sub);
+bool moksha_string_starts_with(char *str, char *prefix);
+bool moksha_string_ends_with(char *str, char *suffix);
+char *moksha_string_to_upper(char *str);
+char *moksha_string_to_lower(char *str);
+char *moksha_string_trim(char *str);
+char *moksha_string_replace(char *str, char *old_str, char *new_str);
+MokshaSlice *moksha_string_split(char *str, char *delim);
+char *moksha_string_join(MokshaSlice arr, char *delim);
+bool moksha_string_is_digit(char ch);
+bool moksha_string_is_alpha(char ch);
+bool moksha_string_is_whitespace(char ch);
+
+// ============================================================================
 // Decimal Math Functions
 // ============================================================================
 void __moksha_dec_scale(MokshaDecimal *out, MokshaDecimal *dec,
@@ -196,6 +250,75 @@ MokshaAny *moksha_rt_map_get_val_at(void *map_ptr, int32_t index);
 MokshaAny *moksha_rt_map_get(void *map_ptr, MokshaAny *key);
 int32_t moksha_rt_map_len(void *map_ptr);
 void moksha_rt_map_free_internal(void *map_ptr);
+
+// Map built-in functions
+bool moksha_rt_map_has(void *map_ptr, MokshaAny *key);
+int32_t moksha_rt_map_length(void *map_ptr);
+void moksha_rt_map_clear(void *map_ptr);
+void moksha_rt_map_remove(void *map_ptr, MokshaAny *key);
+
+// ============================================================================
+// Universal Boxing API (for dynamically typed data like JSON/YAML)
+// ============================================================================
+MokshaAny *moksha_box_string(char *str);
+MokshaAny *moksha_box_i32(int32_t val);
+MokshaAny *moksha_box_f64(double val);
+MokshaAny *moksha_box_bool(bool val);
+MokshaAny *moksha_box_map(void *map_ptr);
+MokshaAny *moksha_box_array(MokshaSlice *slice);
+
+// ============================================================================
+// File System & IO Builtins
+// ============================================================================
+MokshaAnyRet moksha_file_open(char *path, int32_t mode);
+void moksha_file_close(MokshaAny *file_any);
+
+void moksha_file_write(MokshaAny *file_any, MokshaAny *data_any);
+MokshaAnyRet moksha_file_read(MokshaAny *file_any);
+
+bool moksha_file_exists(char *path);
+int64_t moksha_file_size(MokshaAny *file_any);
+
+void moksha_file_seek(MokshaAny *file_any, int64_t pos);
+int64_t moksha_file_tell(MokshaAny *file_any);
+void moksha_file_flush(MokshaAny *file_any);
+bool moksha_file_eof(MokshaAny *file_any);
+void moksha_file_truncate(MokshaAny *file_any, int64_t size);
+
+void moksha_file_writeLine(MokshaAny *file_any, char *text);
+char *moksha_file_readLine(MokshaAny *file_any);
+MokshaAnyRet moksha_file_readLines(MokshaAny *file_any);
+
+void moksha_file_writeText(char *path, char *text);
+void moksha_file_appendText(char *path, char *text);
+char *moksha_file_readText(char *path);
+
+void moksha_file_writeBytes(char *path, void *bytes_any);
+void moksha_file_appendBytes(char *path, void *bytes_any);
+MokshaAnyRet moksha_file_readBytes(char *path);
+
+void moksha_file_writeJson(char *path, void *data_any);
+MokshaAnyRet moksha_file_readJson(char *path);
+void moksha_file_writeYaml(char *path, void *data_any);
+MokshaAnyRet moksha_file_readYaml(char *path);
+
+MokshaAnyRet moksha_file_createPdf(char *path);
+void moksha_file_writePdfText(MokshaAny *pdf_any, char *text);
+void moksha_file_savePdf(MokshaAny *pdf_any);
+MokshaAnyRet moksha_file_openPdf(char *path);
+char *moksha_file_extractText(MokshaAny *pdf_any);
+
+bool moksha_file_createDir(char *path);
+bool moksha_file_isDir(char *path);
+bool moksha_file_isFile(char *path);
+bool moksha_file_copy(char *src, char *dst);
+bool moksha_file_move(char *src, char *dst);
+MokshaAnyRet moksha_file_listDir(char *path);
+bool moksha_file_remove(char *path);
+bool moksha_file_removeDir(char *path);
+
+// Missing Array length builtin from the linker error
+int32_t length(void *arr_ptr);
 
 // ============================================================================
 // Synchronization & Concurrency
@@ -251,6 +374,33 @@ void *moksha_rt_get_exception_payload(struct _Unwind_Exception *exc_base);
 void __moksha_f64_to_decimal(MokshaDecimal *out, double val,
                              int32_t target_scale);
 double __moksha_decimal_to_f64(MokshaDecimal *dec);
+
+// ============================================================================
+// Math Builtins
+// ============================================================================
+double moksha_rt_math_tan(double x);
+double moksha_rt_math_asin(double x);
+double moksha_rt_math_acos(double x);
+double moksha_rt_math_atan(double x);
+double moksha_rt_math_atan2(double y, double x);
+double moksha_rt_math_cbrt(double x);
+double moksha_rt_math_hypot(double x, double y);
+double moksha_rt_math_fmod(double a, double b);
+double moksha_rt_math_mod(double a, double b);
+double moksha_rt_math_min(double a, double b);
+double moksha_rt_math_max(double a, double b);
+double moksha_rt_math_clamp(double x, double low, double high);
+double moksha_rt_math_lerp(double a, double b, double t);
+double moksha_rt_math_sign(double x);
+
+double moksha_rt_math_random();
+int32_t moksha_rt_math_randint(int32_t min, int32_t max);
+void moksha_rt_math_seed(int32_t val);
+
+bool moksha_rt_math_isPowerOf2(int32_t x);
+bool moksha_rt_math_isnan(double x);
+bool moksha_rt_math_isinf(double x);
+bool moksha_rt_math_isfinite(double x);
 
 // ============================================================================
 // Builtin Object Bindings

@@ -1,0 +1,247 @@
+// ==========================================
+// math_builtins.mox
+// Test suite for Moksha Math Builtins
+// ==========================================
+
+void test_constants() {
+    println("--- Testing Math Constants ---");
+
+    // Using floor() to safely check irrationals
+    if (floor(PI) == 3.0) {
+        println("PASS: PI constant");
+    } else {
+        println("[CRITICAL] FAIL: PI constant");
+    }
+
+    if (floor(E) == 2.0) {
+        println("PASS: E constant");
+    } else {
+        println("[CRITICAL] FAIL: E constant");
+    }
+}
+
+void test_basic_math() {
+    println("--- Testing Basic Math ---");
+
+    if (abs(-5.0) == 5.0) {
+        println("PASS: abs()");
+    } else {
+        println("[CRITICAL] FAIL: abs()");
+    }
+
+    if (sqrt(16.0) == 4.0) {
+        println("PASS: sqrt()");
+    } else {
+        println("[CRITICAL] FAIL: sqrt()");
+    }
+
+    if (cbrt(27.0) == 3.0) {
+        println("PASS: cbrt()");
+    } else {
+        println("[CRITICAL] FAIL: cbrt()");
+    }
+
+    if (hypot(3.0, 4.0) == 5.0) {
+        println("PASS: hypot()");
+    } else {
+        println("[CRITICAL] FAIL: hypot()");
+    }
+}
+
+void test_rounding() {
+    println("--- Testing Rounding ---");
+
+    if (floor(3.7) == 3.0) {
+        println("PASS: floor()");
+    } else {
+        println("[CRITICAL] FAIL: floor()");
+    }
+
+    if (ceil(3.2) == 4.0) {
+        println("PASS: ceil()");
+    } else {
+        println("[CRITICAL] FAIL: ceil()");
+    }
+
+    if (round(3.6) == 4.0) {
+        println("PASS: round()");
+    } else {
+        println("[CRITICAL] FAIL: round()");
+    }
+
+    if (trunc(-3.7) == -3.0) {
+        println("PASS: trunc()");
+    } else {
+        println("[CRITICAL] FAIL: trunc()");
+    }
+}
+
+void test_utils() {
+    println("--- Testing Math Utilities ---");
+
+    if (min(3.0, 5.0) == 3.0) {
+        println("PASS: min()");
+    } else {
+        println("[CRITICAL] FAIL: min()");
+    }
+
+    if (max(3.0, 5.0) == 5.0) {
+        println("PASS: max()");
+    } else {
+        println("[CRITICAL] FAIL: max()");
+    }
+
+    if (clamp(10.0, 0.0, 5.0) == 5.0) {
+        println("PASS: clamp()");
+    } else {
+        println("[CRITICAL] FAIL: clamp()");
+    }
+
+    if (sign(-42.0) == -1.0) {
+        println("PASS: sign()");
+    } else {
+        println("[CRITICAL] FAIL: sign()");
+    }
+
+    if (lerp(0.0, 10.0, 0.5) == 5.0) {
+        println("PASS: lerp()");
+    } else {
+        println("[CRITICAL] FAIL: lerp()");
+    }
+}
+
+void test_trig() {
+    println("--- Testing Trigonometry ---");
+
+    if (sin(0.0) == 0.0) {
+        println("PASS: sin()");
+    } else {
+        println("[CRITICAL] FAIL: sin()");
+    }
+
+    if (cos(0.0) == 1.0) {
+        println("PASS: cos()");
+    } else {
+        println("[CRITICAL] FAIL: cos()");
+    }
+
+    if (tan(0.0) == 0.0) {
+        println("PASS: tan()");
+    } else {
+        println("[CRITICAL] FAIL: tan()");
+    }
+}
+
+void test_exp_log() {
+    println("--- Testing Exponents & Logs ---");
+
+    if (log10(100.0) == 2.0) {
+        println("PASS: log10()");
+    } else {
+        println("[CRITICAL] FAIL: log10()");
+    }
+
+    if (log2(8.0) == 3.0) {
+        println("PASS: log2()");
+    } else {
+        println("[CRITICAL] FAIL: log2()");
+    }
+
+    if (exp(0.0) == 1.0) {
+        println("PASS: exp()");
+    } else {
+        println("[CRITICAL] FAIL: exp()");
+    }
+}
+
+void test_mod() {
+    println("--- Testing Modulo ---");
+
+    if (mod(5.0, 3.0) == 2.0) {
+        println("PASS: mod()");
+    } else {
+        println("[CRITICAL] FAIL: mod()");
+    }
+
+    if (fmod(5.0, 3.0) == 2.0) {
+        println("PASS: fmod()");
+    } else {
+        println("[CRITICAL] FAIL: fmod()");
+    }
+}
+
+void test_bitwise_and_int() {
+    println("--- Testing Bitwise & Int Utilities ---");
+
+    if (popcount(7) == 3) {
+        println("PASS: popcount()");
+    } else {
+        println("[CRITICAL] FAIL: popcount()");
+    }
+
+    if (isPowerOf2(8) == true) {
+        println("PASS: isPowerOf2() true case");
+    } else {
+        println("[CRITICAL] FAIL: isPowerOf2() true case");
+    }
+
+    if (isPowerOf2(10) == false) {
+        println("PASS: isPowerOf2() false case");
+    } else {
+        println("[CRITICAL] FAIL: isPowerOf2() false case");
+    }
+}
+
+void test_checks() {
+    println("--- Testing Infinity & NaN Checks ---");
+
+    if (isnan(NAN) == true) {
+        println("PASS: isnan()");
+    } else {
+        println("[CRITICAL] FAIL: isnan()");
+    }
+
+    if (isinf(INF) == true) {
+        println("PASS: isinf()");
+    } else {
+        println("[CRITICAL] FAIL: isinf()");
+    }
+
+    if (isfinite(5.0) == true) {
+        println("PASS: isfinite()");
+    } else {
+        println("[CRITICAL] FAIL: isfinite()");
+    }
+}
+
+void test_random() {
+    println("--- Testing Randomization ---");
+
+    seed(42);
+    println("PASS: seed() executed");
+
+    if (randint(1, 10) >= 1) {
+        println("PASS: randint() bounds check");
+    } else {
+        println("[CRITICAL] FAIL: randint() bounds check");
+    }
+}
+
+    println("==========================================");
+    println("      Moksha Math Builtins Test           ");
+    println("==========================================");
+
+    test_constants();
+    test_basic_math();
+    test_rounding();
+    test_utils();
+    test_trig();
+    test_exp_log();
+    test_mod();
+    test_bitwise_and_int();
+    test_checks();
+    test_random();
+
+    println("==========================================");
+    println("             Tests Complete               ");
+    println("==========================================");

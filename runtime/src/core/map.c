@@ -27,6 +27,10 @@ typedef struct {
   MapEntry *tail;
 } MokshaMap;
 
+// ============================================================================
+// Internal Helper: Unwrap compiler-boxed IndexExpr pointers
+// ============================================================================
+
 // Bare-metal string comparison
 static int internal_strcmp(const char *s1, const char *s2) {
   while (*s1 && (*s1 == *s2)) {
@@ -160,6 +164,7 @@ void moksha_rt_map_insert(void *map_ptr, MokshaAny *key, MokshaAny *value) {
 MokshaAny *moksha_rt_map_get(void *map_ptr, MokshaAny *key) {
   if (!map_ptr || !key || !key->data)
     return NULL;
+
   MokshaMap *map = (MokshaMap *)map_ptr;
   uint32_t hash = hash_any(key);
   uint32_t index = hash % map->capacity;
@@ -231,4 +236,99 @@ int32_t moksha_rt_map_len(void *map_ptr) {
 
   MokshaMap *map = (MokshaMap *)map_ptr;
   return (int32_t)map->size;
+}
+
+// ============================================================================
+// Moksha Map Builtins
+// ============================================================================
+
+// Helper to check key equality securely across types
+static bool map_keys_equal(MokshaAny *k1, MokshaAny *k2) {
+  if (k1->vtable->type_id != k2->vtable->type_id)
+    return false;
+
+  if (k1->data == k2->data)
+    return true; // Matches Ints/Bools/Refs
+
+  char *s1 = (char *)k1->data;
+  char *s2 = (char *)k2->data;
+  if (s1 && s2) {
+    return internal_strcmp(s1, s2) == 0; // Safely matches dynamic strings
+  }
+  return false;
+}
+
+extern MokshaAny *moksha_rt_map_get(void *map_ptr, MokshaAny *key);
+
+bool moksha_rt_map_has(void *map_ptr, MokshaAny *key) {
+  if (!map_ptr || !key)
+    return false;
+  return moksha_rt_map_get(map_ptr, key) != NULL;
+}
+
+int32_t moksha_rt_map_length(void *map_ptr) {
+  if (!map_ptr)
+    return 0;
+  return ((MokshaMap *)map_ptr)->size;
+}
+
+void moksha_rt_map_clear(void *map_ptr) {
+  if (!map_ptr)
+    return;
+  MokshaMap *map = (MokshaMap *)map_ptr;
+  MapEntry *curr = map->head;
+  while (curr) {
+    MapEntry *next = curr->order_next;
+    moksha_mem_free(curr);
+    curr = next;
+  }
+  for (uint32_t i = 0; i < map->capacity; i++) {
+    map->buckets[i] = NULL;
+  }
+  map->head = NULL;
+  map->tail = NULL;
+  map->size = 0;
+}
+
+void moksha_rt_map_remove(void *map_ptr, MokshaAny *key) {
+  if (!map_ptr || !key)
+    return;
+  MokshaMap *map = (MokshaMap *)map_ptr;
+
+  MapEntry *curr = map->head;
+  MapEntry *prev = NULL;
+  while (curr) {
+    if (map_keys_equal(&curr->key, key)) {
+      // 1. Unlink from insertion-ordered list
+      if (prev)
+        prev->order_next = curr->order_next;
+      else
+        map->head = curr->order_next;
+      if (map->tail == curr)
+        map->tail = prev;
+
+      // 2. Unlink from hash buckets
+      for (uint32_t i = 0; i < map->capacity; i++) {
+        MapEntry *b_curr = map->buckets[i];
+        MapEntry *b_prev = NULL;
+        while (b_curr) {
+          if (b_curr == curr) {
+            if (b_prev)
+              b_prev->next = b_curr->next;
+            else
+              map->buckets[i] = b_curr->next;
+            break;
+          }
+          b_prev = b_curr;
+          b_curr = b_curr->next;
+        }
+      }
+
+      map->size--;
+      moksha_mem_free(curr);
+      return;
+    }
+    prev = curr;
+    curr = curr->order_next;
+  }
 }

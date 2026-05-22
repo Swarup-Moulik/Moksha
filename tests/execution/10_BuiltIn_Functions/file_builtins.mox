@@ -1,0 +1,244 @@
+// ==========================================
+// File System & IO Builtins Test Suite
+// ==========================================
+
+void test_basic_io() {
+    println("--- Testing Basic IO & Constants ---");
+
+    // Test Open, Write, Close using Constants
+    any f = open("test_basic.txt", WRITE | CREATE);
+    write(f, "Moksha V1");
+    close(f);
+
+    if (exists("test_basic.txt")) {
+        println("PASS: open(path, mode), write(file, data), and close(file)");
+    } else {
+        println("[CRITICAL] FAIL: open(), write(), or close()");
+    }
+
+    // Test Read & Size
+    any f_read = open("test_basic.txt", READ);
+    int s = size(f_read);
+    any data = read(f_read);
+    close(f_read);
+
+    if (s > 0) {
+        println("PASS: size(file)");
+    } else {
+        println("[CRITICAL] FAIL: size(file)");
+    }
+
+    if (data == "Moksha V1") {
+        println("PASS: read(file)");
+    } else {
+        println("[CRITICAL] FAIL: read(file)");
+    }
+}
+
+void test_high_level_text() {
+    println("--- Testing High-Level Text IO ---");
+
+    writeText("hello.txt", "Hello\n");
+    appendText("hello.txt", "World");
+
+    any content = readText("hello.txt");
+    if (content == "Hello\nWorld") {
+        println("PASS: writeText(), appendText(), readText()");
+    } else {
+        println("[CRITICAL] FAIL: High-level text IO methods");
+    }
+
+    any lines = readLines("hello.txt"); // Assuming returns Array
+    if (length(lines) == 2) {
+        println("PASS: readLines(file)");
+    } else {
+        println("[CRITICAL] FAIL: readLines(file)");
+    }
+}
+
+void test_high_level_binary() {
+    println("--- Testing High-Level Binary IO ---");
+
+    int[] out_bytes = [255, 128, 64];
+    writeBytes("data.bin", out_bytes);
+
+    int[] more_bytes = [32, 16];
+    appendBytes("data.bin", more_bytes);
+
+    any in_bytes = readBytes("data.bin");
+
+    if (length(in_bytes) == 5) {
+        println("PASS: writeBytes(), appendBytes(), readBytes()");
+    } else {
+        println("[CRITICAL] FAIL: Binary IO length mismatch");
+    }
+}
+
+void test_structured_data() {
+    println("--- Testing JSON & YAML Serialization ---");
+
+    // JSON
+    any config_out = {"version": 1, "name": "moksha"};
+    writeJson("config.json", config_out);
+
+    any config_in = readJson("config.json");
+    if (config_in["version"] == 1) {
+        println("PASS: writeJson() and readJson()");
+    } else {
+        println("[CRITICAL] FAIL: JSON Serialization");
+    }
+
+    // YAML
+    writeYaml("config.yaml", config_out);
+    any yaml_in = readYaml("config.yaml");
+    if (yaml_in["name"] == "moksha") {
+        println("PASS: writeYaml() and readYaml()");
+    } else {
+        println("[CRITICAL] FAIL: YAML Serialization");
+    }
+}
+
+void test_stream_navigation() {
+    println("--- Testing Stream Navigation & Operations ---");
+
+    any f = open("stream.txt", WRITE | CREATE | TRUNCATE);
+    writeLine(f, "Line 1");
+    writeLine(f, "Line 2");
+    flush(f);
+    close(f);
+
+    any f_in = open("stream.txt", READ);
+    any l1 = readLine(f_in);
+
+    if (l1 == "Line 1") {
+        println("PASS: writeLine() and readLine()");
+    } else {
+        println("[CRITICAL] FAIL: writeLine() and readLine()");
+    }
+
+    int pos = tell(f_in);
+    if (pos > 0) {
+        println("PASS: tell(file)");
+    } else {
+        println("[CRITICAL] FAIL: tell(file)");
+    }
+
+    seek(f_in, 0);
+    if (tell(f_in) == 0) {
+        println("PASS: seek(file, position)");
+    } else {
+        println("[CRITICAL] FAIL: seek(file, position)");
+    }
+
+    readLine(f_in);
+    readLine(f_in); // Reach EOF
+
+    if (eof(f_in) == true) {
+        println("PASS: eof(file)");
+    } else {
+        println("[CRITICAL] FAIL: eof(file)");
+    }
+    close(f_in);
+
+    // Truncate
+    any f_trunc = open("stream.txt", WRITE | APPEND);
+    truncate(f_trunc, 4);
+    close(f_trunc);
+    if (size(open("stream.txt", READ)) == 4) {
+        println("PASS: truncate(file, size)");
+    } else {
+        println("[CRITICAL] FAIL: truncate(file, size)");
+    }
+}
+
+void test_pdf_operations() {
+    println("--- Testing PDF Operations ---");
+
+    any pdf = createPdf("doc.pdf");
+    writePdfText(pdf, "Moksha PDF Generation");
+    savePdf(pdf);
+
+    if (exists("doc.pdf")) {
+        println("PASS: createPdf(), writePdfText(), savePdf()");
+    } else {
+        println("[CRITICAL] FAIL: PDF Creation pipeline");
+    }
+
+    any in_pdf = openPdf("doc.pdf");
+    any text = extractText(in_pdf);
+
+    if (text == "Moksha PDF Generation") {
+        println("PASS: openPdf() and extractText()");
+    } else {
+        println("[CRITICAL] FAIL: PDF Extraction pipeline");
+    }
+}
+
+void test_filesystem_ops() {
+    println("--- Testing File System & Directory Management ---");
+
+    createDir("sandbox");
+    if (isDir("sandbox") == true) {
+        println("PASS: createDir() and isDir()");
+    } else {
+        println("[CRITICAL] FAIL: createDir() or isDir()");
+    }
+
+    writeText("sandbox/temp.txt", "data");
+    if (isFile("sandbox/temp.txt") == true) {
+        println("PASS: isFile()");
+    } else {
+        println("[CRITICAL] FAIL: isFile()");
+    }
+
+    copy("sandbox/temp.txt", "sandbox/backup.txt");
+    if (exists("sandbox/backup.txt")) {
+        println("PASS: copy(src, dst)");
+    } else {
+        println("[CRITICAL] FAIL: copy(src, dst)");
+    }
+
+    move_file("sandbox/backup.txt", "sandbox/moved.txt");
+    if (exists("sandbox/moved.txt") && !exists("sandbox/backup.txt")) {
+        println("PASS: move_file(src, dst)");
+    } else {
+        println("[CRITICAL] FAIL: move_file(src, dst)");
+    }
+
+    any files = listDir("sandbox");
+    if (length(files) > 0) {
+        println("PASS: listDir(path)");
+    } else {
+        println("[CRITICAL] FAIL: listDir(path)");
+    }
+
+    // Cleanup
+    remove("sandbox/temp.txt");
+    remove("sandbox/moved.txt");
+    removeDir("sandbox");
+
+    if (!exists("sandbox")) {
+        println("PASS: remove(path) and removeDir(path)");
+    } else {
+        println("[CRITICAL] FAIL: Cleanup methods failed");
+    }
+}
+
+// ==========================================
+// Top-Level Script Execution
+// ==========================================
+println("==========================================");
+println("      Moksha File Builtins Test Suite     ");
+println("==========================================");
+
+test_basic_io();
+test_high_level_text();
+test_high_level_binary();
+test_structured_data();
+test_stream_navigation();
+test_pdf_operations();
+test_filesystem_ops();
+
+println("==========================================");
+println("            All Tests Completed           ");
+println("==========================================");

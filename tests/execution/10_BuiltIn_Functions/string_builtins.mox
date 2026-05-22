@@ -1,0 +1,160 @@
+// ==========================================
+// string_builtins.mox
+// Test suite for Moksha String & Char Builtins
+// ==========================================
+
+void test_core_utilities() {
+    println("--- Testing Core String Utilities ---");
+
+    string s = "moksha";
+
+    if (substring(s, 1, 4) == "oks") {
+        println("PASS: substring()");
+    } else {
+        println("[CRITICAL] FAIL: substring() - expected 'oks'");
+    }
+
+    if (contains("hello world", "world") == true) {
+        println("PASS: contains() true case");
+    } else {
+        println("[CRITICAL] FAIL: contains() true case");
+    }
+
+    if (contains("hello world", "moksha") == false) {
+        println("PASS: contains() false case");
+    } else {
+        println("[CRITICAL] FAIL: contains() false case");
+    }
+
+    if (index("moksha", "sh") == 3) {
+        println("PASS: index() found");
+    } else {
+        println("[CRITICAL] FAIL: index() found - expected 3");
+    }
+
+    if (index("moksha", "z") == -1) {
+        println("PASS: index() not found");
+    } else {
+        println("[CRITICAL] FAIL: index() not found - expected -1");
+    }
+
+    if (starts_with("compiler", "com") == true) {
+        println("PASS: starts_with()");
+    } else {
+        println("[CRITICAL] FAIL: starts_with()");
+    }
+
+    if (ends_with("main.mok", ".mok") == true) {
+        println("PASS: ends_with()");
+    } else {
+        println("[CRITICAL] FAIL: ends_with()");
+    }
+
+    if (slice("abcdef", 1, 4) == "bcd") {
+        println("PASS: slice()");
+    } else {
+        println("[CRITICAL] FAIL: slice() - expected 'bcd'");
+    }
+}
+
+void test_transform_utilities() {
+    println("--- Testing Mutation / Transform Utilities ---");
+
+    if (to_upper("moksha") == "MOKSHA") {
+        println("PASS: to_upper()");
+    } else {
+        println("[CRITICAL] FAIL: to_upper()");
+    }
+
+    if (to_lower("MOKSHA") == "moksha") {
+        println("PASS: to_lower()");
+    } else {
+        println("[CRITICAL] FAIL: to_lower()");
+    }
+
+    if (trim("  hello  ") == "hello") {
+        println("PASS: trim()");
+    } else {
+        println("[CRITICAL] FAIL: trim()");
+    }
+
+    if (replace("a-b-c", "-", ":") == "a:b:c") {
+        println("PASS: replace()");
+    } else {
+        println("[CRITICAL] FAIL: replace()");
+    }
+}
+
+void test_split_join() {
+    println("--- Testing Splitting / Joining ---");
+
+    string[] parts = split("a,b,c", ",");
+
+    if (length(parts) == 3) {
+        println("PASS: split() returned correct length");
+    } else {
+        println("[CRITICAL] FAIL: split() returned correct length");
+    }
+
+    if (parts[1] == "b") {
+        println("PASS: split() partitioned data correctly");
+    } else {
+        println("[CRITICAL] FAIL: split() partitioned data correctly");
+    }
+
+    // Creating a string slice to test join
+    string[] to_join = cast<string[]>(["x", "y", "z"]);
+
+    if (join(to_join, "-") == "x-y-z") {
+        println("PASS: join()");
+    } else {
+        println("[CRITICAL] FAIL: join()");
+    }
+}
+
+void test_char_utilities() {
+    println("--- Testing Character Utilities ---");
+
+    if (is_digit('7') == true) {
+        println("PASS: is_digit() on number");
+    } else {
+        println("[CRITICAL] FAIL: is_digit() on number");
+    }
+
+    if (is_digit('a') == false) {
+        println("PASS: is_digit() on letter");
+    } else {
+        println("[CRITICAL] FAIL: is_digit() on letter");
+    }
+
+    if (is_alpha('Z') == true) {
+        println("PASS: is_alpha() on letter");
+    } else {
+        println("[CRITICAL] FAIL: is_alpha() on letter");
+    }
+
+    if (is_whitespace(' ') == true) {
+        println("PASS: is_whitespace() on space");
+    } else {
+        println("[CRITICAL] FAIL: is_whitespace() on space");
+    }
+
+    if (is_whitespace('\n') == true) {
+        println("PASS: is_whitespace() on newline");
+    } else {
+        println("[CRITICAL] FAIL: is_whitespace() on newline");
+    }
+}
+
+println("==========================================");
+println("      Moksha String Builtins Test         ");
+println("==========================================");
+
+test_core_utilities();
+test_transform_utilities();
+test_split_join();
+test_char_utilities();
+
+println("==========================================");
+println("             Tests Complete               ");
+println("==========================================");

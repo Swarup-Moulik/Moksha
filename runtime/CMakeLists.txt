@@ -29,6 +29,8 @@ set(CORE_SOURCES
     src/core/map.c
     src/core/sync.c
     src/core/io.c
+    src/core/file.c
+    src/core/box.c
     src/core/exceptions.c
     src/core/channel.c
     src/memory/allocator.c

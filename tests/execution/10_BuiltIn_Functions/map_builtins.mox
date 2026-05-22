@@ -1,0 +1,43 @@
+table<string, int> scores = {
+    "Alice": 100,
+    "Bob": 95
+}
+
+scores["Alice"] = 98;
+    scores["Charlie"] = 69;
+    println(scores["Alice"]);
+    println(scores["Charlie"]);
+
+    println("--- Testing Map Builtins ---");
+
+    if (has(scores, "Alice")) {
+        println("PASS: has() found Alice");
+    } else {
+        println("[CRITICAL] FAIL: has() Alice");
+    }
+
+    if (!has(scores, "David")) {
+        println("PASS: has() did not find David");
+    } else {
+        println("[CRITICAL] FAIL: has() David");
+    }
+
+    if (length(scores) == 3) {
+        println("PASS: length() is 3");
+    } else {
+        println("[CRITICAL] FAIL: length() is not 3");
+    }
+
+    remove(scores, "Bob");
+    if (!has(scores, "Bob") && length(scores) == 2) {
+        println("PASS: remove() Bob");
+    } else {
+        println("[CRITICAL] FAIL: remove() Bob");
+    }
+
+    clear(scores);
+    if (length(scores) == 0 && !has(scores, "Alice")) {
+        println("PASS: clear()");
+    } else {
+        println("[CRITICAL] FAIL: clear()");
+    }

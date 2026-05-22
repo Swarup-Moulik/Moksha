@@ -1,0 +1,233 @@
+void test_universal_properties() {
+    println("--- Testing Universal Properties ---");
+
+    int[5] fixed = [1, 2, 3, 4, 5];
+
+    if (length(fixed) == 5) {
+        println("PASS: Fixed array length()");
+    } else {
+        println("[CRITICAL] FAIL: Fixed array length()");
+    }
+
+    if (is_empty(fixed) == false) {
+        println("PASS: Fixed array is_empty()");
+    } else {
+        println("[CRITICAL] FAIL: Fixed array is_empty()");
+    }
+
+    int[] dyn = [];
+
+    if (length(dyn) == 0) {
+        println("PASS: Dynamic array length() on empty");
+    } else {
+        println("[CRITICAL] FAIL: Dynamic array length() on empty");
+    }
+
+    if (is_empty(dyn) == true) {
+        println("PASS: Dynamic array is_empty() on empty");
+    } else {
+        println("[CRITICAL] FAIL: Dynamic array is_empty() on empty");
+    }
+}
+
+void test_dynamic_mutations() {
+    println("--- Testing Dynamic Heap Mutations ---");
+    int[] arr = [];
+
+    // Push & Pop
+    push(arr, 10);
+    push(arr, 20);
+    push(arr, 30);
+
+    if (length(arr) == 3) {
+        println("PASS: push() updates length");
+    } else {
+        println("[CRITICAL] FAIL: push() updates length");
+    }
+
+    int last = pop(arr);
+
+    if (last == 30) {
+        println("PASS: pop() returns correct value");
+    } else {
+        println("[CRITICAL] FAIL: pop() returns correct value");
+    }
+
+    if (length(arr) == 2) {
+        println("PASS: pop() decrements length");
+    } else {
+        println("[CRITICAL] FAIL: pop() decrements length");
+    }
+
+    // Insert & Remove
+    insert(arr, 1, 15); // [10, 15, 20]
+
+    if (arr[1] == 15) {
+        println("PASS: insert() shifts elements correctly");
+    } else {
+        println("[CRITICAL] FAIL: insert() shifts elements correctly");
+    }
+
+    int removed = remove(arr, 0); // [15, 20]
+
+    if (removed == 10) {
+        println("PASS: remove() returns correct value");
+    } else {
+        println("[CRITICAL] FAIL: remove() returns correct value");
+    }
+
+    if (length(arr) == 2) {
+        println("PASS: remove() shifts elements left");
+    } else {
+        println("[CRITICAL] FAIL: remove() shifts elements left");
+    }
+
+    // Extend
+    int[] more = [...arr, 100, 200];
+
+    if (length(more) == 4) {
+        println("PASS: extend() merges slices");
+    } else {
+        println("[CRITICAL] FAIL: extend() merges slices");
+    }
+
+    // Clear & Resize
+    clear(arr);
+
+    if (is_empty(arr) == true) {
+        println("PASS: clear() resets length");
+    } else {
+        println("[CRITICAL] FAIL: clear() resets length");
+    }
+
+    resize(arr, 5);
+
+    if (length(arr) == 5) {
+        println("PASS: resize() allocates exact length");
+    } else {
+        println("[CRITICAL] FAIL: resize() allocates exact length");
+    }
+}
+
+void test_search_and_sort() {
+    println("--- Testing Search, Sort, and Fill ---");
+    int[] arr = [50, 10, 30, 20, 40];
+
+    // Contains & Index
+    if (contains(arr, 30) == true) {
+        println("PASS: contains() finds element");
+    } else {
+        println("[CRITICAL] FAIL: contains() finds element");
+    }
+
+    if (contains(arr, 99) == false) {
+        println("PASS: contains() rejects missing element");
+    } else {
+        println("[CRITICAL] FAIL: contains() rejects missing element");
+    }
+
+    if (index(arr, 30) == 2) {
+        println("PASS: index() returns correct position");
+    } else {
+        println("[CRITICAL] FAIL: index() returns correct position");
+    }
+
+    // Sort & Reverse
+    sort(arr); // [10, 20, 30, 40, 50]
+
+    if (arr[0] == 10) {
+        println("PASS: sort() orders ascending (min)");
+    } else {
+        println("[CRITICAL] FAIL: sort() orders ascending (min)");
+    }
+
+    if (arr[4] == 50) {
+        println("PASS: sort() orders ascending (max)");
+    } else {
+        println("[CRITICAL] FAIL: sort() orders ascending (max)");
+    }
+
+    reverse(arr); // [50, 40, 30, 20, 10]
+
+    if (arr[0] == 50) {
+        println("PASS: reverse() flips ordering");
+    } else {
+        println("[CRITICAL] FAIL: reverse() flips ordering");
+    }
+
+    // Fill
+    fill(arr, 7);
+
+    if (arr[0] == 7) {
+        println("PASS: fill() updates start");
+    } else {
+        println("[CRITICAL] FAIL: fill() updates start");
+    }
+
+    if (arr[4] == 7) {
+        println("PASS: fill() updates end");
+    } else {
+        println("[CRITICAL] FAIL: fill() updates end");
+    }
+}
+
+void test_memory_semantics() {
+    println("--- Testing Reference & Memory Semantics ---");
+    int[] original = [1, 2, 3];
+
+    // Clone (Deep Copy)
+    int[] deep_copy = clone(original);
+    push(deep_copy, 4);
+
+    if (length(original) == 3) {
+        println("PASS: clone() protects original array from mutations");
+    } else {
+        println("[CRITICAL] FAIL: clone() protects original array from mutations");
+    }
+
+    if (length(deep_copy) == 4) {
+        println("PASS: clone() allows independent mutation");
+    } else {
+        println("[CRITICAL] FAIL: clone() allows independent mutation");
+    }
+
+    // Copy (Raw Blit)
+    int[] dest = [0, 0, 0];
+    copy(dest, original);
+
+    if (dest[0] == 1) {
+        println("PASS: copy() blits data correctly");
+    } else {
+        println("[CRITICAL] FAIL: copy() blits data correctly");
+    }
+
+    // Slice (O(1) View)
+    int[] my_slice = slice(original, 1, 3); // [2, 3]
+
+    if (length(my_slice) == 2) {
+        println("PASS: slice() creates correctly sized fat pointer");
+    } else {
+        println("[CRITICAL] FAIL: slice() creates correctly sized fat pointer");
+    }
+
+    if (my_slice[0] == 2) {
+        println("PASS: slice() offsets base pointer correctly");
+    } else {
+        println("[CRITICAL] FAIL: slice() offsets base pointer correctly");
+    }
+}
+
+
+// ==========================================
+// Top-Level Script Execution
+// ==========================================
+println("==========================================");
+println("      Moksha Array API Test Suite         ");
+println("==========================================");
+
+test_universal_properties();
+test_dynamic_mutations();
+test_search_and_sort();
+test_memory_semantics();
+
+println("==========================================");

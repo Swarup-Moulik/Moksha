@@ -570,3 +570,269 @@ char *__moksha_any_to_string(MokshaAny *any_val) {
   }
   return any_val->vtable->to_string(any_val->data);
 }
+
+// ============================================================================
+// Moksha String Builtins
+// ============================================================================
+
+// Helper for substring searching
+static char *internal_strstr(const char *haystack, const char *needle) {
+  if (!*needle)
+    return (char *)haystack;
+  for (const char *p = haystack; *p; p++) {
+    bool match = true;
+    for (size_t i = 0; needle[i]; i++) {
+      if (p[i] != needle[i]) {
+        match = false;
+        break;
+      }
+    }
+    if (match)
+      return (char *)p;
+  }
+  return NULL;
+}
+
+char *moksha_string_substring(char *str, int32_t start, int32_t end) {
+  if (!str)
+    return NULL;
+  int32_t len = (int32_t)internal_strlen(str);
+  if (start < 0)
+    start = 0;
+  if (end > len)
+    end = len;
+  if (start > end || start >= len) {
+    char *empty = (char *)moksha_rt_alloc(1, MOKSHA_TYPE_STRING);
+    empty[0] = '\0';
+    return empty;
+  }
+  int32_t sub_len = end - start;
+  char *sub = (char *)moksha_rt_alloc(sub_len + 1, MOKSHA_TYPE_STRING);
+  for (int32_t i = 0; i < sub_len; i++)
+    sub[i] = str[start + i];
+  sub[sub_len] = '\0';
+  return sub;
+}
+
+char *moksha_string_slice(char *str, int32_t start, int32_t end) {
+  return moksha_string_substring(str, start, end);
+}
+
+bool moksha_string_contains(char *str, char *sub) {
+  if (!str || !sub)
+    return false;
+  return internal_strstr(str, sub) != NULL;
+}
+
+int32_t moksha_string_index(char *str, char *sub) {
+  if (!str || !sub)
+    return -1;
+  char *ptr = internal_strstr(str, sub);
+  if (ptr)
+    return (int32_t)(ptr - str);
+  return -1;
+}
+
+bool moksha_string_starts_with(char *str, char *prefix) {
+  if (!str || !prefix)
+    return false;
+  while (*prefix) {
+    if (*prefix != *str)
+      return false;
+    prefix++;
+    str++;
+  }
+  return true;
+}
+
+bool moksha_string_ends_with(char *str, char *suffix) {
+  if (!str || !suffix)
+    return false;
+  size_t str_len = internal_strlen(str);
+  size_t suf_len = internal_strlen(suffix);
+  if (suf_len > str_len)
+    return false;
+  const char *p = str + (str_len - suf_len);
+  while (*suffix) {
+    if (*p++ != *suffix++)
+      return false;
+  }
+  return true;
+}
+
+char *moksha_string_to_upper(char *str) {
+  if (!str)
+    return NULL;
+  size_t len = internal_strlen(str);
+  char *up = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  for (size_t i = 0; i < len; i++) {
+    if (str[i] >= 'a' && str[i] <= 'z')
+      up[i] = str[i] - 32;
+    else
+      up[i] = str[i];
+  }
+  up[len] = '\0';
+  return up;
+}
+
+char *moksha_string_to_lower(char *str) {
+  if (!str)
+    return NULL;
+  size_t len = internal_strlen(str);
+  char *low = (char *)moksha_rt_alloc(len + 1, MOKSHA_TYPE_STRING);
+  for (size_t i = 0; i < len; i++) {
+    if (str[i] >= 'A' && str[i] <= 'Z')
+      low[i] = str[i] + 32;
+    else
+      low[i] = str[i];
+  }
+  low[len] = '\0';
+  return low;
+}
+
+char *moksha_string_trim(char *str) {
+  if (!str)
+    return NULL;
+  size_t len = internal_strlen(str);
+  if (len == 0)
+    return str;
+  size_t start = 0;
+  while (start < len && (str[start] == ' ' || str[start] == '\t' ||
+                         str[start] == '\n' || str[start] == '\r'))
+    start++;
+  size_t end = len;
+  while (end > start && (str[end - 1] == ' ' || str[end - 1] == '\t' ||
+                         str[end - 1] == '\n' || str[end - 1] == '\r'))
+    end--;
+  size_t new_len = end - start;
+  char *res = (char *)moksha_rt_alloc(new_len + 1, MOKSHA_TYPE_STRING);
+  for (size_t i = 0; i < new_len; i++)
+    res[i] = str[start + i];
+  res[new_len] = '\0';
+  return res;
+}
+
+char *moksha_string_replace(char *str, char *old_str, char *new_str) {
+  if (!str || !old_str || !new_str)
+    return str;
+  size_t old_len = internal_strlen(old_str);
+  if (old_len == 0)
+    return str;
+  size_t new_len = internal_strlen(new_str);
+  size_t count = 0;
+  const char *p = str;
+  while ((p = internal_strstr(p, old_str)) != NULL) {
+    count++;
+    p += old_len;
+  }
+  if (count == 0)
+    return str;
+  size_t str_len = internal_strlen(str);
+  size_t total_len = str_len + count * (new_len - old_len);
+  char *res = (char *)moksha_rt_alloc(total_len + 1, MOKSHA_TYPE_STRING);
+  char *dst = res;
+  p = str;
+  const char *next;
+  while ((next = internal_strstr(p, old_str)) != NULL) {
+    size_t prefix_len = next - p;
+    for (size_t i = 0; i < prefix_len; i++)
+      *dst++ = p[i];
+    for (size_t i = 0; i < new_len; i++)
+      *dst++ = new_str[i];
+    p = next + old_len;
+  }
+  while (*p)
+    *dst++ = *p++;
+  *dst = '\0';
+  return res;
+}
+
+MokshaSlice *moksha_string_split(char *str, char *delim) {
+  // Allocate the struct on the heap so we can return an 8-byte pointer (RAX
+  // compatible)
+  MokshaSlice *ret = (MokshaSlice *)moksha_rt_alloc(sizeof(MokshaSlice), 0);
+
+  if (!str || !delim) {
+    ret->data = NULL;
+    ret->length = 0;
+    return ret;
+  }
+
+  size_t delim_len = internal_strlen(delim);
+
+  if (delim_len == 0) {
+    char **arr = (char **)moksha_rt_alloc(sizeof(char *), 0);
+    arr[0] = str;
+    ret->data = arr;
+    ret->length = 1;
+    return ret;
+  }
+
+  size_t count = 1;
+  const char *p = str;
+  while ((p = internal_strstr(p, delim)) != NULL) {
+    count++;
+    p += delim_len;
+  }
+
+  char **arr = (char **)moksha_rt_alloc(sizeof(char *) * count, 0);
+
+  size_t idx = 0;
+  p = str;
+  const char *next;
+  while ((next = internal_strstr(p, delim)) != NULL) {
+    size_t part_len = next - p;
+    char *part = (char *)moksha_rt_alloc(part_len + 1, 0); // String type ID
+    for (size_t i = 0; i < part_len; i++)
+      part[i] = p[i];
+    part[part_len] = '\0';
+    arr[idx++] = part;
+    p = next + delim_len;
+  }
+
+  size_t last_len = internal_strlen(p);
+  char *last_part = (char *)moksha_rt_alloc(last_len + 1, 0);
+  internal_strcpy(last_part, p);
+  arr[idx++] = last_part;
+
+  ret->data = arr;
+  ret->length = count;
+  return ret;
+}
+
+char *moksha_string_join(MokshaSlice arr, char *delim) {
+  if (!arr.data || arr.length == 0) {
+    char *empty = (char *)moksha_rt_alloc(1, MOKSHA_TYPE_STRING);
+    empty[0] = '\0';
+    return empty;
+  }
+  char **strs = (char **)arr.data;
+  size_t delim_len = delim ? internal_strlen(delim) : 0;
+  size_t total_len = 0;
+  for (uint64_t i = 0; i < arr.length; i++) {
+    total_len += internal_strlen(strs[i]);
+    if (i < arr.length - 1)
+      total_len += delim_len;
+  }
+  char *res = (char *)moksha_rt_alloc(total_len + 1, MOKSHA_TYPE_STRING);
+  char *dst = res;
+  for (uint64_t i = 0; i < arr.length; i++) {
+    size_t len = internal_strlen(strs[i]);
+    for (size_t j = 0; j < len; j++)
+      *dst++ = strs[i][j];
+    if (i < arr.length - 1 && delim_len > 0) {
+      for (size_t j = 0; j < delim_len; j++)
+        *dst++ = delim[j];
+    }
+  }
+  *dst = '\0';
+  return res;
+}
+
+bool moksha_string_is_digit(char ch) { return ch >= '0' && ch <= '9'; }
+bool moksha_string_is_alpha(char ch) {
+  return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
+}
+bool moksha_string_is_whitespace(char ch) {
+  return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r';
+}

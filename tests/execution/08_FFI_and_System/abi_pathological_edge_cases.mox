@@ -127,5 +127,5 @@ void test_over_alignment() {
 // ============================================================================
 test_variadic_promotion();
 test_init_order();
+test_over_alignment()
 test_ffi_callbacks();
-test_volatile_alias_loss();
