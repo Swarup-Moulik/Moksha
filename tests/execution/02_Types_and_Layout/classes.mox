@@ -28,10 +28,10 @@ println(p.name); // Expected: Hero
 shared Vector2 heapV = new Vector2(30, 40);
 println(heapV.x); // Expected: 30
 
-// void operator_share() {
-// 'shared' keyword forces heap allocation for value types (ARC managed)
-// shared Vector2 heapV = new Vector2(30, 40);
-// println(heapV.x); // Expected: 30
-// }
+void operator_share() {
+    // 'shared' keyword forces heap allocation for value types (ARC managed)
+    shared Vector2 heapV = new Vector2(30, 40);
+    println(heapV.x); // Expected: 30
+}
 
-// operator_share();
+operator_share();

@@ -11023,7 +11023,7 @@ private:
 
       bool isExternCall = false;
       if (auto *mirF = llvm::dyn_cast_or_null<MIRFunction>(callee)) {
-        isExternCall = mirF->isDeclaration(); // FIXED: Removed isExtern()
+        isExternCall = mirF->isDeclaration();
       } else if (!calleeName.empty()) {
         if (auto *hirF = hirModule->getFunction(calleeName)) {
           isExternCall = hirF->isExtern();
@@ -11574,10 +11574,10 @@ private:
         callRetTy = retTy;
       }
 
-      // UPDATE THIS NEXT LINE to protect String methods from colliding with Map
-      // methods:
+      // String builtins are handled separately to avoid collisions with Map
+      // methods
       std::string rtStringName = "";
-      if (!isArrayBuiltin && !isMapBuiltin) { // <--- Protects String builtins
+      if (!isArrayBuiltin && !isMapBuiltin) {
         if (cName.find("substring") == 0)
           rtStringName = "moksha_string_substring";
         else if (cName.find("contains") == 0)
@@ -11606,6 +11606,10 @@ private:
           rtStringName = "moksha_string_is_alpha";
         else if (cName.find("is_whitespace") == 0)
           rtStringName = "moksha_string_is_whitespace";
+        else if (cName == "length" || cName.find("length_") == 0)
+          rtStringName = "moksha_rt_string_len";
+        else if (cName == "at" || cName.find("at_") == 0)
+          rtStringName = "moksha_rt_string_char_at";
       }
 
       // Handle join separately because thread join is NOT an array builtin, but

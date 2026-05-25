@@ -20,12 +20,12 @@ compile_commands.json
 *.o
 *.obj
 *.lo
-*.a
+
 *.lib
 *.so
 *.dll
 *.dylib
-*.exe
+
 *.out
 *.pdb
 *.ilk

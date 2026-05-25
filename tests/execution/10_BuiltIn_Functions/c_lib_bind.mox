@@ -1,0 +1,16 @@
+// Declare the external C wrapper function
+extern "C" int fetch_url(string url);
+extern "C" void open_url_in_browser(string url);
+
+println("--- Testing libcurl Integration ---");
+
+// Call the C function from Moksha
+int result = fetch_url("https://example.com");
+
+if (result == 0) {
+    println("Successfully connected and fetched data!");
+} else {
+    println("Network request failed with error code: " + result);
+}
+
+open_url_in_browser("https://example.com");

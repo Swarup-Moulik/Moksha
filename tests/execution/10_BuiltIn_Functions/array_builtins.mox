@@ -9,6 +9,12 @@ void test_universal_properties() {
         println("[CRITICAL] FAIL: Fixed array length()");
     }
 
+    if (at(fixed, 2) == 3) {
+        println("PASS: at() returns correct value");
+    } else {
+        println("[CRITICAL] FAIL: at() returns correct value");
+    }
+
     if (is_empty(fixed) == false) {
         println("PASS: Fixed array is_empty()");
     } else {

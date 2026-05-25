@@ -1,0 +1,56 @@
+======================================================================
+                  MOKSHA COMPILER (mokshac) FLAGS
+======================================================================
+
+USAGE:
+  mokshac.exe <input file> [<extra C/C++/obj files to link>...] [options]
+
+POSITIONAL ARGUMENTS:
+  <input file>               The primary .mox source file to compile.
+  <extra files>              Optional. Extra C/C++ source or object files
+                             to link into the final executable.
+
+OUTPUT CONTROL:
+  -o <filename>              Specify the output filename (defaults to "a.out"
+                             or "a.exe").
+  --emit-obj                 Emit the intermediate LLVM IR (.ll) file only,
+                             skipping the final clang++ compilation and
+                             linking phases.
+
+DEBUGGING & DIAGNOSTICS (DUMPS):
+  --dump-ast                 Print the Abstract Syntax Tree (AST).
+  --dump-hir                 Print the High-Level Intermediate Representation (HIR).
+  --run-hir-passes           Run passes on the HIR.
+  --dump-mir                 Print the Mid-Level Intermediate Representation (MIR).
+  --run-mir-passes           Run NLL borrow checking, ARC insertion, and
+                             optimizations on the MIR.
+  --dump-mlir                Dump the MLIR representation.
+  --dump-llvm                Dump the generated LLVM IR before optimization.
+
+TARGET CONFIGURATION:
+  --target <triple>          Specify the target triple
+                             (e.g., x86_64-pc-windows-msvc).
+  --mcpu <cpu>               Specify a target-specific CPU architecture
+                             (e.g., skylake).
+  --mattr <features>         Specify target-specific attributes/features
+                             (e.g., +avx2,-avx512f).
+  --rt-lib <path>            Override the path to the compiled Moksha
+                             C-runtime library archive (libmoksha_rt.a).
+
+OPTIMIZATION:
+  -O0                        Disable LLVM backend middle-end optimizations.
+                             (Defaults to false; -O2 is used by default).
+
+======================================================================
+    Example Command for compilation from folder moksha/build
+======================================================================
+
+PS C:\dev\moksha\moksha\build> ./tools/mokshac.exe ..\tests\execution\10_BuiltIn_Functions\main.mox net.o -o main -- -lcurl
+
+./tools/mokshac.exe :- the compiler
+..\tests\execution\10_BuiltIn_Functions\main.mox :- the source file
+net.o :- the object file
+-o main :- alias flag for the output file
+-- -lcurl :- the linker flag for libcurl and other libraries
+
+./main :- the command to run the compiled program

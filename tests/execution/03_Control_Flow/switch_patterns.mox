@@ -7,17 +7,14 @@ void handle_device(DeviceState state) {
     switch (state) {
         case DeviceState.IDLE:
             println("Device is ready");
-            break;
 
         case DeviceState.BUSY:
         case DeviceState.ERROR:
             // Verifies that empty cases fall through correctly
             println("Action required");
-            break;
 
         case DeviceState.DISCONNECTED:
             println("Disconnected");
-            break;
     }
 }
 

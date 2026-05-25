@@ -8,6 +8,18 @@ void test_core_utilities() {
 
     string s = "moksha";
 
+    if (at(s, 0) == 'm') {
+        println("PASS: at() returns correct value");
+    } else {
+        println("[CRITICAL] FAIL: at() returns correct value");
+    }
+
+    if (length(s) == 6) {
+        println("PASS: length()");
+    } else {
+        println("[CRITICAL] FAIL: length()");
+    }
+
     if (substring(s, 1, 4) == "oks") {
         println("PASS: substring()");
     } else {
