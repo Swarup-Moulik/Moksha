@@ -3874,6 +3874,13 @@ void TypeChecker::visitNewExpr(const NewExpr *expr) {
           }
         }
       }
+    } else if (!expr->getArgs().empty()) {
+      // [NEW FIX] If there is no custom constructor, the synthesized default
+      // constructor takes 0 arguments. Reject any passed arguments!
+      Diags.report(expr->getLoc(), DiagID::err_argument_count_mismatch)
+          << "Default constructor for '" << named->getName()
+          << "' expects 0 arguments.";
+      hasError = true;
     }
 
     // 1. Read the Reference Semantics flag from the ClassDecl
@@ -4663,7 +4670,6 @@ void TypeChecker::visitBlockStmt(const BlockStmt *stmt) {
 
 void TypeChecker::visitIfStmt(const IfStmt *stmt) {
   stmt->getCondition()->accept(*this);
-  const Type *condType = unwrapModifiers(lastComputedType);
 
   if (!lastComputedType->isBool() && !lastComputedType->is<AnyType>()) {
     Diags.report(stmt->getCondition()->getLoc(), DiagID::err_type_mismatch)
@@ -4724,7 +4730,6 @@ void TypeChecker::visitWhileStmt(const WhileStmt *stmt) {
   auto initBefore = initializedVars;
 
   stmt->getCondition()->accept(*this);
-  const Type *condType = unwrapModifiers(lastComputedType);
 
   if (!lastComputedType->isBool() && !lastComputedType->is<AnyType>()) {
     Diags.report(stmt->getCondition()->getLoc(), DiagID::err_type_mismatch)
@@ -4776,7 +4781,6 @@ void TypeChecker::visitDoWhileStmt(const DoWhileStmt *stmt) {
   stmt->getBody()->accept(*this);
   loopDepth--;
   stmt->getCondition()->accept(*this);
-  const Type *condType = unwrapModifiers(lastComputedType);
   if (!lastComputedType->isBool() && !lastComputedType->is<AnyType>()) {
     Diags.report(stmt->getCondition()->getLoc(), DiagID::err_type_mismatch)
         << "If condition must be boolean";
