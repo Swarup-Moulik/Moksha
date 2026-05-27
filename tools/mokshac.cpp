@@ -183,7 +183,7 @@ std::string resolveRuntimeLibrary(const std::string &explicitPath,
     osName = "windows";
   } else if (triple.isOSDarwin()) {
     osName = "darwin";
-  } else if (triple.isOSLinux()) {
+  } else if (triple.isOSLinux() || triple.isAndroid()) {
     osName = "linux";
   } else if (triple.getOS() == llvm::Triple::WASI) {
     osName = "wasi";
@@ -542,9 +542,31 @@ int main(int argc, char **argv) {
           extraFilesStr += " " + file;
         }
 
-        std::string cmd = "clang++ -O2 -Wno-override-module " + llFilename +
-                          extraFilesStr + " " + resolvedRtLib + " -o " +
-                          exeFilename;
+        // 1. Determine the correct compiler driver
+        std::string compiler = "clang++";
+        if (actualTriple.isWasm() &&
+            actualTriple.getOS() != llvm::Triple::WASI) {
+          // If targeting WebAssembly for the browser, clang++ alone cannot
+          // generate the JS glue code. We must use Emscripten.
+          compiler = "emcc";
+        }
+
+        // 2. Build the base command
+        std::string cmd = compiler + " -O2 -Wno-override-module " + llFilename +
+                          extraFilesStr + " " + resolvedRtLib;
+
+        // 3. Pass the target triple explicitly so Clang cross-compiles
+        // correctly
+        if (!TargetTriple.empty() && compiler == "clang++") {
+          cmd += " --target=" + TargetTriple;
+        }
+
+        // 4. Inject OS-Specific Linker Flags
+        if (actualTriple.isOSLinux() || actualTriple.isAndroid()) {
+          cmd += " -pthread -lm"; // Required for Linux threading and math
+        }
+
+        cmd += " -o " + exeFilename;
 
         int result = std::system(cmd.c_str());
 

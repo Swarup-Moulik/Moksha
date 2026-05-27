@@ -1,0 +1,11 @@
+println("Hello from Moksha!");
+println("Cross-platform compilation is working.");
+
+
+// -target x86_64-pc-linux-gnu -o cross_compile_linux
+// -target aarch64-linux-android -o cross_compile_android
+// -target arm64-apple-darwin -o cross_compile_mac
+// -target aarch64-apple-ios -o cross_compile_ios
+// -target x86_64-pc-windows-msvc -o cross_compile_windows
+// -target wasm32-wasi -o cross_compile_wasm.wasm
+// -target wasm32-unknown-unknown -o index.html

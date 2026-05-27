@@ -1,6 +1,6 @@
 # Moksha
 
-Moksha is a statically typed systems programming language with a custom multi-stage compilation pipeline, aimed to 
+Moksha is a statically typed systems programming language with a custom multi-stage compilation pipeline, aimed to
 bridge the performance with flexibility and safety.
 
 ---
@@ -131,4 +131,53 @@ Compile a Moksha source file:
 ```bash
 mokshac array_builtins.mox -o array_builtins
 ./array_builtins
+```
+
+---
+
+# Cross Compilation Targets
+
+Moksha supports LLVM target triples for cross-platform compilation.
+
+Example:
+
+```bash
+mokshac cross_compile.mox -target x86_64-pc-linux-gnu -o cross_compile_linux
+```
+
+## Supported Target Flags
+
+| Platform              | Target Flag                      |
+| --------------------- | -------------------------------- |
+| Linux (x86_64)        | `-target x86_64-pc-linux-gnu`    |
+| Android (ARM64)       | `-target aarch64-linux-android`  |
+| macOS (Apple Silicon) | `-target arm64-apple-darwin`     |
+| iOS (ARM64)           | `-target aarch64-apple-ios`      |
+| Windows (MSVC x86_64) | `-target x86_64-pc-windows-msvc` |
+| WebAssembly WASI      | `-target wasm32-wasi`            |
+| WebAssembly Browser   | `-target wasm32-unknown-unknown` |
+
+## Example Commands
+
+```bash
+# Linux
+mokshac cross_compile.mox -target x86_64-pc-linux-gnu -o cross_compile_linux
+
+# Android
+mokshac cross_compile.mox -target aarch64-linux-android -o cross_compile_android
+
+# macOS
+mokshac cross_compile.mox -target arm64-apple-darwin -o cross_compile_mac
+
+# iOS
+mokshac cross_compile.mox -target aarch64-apple-ios -o cross_compile_ios
+
+# Windows
+mokshac cross_compile.mox -target x86_64-pc-windows-msvc -o cross_compile_windows
+
+# WASI
+mokshac cross_compile.mox -target wasm32-wasi -o cross_compile_wasm.wasm
+
+# Browser WebAssembly
+mokshac cross_compile.mox -target wasm32-unknown-unknown -o index.html
 ```

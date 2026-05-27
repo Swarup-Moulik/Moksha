@@ -61,10 +61,21 @@ elseif(MOKSHA_TARGET STREQUAL "linux")
         src/sys/posix_common/io.c
         src/sys/posix_common/alloc.c
         src/sys/posix_common/thread.c
+        src/sys/posix_common/time.c   # FIXED
         src/sys/linux/event_loop.c
         src/sys/linux/caps.c
     )
     set(PLATFORM_LIBS pthread)
+
+elseif(MOKSHA_TARGET STREQUAL "darwin")  # ADDED
+    list(APPEND SYS_SOURCES
+        src/sys/posix_common/io.c
+        src/sys/posix_common/alloc.c
+        src/sys/posix_common/thread.c
+        src/sys/posix_common/time.c
+        src/sys/darwin/event_loop.c
+        src/sys/darwin/caps.c
+    )
 
 elseif(MOKSHA_TARGET STREQUAL "wasi")
     list(APPEND SYS_SOURCES
@@ -72,6 +83,15 @@ elseif(MOKSHA_TARGET STREQUAL "wasi")
         src/sys/wasi/alloc.c
         src/sys/wasi/event_loop.c
         src/sys/wasi/caps.c
+        src/sys/posix_common/time.c   # ADDED
+    )
+
+elseif(MOKSHA_TARGET STREQUAL "wasm_web") # ADDED
+    list(APPEND SYS_SOURCES
+        src/sys/wasm_web/io.c
+        src/sys/wasm_web/caps.c
+        src/sys/wasm_web/event_loop.c
+        src/sys/posix_common/time.c
     )
 
 elseif(MOKSHA_TARGET STREQUAL "baremetal")
