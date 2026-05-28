@@ -570,7 +570,7 @@ private:
 
     // 4. Lower Instructions in Topological Order
     for (mir::MIRBlock *block : layout) {
-      builder.setInsertionPointToStart(blockMap[block]);
+      builder.setInsertionPointToEnd(blockMap[block]);
       for (auto &instPtr : block->getInstructions()) {
         if (failed(lowerInstruction(instPtr.get()))) {
           // ---> ADD THIS DEBUG DUMP <---
@@ -1430,6 +1430,9 @@ private:
       }
 
       if (isSRet) {
+        ::mlir::OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToStart(normalDest);
+
         auto loadOp =
             builder.create<::moksha::IR::LoadOp>(loc, sretTy, sretAlloc);
         valueMap[inst] = loadOp.getResult();

@@ -7,7 +7,7 @@ extern "C" double return_double_identity(double x);
 
 void test_f64_return() {
     double input1 = 1.23456789;
-    double output = return_double_identity(input1);
+    unsafe { double output = return_double_identity(input1); }
 }
 
 // ============================================================================
@@ -45,7 +45,7 @@ void test_native_reference() {
     RefTarget target;
     target.x = 42;
     // Call it to force the compiler to emit the function declaration and struct definition!
-    take_by_ref(target);
+    unsafe { take_by_ref(target); }
 }
 
 // ============================================================================
@@ -64,7 +64,7 @@ void test_nan_payload() {
 extern "C" void external_shared_lib_func();
 
 void test_plt_call() {
-    external_shared_lib_func();
+    unsafe { external_shared_lib_func(); }
 }
 
 // ============================================================================
@@ -75,7 +75,7 @@ extern "C" void side_effect(int a, int b);
 void test_eval_order() {
     mut int x = 1;
     // ABI + Language Spec must guarantee evaluation order (typically left-to-right).
-    side_effect(x++, x++);
+    unsafe { side_effect(x++, x++); }
 }
 
 // ============================================================================
@@ -95,12 +95,13 @@ test_unwind_metadata();
 test_native_reference();
 test_plt_call();
 
-takes_signed_char(-5i8);
-takes_unsigned_char(250u8);
-
 Vec256 v;
 v.f1 = 1.0; v.f8 = 8.0;
-pass_vec256(v);
 
-ComplexDouble c = return_complex_pair();
-println(cast<any>(c.re));
+unsafe {
+    takes_signed_char(-5i8);
+    takes_unsigned_char(250u8);
+    pass_vec256(v);
+    ComplexDouble c = return_complex_pair();
+    println(cast<any>(c.re));
+}

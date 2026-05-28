@@ -1,0 +1,195 @@
+struct Point {
+    int x
+    int y
+}
+
+// Added for linked list testing
+struct Node {
+    int data
+    *mut Node next
+}
+
+void test_malloc_free() {
+    println("Running test_malloc_free...")
+    unsafe {
+        // Allocate space for a single integer and cast from *void
+        *mut int ptr = cast<*mut int>(malloc(sizeof(int)))
+
+        // Mutate the raw memory
+        *ptr = 42
+
+        if (*ptr == 42) {
+            println("  [PASS] malloc and free working as expected")
+        } else {
+            println("  [FAIL] memory read/write failed")
+        }
+
+        free(cast<*void>(ptr))
+    }
+}
+
+void test_calloc_zero_init() {
+    println("Running test_calloc_zero_init...")
+    unsafe {
+        // Allocate an array of 5 integers, zero-initialized
+        int count = 5
+        *mut int arr = cast<*mut int>(calloc(count, sizeof(int)))
+
+        // Verify zero initialization on the first element
+        if (*arr == 0) {
+            println("  [PASS] calloc successfully zero-initialized memory")
+        } else {
+            println("  [FAIL] calloc memory was not zeroed")
+        }
+
+        // Pointer arithmetic to check and mutate the second element
+        *mut int second_elem = arr + 1
+        *second_elem = 100
+
+        if (*(arr + 1) == 100) {
+            println("  [PASS] pointer arithmetic successful")
+        } else {
+            println("  [FAIL] pointer arithmetic failed")
+        }
+
+        free(cast<*void>(arr))
+    }
+}
+
+void test_realloc_growth() {
+    println("Running test_realloc_growth...")
+    unsafe {
+        // Initial allocation for 2 integers
+        *mut int ptr = cast<*mut int>(malloc(sizeof(int) * 2))
+        *ptr = 10
+        *(ptr + 1) = 20
+
+        // Reallocate to hold 4 integers
+        int new_size = sizeof(int) * 4
+        *mut int grown_ptr = cast<*mut int>(realloc(cast<*void>(ptr), new_size))
+
+        // Verify old data was preserved during the reallocation move
+        if (*grown_ptr == 10 && *(grown_ptr + 1) == 20) {
+            println("  [PASS] realloc preserved original data")
+        } else {
+            println("  [FAIL] realloc corrupted original data")
+        }
+
+        // Write to the newly expanded space
+        *(grown_ptr + 2) = 30
+        *(grown_ptr + 3) = 40
+
+        free(cast<*void>(grown_ptr))
+    }
+}
+
+void test_manual_struct_allocation() {
+    println("Running test_manual_struct_allocation...")
+    unsafe {
+        *mut Point p = cast<*mut Point>(malloc(sizeof(Point)))
+
+        // Pointer field access via dereference
+        (*p).x = 15
+        (*p).y = 25
+
+        if ((*p).x == 15 && (*p).y == 25) {
+            println("  [PASS] struct manual allocation and member access")
+        } else {
+            println("  [FAIL] struct manual allocation failed")
+        }
+
+        free(cast<*void>(p))
+    }
+}
+
+void test_struct_array_arithmetic() {
+    println("Running test_struct_array_arithmetic...")
+    unsafe {
+        // Allocate space for 3 Point structs sequentially
+        int count = 3
+        *mut Point arr = cast<*mut Point>(malloc(sizeof(Point) * count))
+
+        // Access via pointer arithmetic and initialize
+        (*(arr + 0)).x = 10
+        (*(arr + 0)).y = 20
+
+        (*(arr + 1)).x = 30
+        (*(arr + 1)).y = 40
+
+        (*(arr + 2)).x = 50
+        (*(arr + 2)).y = 60
+
+        // Verify memory bounds and layout didn't corrupt neighbors
+        if ((*(arr + 0)).x == 10 && (*(arr + 1)).x == 30 && (*(arr + 2)).y == 60) {
+            println("  [PASS] Sequential struct array allocation & arithmetic")
+        } else {
+            println("  [FAIL] Struct array memory corruption")
+        }
+
+        free(cast<*void>(arr))
+    }
+}
+
+void test_pointer_to_pointer() {
+    println("Running test_pointer_to_pointer...")
+    unsafe {
+        // Allocate a pointer that points to another pointer (double indirection)
+        *mut *mut int handle = cast<*mut *mut int>(malloc(sizeof(usize)))
+
+        // Allocate the actual integer payload
+        *handle = cast<*mut int>(malloc(sizeof(int)))
+
+        // Dereference twice to mutate the value
+        *(*handle) = 99
+
+        if (*(*handle) == 99) {
+            println("  [PASS] Double indirection (**ptr) works")
+        } else {
+            println("  [FAIL] Double indirection failed")
+        }
+
+        free(cast<*void>(*handle)) // Free inner payload
+        free(cast<*void>(handle))  // Free outer handle
+    }
+}
+
+void test_linked_list_nodes() {
+    println("Running test_linked_list_nodes...")
+    unsafe {
+        // Allocate two nodes independently
+        *mut Node head = cast<*mut Node>(malloc(sizeof(Node)))
+        *mut Node second = cast<*mut Node>(malloc(sizeof(Node)))
+
+        // Link them up
+        (*head).data = 100
+        (*head).next = second
+
+        // Terminate the list with a null pointer
+        (*second).data = 200
+        (*second).next = cast<*mut Node>(null)
+
+        // Traverse the pointer chain to check data
+        if ((*head).data == 100 && (*((*head).next)).data == 200) {
+            println("  [PASS] Linked list struct chaining and traversal")
+        } else {
+            println("  [FAIL] Linked list traversal failed")
+        }
+
+        // Clean up in reverse
+        free(cast<*void>(second))
+        free(cast<*void>(head))
+    }
+}
+
+// --- Top-Level Script Execution ---
+println("--- Starting Manual Memory Test Suite ---")
+
+test_malloc_free()
+test_calloc_zero_init()
+test_realloc_growth()
+test_manual_struct_allocation()
+test_struct_array_arithmetic()
+test_pointer_to_pointer()
+test_linked_list_nodes()
+
+println("--- Test Suite Finished ---")

@@ -287,6 +287,20 @@ bool checkDefiniteReturn(const Stmt *stmt, DiagnosticEngine &Diags) {
     return hasReturned;
   }
 
+  case StmtKind::UnsafeBlockStmt: {
+    auto block = static_cast<const UnsafeBlockStmt *>(stmt);
+    bool hasReturned = false;
+
+    for (const auto &s : block->getStatements()) {
+      if (hasReturned)
+        break; // Don't report here anymore
+      if (checkDefiniteReturn(s.get(), Diags)) {
+        hasReturned = true;
+      }
+    }
+    return hasReturned;
+  }
+
   case StmtKind::IfStmt: {
     auto ifStmt = static_cast<const IfStmt *>(stmt);
     bool thenReturns = checkDefiniteReturn(ifStmt->getThenStmt(), Diags);
@@ -779,6 +793,10 @@ bool TypeChecker::isCastAllowed(const Type *src, const Type *dst) {
     return true;
   }
   if (dst->getKind() == TypeKind::Pointer && isIntegerOrChar(src)) {
+    return true;
+  }
+  // Allow casting explicit 'null' to any pointer type
+  if (src->is<NullType>() && dst->is<PointerType>()) {
     return true;
   }
 
@@ -1508,12 +1526,20 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
       // Deep check for pointers and base variables
       if (!allowed) {
         bool oldLhs = isLHSOfAssignment;
+        const Type *savedComputedType = lastComputedType;
         isLHSOfAssignment = true;
+
         if (auto un = llvm::dyn_cast<const UnaryExpr>(target)) {
-          if (un->getOp() == TokenKind::Star) {
-            un->getOperand()->accept(*this);
-            if (hasMutOrLock(lastComputedType))
+          if (un->getOp() == TokenKind::Star ||
+              un->getOp() == TokenKind::Power) {
+            const Type *baseType = un->getOperand()->getType();
+            if (!baseType) {
+              un->getOperand()->accept(*this);
+              baseType = lastComputedType;
+            }
+            if (hasMutOrLock(baseType)) {
               allowed = true;
+            }
           }
         } else if (auto baseId = llvm::dyn_cast<const IdentifierExpr>(target)) {
           baseId->accept(*this);
@@ -1546,6 +1572,7 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
           // IIFE!
           allowed = true;
         }
+        lastComputedType = savedComputedType;
         isLHSOfAssignment = oldLhs;
       }
 
@@ -2156,14 +2183,12 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
     if (llvm::dyn_cast<const IdentifierExpr>(target) ||
         llvm::dyn_cast<const MemberExpr>(target) ||
         llvm::dyn_cast<const IndexExpr>(target) ||
-        llvm::dyn_cast<const CallExpr>(
-            target) || // [FIX] Permit function call temporaries
-        llvm::dyn_cast<const CastExpr>(
-            target)) { // [FIX] Permit cast temporaries
+        llvm::dyn_cast<const CallExpr>(target) ||
+        llvm::dyn_cast<const CastExpr>(target)) {
       isLValue = true;
     } else if (auto un = llvm::dyn_cast<const UnaryExpr>(target)) {
-      if (un->getOp() == TokenKind::Star) {
-        isLValue = true; // Dereferencing (*ptr) yields a valid memory L-Value
+      if (un->getOp() == TokenKind::Star || un->getOp() == TokenKind::Power) {
+        isLValue = true; // Dereferencing yields a valid memory L-Value
       }
     }
 
@@ -2261,7 +2286,7 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
     }
 
     lastComputedType = context.createPointerType(inner);
-  } else if (op == TokenKind::Star) {
+  } else if (op == TokenKind::Star || op == TokenKind::Power) {
     if (operandType->toString().find("lock") != std::string::npos) {
       std::string name = "";
       if (auto id = llvm::dyn_cast<const IdentifierExpr>(expr->getOperand()))
@@ -2274,20 +2299,41 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
         hasError = true;
       }
     }
-    // Dereference: T* -> T
+
+    // Dereference: T* -> T (or ** -> T)
     const Type *raw = unwrapConcurrency(operandType);
     if (auto ptr = llvm::dyn_cast<const PointerType>(raw)) {
       const Type *pointeeType = ptr->getPointee();
-
-      // THE FIX: Unwrap the pointee to peek inside the view/mut/lock wrappers
       const Type *unwrappedPointee = unwrapConcurrency(pointeeType);
 
-      // Check the UNWRAPPED type, and if it's primitive, return the unwrapped
-      // copy
-      if (unwrappedPointee->isNumeric() || unwrappedPointee->isBool()) {
-        lastComputedType = unwrappedPointee;
+      if (op == TokenKind::Power) {
+        // SECOND DEREFERENCE
+        if (auto innerPtr =
+                llvm::dyn_cast<const PointerType>(unwrappedPointee)) {
+          const Type *innerPointeeType = innerPtr->getPointee();
+          const Type *unwrappedInner = unwrapConcurrency(innerPointeeType);
+
+          if (isNumericOrChar(unwrappedInner) ||
+              isIntegerOrChar(unwrappedInner) || unwrappedInner->isBool()) {
+            lastComputedType = unwrappedInner;
+          } else {
+            lastComputedType = innerPointeeType;
+          }
+        } else {
+          Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
+              << "Cannot double-dereference a single pointer type '"
+              << operandType->toString() << "'";
+          hasError = true;
+          lastComputedType = context.getAnyType();
+        }
       } else {
-        lastComputedType = pointeeType;
+        // SINGLE DEREFERENCE
+        if (isNumericOrChar(unwrappedPointee) ||
+            isIntegerOrChar(unwrappedPointee) || unwrappedPointee->isBool()) {
+          lastComputedType = unwrappedPointee;
+        } else {
+          lastComputedType = pointeeType;
+        }
       }
     } else {
       Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
@@ -3145,6 +3191,15 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
         }
 
         auto fnDecl = static_cast<const FunctionDecl *>(match.sig.decl);
+
+        // Enforce the unsafe block rule for all unsafe or extern functions
+        if ((fnDecl->isUnsafeFunc() || fnDecl->isExternFunc()) &&
+            !inUnsafeContext) {
+          Diags.report(expr->getLoc(), DiagID::err_invalid_access)
+              << "Call to unsafe function '" << fnDecl->getName()
+              << "' requires an 'unsafe' block.";
+          hasError = true;
+        }
 
         if (fnDecl->isBuiltinFunc()) {
           llvm::StringRef name = fnDecl->getName();

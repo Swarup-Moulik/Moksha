@@ -15,7 +15,10 @@ section(".multiboot") align(4) packed struct MultibootHeader {
 volatile unsigned int LAPIC_ID_REG = 0xFEE00020_u32;
 
 void test_low_level() {
-    printf("Testing variadic C ABI"); // Expected: Testing variadic C ABI
+    // Wrap the extern function call in an unsafe block
+    unsafe {
+        printf("Testing variadic C ABI"); // Expected: Testing variadic C ABI
+    }
 
     mut MultibootHeader header;
     header.magic = 0x1BADB002_u32;

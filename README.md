@@ -103,6 +103,7 @@ cmake --build build
 
 # Install to system path
 cp build/tools/mokshac.exe /c/Moksha/bin/
+cp build/tools/moksha-opt.exe /c/Moksha/bin/
 cp build/runtime/libmoksha_rt_windows.a /c/Moksha/runtime/
 ```
 

@@ -19,6 +19,7 @@ private:
   static void registerAtomics(ASTContext &ctx, SymbolTable &sym);
   static void registerAsyncBuiltins(ASTContext &ctx, SymbolTable &sym);
   static void registerFileBuiltins(ASTContext &ctx, SymbolTable &sym);
+  static void registerAllocators(ASTContext &ctx, SymbolTable &sym);
 };
 
 } // namespace moksha

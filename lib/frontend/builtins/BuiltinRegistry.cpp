@@ -13,6 +13,7 @@ void BuiltinRegistry::registerBuiltins(ASTContext &ctx, SymbolTable &sym) {
   registerAtomics(ctx, sym);
   registerAsyncBuiltins(ctx, sym);
   registerFileBuiltins(ctx, sym);
+  registerAllocators(ctx, sym);
 
   // --- Register Math / Bitwise Intrinsics ---
   SourceLocation loc;
@@ -1265,6 +1266,68 @@ void BuiltinRegistry::registerFileBuiltins(ASTContext &ctx, SymbolTable &sym) {
   regFn("move_file", {{"src", BType::Str}, {"dst", BType::Str}}, BType::Bool);
   regFn("listDir", {{"path", BType::Str}},
         BType::Any); // Returns Array of Strings
+}
+
+void BuiltinRegistry::registerAllocators(ASTContext &ctx, SymbolTable &sym) {
+  SourceLocation loc;
+
+  auto mkU64 = [&]() {
+    return std::make_unique<PrimitiveType>(PrimitiveType::Scalar::U64, loc);
+  };
+  auto mkVoidPtr = [&]() {
+    return std::make_unique<PointerType>(
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc), loc);
+  };
+  auto mkVoid = [&]() {
+    return std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc);
+  };
+
+  // Helper to register Unsafe C-style memory functions
+  auto registerMemFunc = [&](const std::string &name,
+                             std::vector<FunctionDecl::Param> params,
+                             std::unique_ptr<Type> retType) {
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        name, std::move(params), std::move(retType), nullptr, false, false,
+        false, false, Visibility::Public, loc);
+
+    funcDecl->setBuiltin(true);
+    funcDecl->setExtern(true); // Treat as external C functions
+    funcDecl->setUnsafe(true); // ENFORCE UNSAFE BLOCK REQUIREMENT
+
+    sym.addSymbol(name,
+                  Symbol(SymbolKind::Function, name, nullptr, funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  };
+
+  // 1. malloc(size: u64) -> *void
+  {
+    std::vector<FunctionDecl::Param> p;
+    p.push_back({"size", mkU64(), loc});
+    registerMemFunc("malloc", std::move(p), mkVoidPtr());
+  }
+
+  // 2. calloc(num: u64, size: u64) -> *void
+  {
+    std::vector<FunctionDecl::Param> p;
+    p.push_back({"num", mkU64(), loc});
+    p.push_back({"size", mkU64(), loc});
+    registerMemFunc("calloc", std::move(p), mkVoidPtr());
+  }
+
+  // 3. realloc(ptr: *void, new_size: u64) -> *void
+  {
+    std::vector<FunctionDecl::Param> p;
+    p.push_back({"ptr", mkVoidPtr(), loc});
+    p.push_back({"new_size", mkU64(), loc});
+    registerMemFunc("realloc", std::move(p), mkVoidPtr());
+  }
+
+  // 4. free(ptr: *void) -> void
+  {
+    std::vector<FunctionDecl::Param> p;
+    p.push_back({"ptr", mkVoidPtr(), loc});
+    registerMemFunc("free", std::move(p), mkVoid());
+  }
 }
 
 } // namespace moksha

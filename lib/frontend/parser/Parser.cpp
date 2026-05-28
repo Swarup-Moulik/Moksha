@@ -671,9 +671,9 @@ bool Parser::isStartOfDeclaration() {
       return true;
   }
 
-  // 4. Prefix Pointers & References for Declarations (e.g., *mut int p = &x,
-  // &mut int r = x)
+  // 4. Prefix Pointers & References for Declarations
   if (curTok.isAny(TokenKind::Star, TokenKind::Power, TokenKind::Amp)) {
+    // 4a. Built-in primitives are always declarations (e.g., *int x)
     if (nextTok.isAny(TokenKind::KwMut, TokenKind::KwConst, TokenKind::KwLock,
                       TokenKind::KwView, TokenKind::KwInt, TokenKind::KwFloat,
                       TokenKind::KwDouble, TokenKind::KwBool,
@@ -685,6 +685,29 @@ bool Parser::isStartOfDeclaration() {
                       TokenKind::KwDecimal, TokenKind::Star, TokenKind::Power,
                       TokenKind::Amp)) {
       return true;
+    }
+
+    // 4b. Disambiguate Custom Types: "*Type name" (Decl) vs "*ptr = 5" (Stmt)
+    if (nextTok.is(TokenKind::Identifier)) {
+      // Manual lookahead past the identifier to see what comes next
+      const char *ptr =
+          nextTok.getSpelling().data() + nextTok.getSpelling().size();
+
+      // Skip trailing whitespace
+      while (*ptr == ' ' || *ptr == '\t' || *ptr == '\r' || *ptr == '\n') {
+        ptr++;
+      }
+
+      // If the next character is a letter or underscore, it's a variable name
+      // -> Declaration!
+      if ((*ptr >= 'a' && *ptr <= 'z') || (*ptr >= 'A' && *ptr <= 'Z') ||
+          *ptr == '_') {
+        return true;
+      }
+      // Otherwise, it's an operator (=, +, etc.) -> Statement!
+      else {
+        return false;
+      }
     }
   }
 
@@ -2597,7 +2620,6 @@ ExprPtr Parser::parsePrefix() {
     if (!operand)
       return nullptr;
 
-    // Desugar '**' into two nested '*' (dereference) operations
     auto inner = std::make_unique<UnaryExpr>(TokenKind::Star,
                                              std::move(operand), false, loc);
     return std::make_unique<UnaryExpr>(TokenKind::Star, std::move(inner), false,
@@ -3794,6 +3816,11 @@ TypePtr Parser::parseType() {
     // Case 4: Pointers (int*)
     else if (consumeIf(TokenKind::Star)) {
       type = std::make_unique<PointerType>(std::move(type), loc);
+    }
+    // Case 5: Double Pointers parsed as suffix (int**)
+    else if (consumeIf(TokenKind::Power)) {
+      type = std::make_unique<PointerType>(
+          std::make_unique<PointerType>(std::move(type), loc), loc);
     } else {
       break;
     }

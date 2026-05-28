@@ -26,10 +26,10 @@ struct Padded {
 extern "C" Padded return_padded_struct();
 
 void test_padding() {
-    Padded p = return_padded_struct();
-    // Ensures the MLIR -> LLVM GEPOp correctly calculated the offset of 'b'
-    // skipping over the 3 bytes of padding.
-    println(p.b);
+    unsafe {
+        Padded p = return_padded_struct();
+        println(p.b);
+    }
 }
 
 // ============================================================================
@@ -41,7 +41,7 @@ void correct_cb(float x) { println("OK"); }
 void wrong_cb(int x) { println("FAIL"); }
 
 void test_callback_signatures() {
-    register_float_callback(correct_cb); // MUST COMPILE
+    unsafe { register_float_callback(correct_cb); }
 
     // RED TEAM: register_float_callback(wrong_cb);
     // Semantic Analyzer Fix: The type checker must verify not just the return

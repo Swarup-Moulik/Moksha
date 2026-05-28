@@ -40,10 +40,8 @@ extern "C" void pass_true_vector(Float4 v);
 extern "C" void clobber_registers();
 
 void test_reg_preservation() {
-    // Forces the compiler to pin 'x' into a callee-saved register (e.g., R12-R15).
     int x = 42;
-    clobber_registers();
-    // If the backend fails to save/restore R12, 'x' will be corrupted here.
+    unsafe { clobber_registers(); }
     println(`Preservation check: ${x}`);
 }
 
@@ -75,14 +73,12 @@ void test_cc_mismatch() {
 extern "C" int terminal_callee(int x);
 
 int test_tail_call(int x) {
-    // IR must show 'tail call' to ensure stack neutrality[cite: 135].
-    return terminal_callee(x);
+    unsafe { return terminal_callee(x); }
 }
 
 extern "C" int printf(string fmt, ...); // [cite: 35, 61]
 void test_vararg_spill() {
-    // Interleaving forces filling both GPR (rdi, rsi...) and SSE (xmm0, xmm1...) save areas.
-    printf("%d %f %d %f %d %f", 1, 1.1, 2, 2.2, 3, 3.3);
+    unsafe { printf("%d %f %d %f %d %f", 1, 1.1, 2, 2.2, 3, 3.3); }
 }
 
 // ============================================================================
@@ -135,25 +131,24 @@ thread_local int tls_dependent = tls_primary + 1;
 // ============================================================================
 
 void test_memory_fallback() {
-    WeirdCollision w = return_weird();
-    // Verification: SysV requires this to be returned via a hidden memory pointer
-    // because Slot 1 contains both an int (INTEGER) and half a double (SSE)[cite: 7, 8].
-    println(`Memory fallback: a=${w.a}, b=${w.b}, c=${w.c}`);
+    unsafe {
+        WeirdCollision w = return_weird();
+        println(`Memory fallback: a=${w.a}, b=${w.b}, c=${w.c}`);
+    }
 }
 
 void test_sret_byval() {
-    // Test SRET (Returned via pointer)
-    HugeData h = return_huge_sret();
-    println(`SRET data check: ${h.data[15]}`); // Expected: 165
-
-    // Test ByVal (Passed via stack copy)
-    take_huge_byval(h);
+    unsafe {
+        HugeData h = return_huge_sret();
+        println(`SRET data check: ${h.data[15]}`); // Expected: 165
+        take_huge_byval(h);
+    }
 }
 
 void test_simd_vectors() {
     Float4 v;
     v.x = 1.1; v.y = 2.2; v.z = 3.3; v.w = 4.4;
-    pass_true_vector(v);
+    unsafe { pass_true_vector(v); }
 }
 
 // ============================================================================

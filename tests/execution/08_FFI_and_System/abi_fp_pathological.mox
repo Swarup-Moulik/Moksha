@@ -8,8 +8,10 @@ void test_fp_boundaries() {
     // 2. Denormalized Numbers: Tests if the backend sets subnormal flushing (FTZ/DAZ).
     float denorm = 1.4e-45f32;
 
-    float res1 = pass_float(snan);
-    float res2 = pass_float(denorm);
+    unsafe {
+        float res1 = pass_float(snan);
+        float res2 = pass_float(denorm);
+    }
 }
 
 test_fp_boundaries()

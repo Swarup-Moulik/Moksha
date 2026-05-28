@@ -23,19 +23,21 @@ extern "C" void modify_ptr(*mut int ptr) {
 extern "C" int printf(string fmt, ...);
 
 void test_abi_edges() {
-    mixed_args(1, 3.14f32, 2.718, 4); // Forces correct interleaved registers
-    SmallPair sp = return_small_pair(); // Fits in 1 64-bit register (RAX)
-    MixedStruct ms; // Int in GPR, Float in XMM
-    ms.a = 10;
-    ms.b = 5.5f32;
-    pass_mixed_struct(ms);
+    unsafe {
+        mixed_args(1, 3.14f32, 2.718, 4);
+        SmallPair sp = return_small_pair();
 
-    int val = 0;
-    modify_ptr(&val);
-    println(val); // Expected: 123
+        MixedStruct ms;
+        ms.a = 10;
+        ms.b = 5.5f32;
+        pass_mixed_struct(ms);
 
-    // Tests vararg promotion (float -> double in C ABI)
-    printf("Variadic test: %d, %f, %s\n", 42, 3.14159, "hello");
+        int val = 0;
+        modify_ptr(&val);
+        println(val); // Expected: 123
+
+        printf("Variadic test: %d, %f, %s\n", 42, 3.14159, "hello");
+    }
 }
 
 // ============================================================================

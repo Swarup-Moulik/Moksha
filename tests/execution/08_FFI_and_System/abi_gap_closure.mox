@@ -12,10 +12,10 @@ struct Huge {
 extern "C" Huge return_huge();
 
 void test_sret() {
-    Huge h = return_huge();
-    // Verify: LLVM should emit 'sret' on the first parameter,
-    // the caller allocates the stack slot, and the callee writes directly to it.
-    println(h.data[0]);
+    unsafe {
+        Huge h = return_huge();
+        println(h.data[0]);
+    }
 }
 
 // ============================================================================
@@ -31,9 +31,11 @@ struct MixedRet {
 extern "C" MixedRet return_mixed();
 
 void test_mixed_return() {
-    MixedRet m = return_mixed();
-    println(m.a);
-    println(m.b);
+    unsafe {
+        MixedRet m = return_mixed();
+        println(m.a);
+        println(m.b);
+    }
 }
 
 // ============================================================================
@@ -44,8 +46,7 @@ void test_mixed_return() {
 extern "C" int printf(string fmt, ...);
 
 void test_vararg_spilling() {
-    // Interleaving ints and floats to force multiple register types
-    printf("Spill: %d %f %d %f %d", 1, 2.0, 3, 4.0, 5);
+    unsafe { printf("Spill: %d %f %d %f %d", 1, 2.0, 3, 4.0, 5); }
 }
 
 // ============================================================================
@@ -127,7 +128,7 @@ extern "C" void simd_func(Vector4 v);
 void test_stack_alignment() {
     Vector4 v;
     v.x = 0;
-    simd_func(v); // Caller MUST align stack before this call
+    unsafe { simd_func(v); }
 }
 
 // ============================================================================

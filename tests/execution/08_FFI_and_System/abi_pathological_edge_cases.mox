@@ -33,9 +33,7 @@ extern "C" int printf(string fmt, ...);
 void test_variadic_promotion() {
     char c = 10;
     short s = 20;
-    // C ABI mandates that chars and shorts MUST be promoted to 32-bit 'int'
-    // before being pushed to variadic functions.
-    printf("Promotions: %d, %d\n", c, s);
+    unsafe { printf("Promotions: %d, %d\n", c, s); }
 }
 
 // ============================================================================
@@ -105,8 +103,7 @@ void my_callback(int status) {
 }
 
 void test_ffi_callbacks() {
-    // Ensures the function pointer correctly resolves to an address and passes ABI checks
-    register_os_callback(my_callback);
+    unsafe { register_os_callback(my_callback); }
 }
 
 // ============================================================================

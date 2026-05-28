@@ -281,6 +281,8 @@ public:
   void setName(std::string newName) { name = std::move(newName); }
   bool isViewMethod() const { return isView; }
   void setViewMethod(bool v) { isView = v; }
+  bool isUnsafeFunc() const { return isUnsafe; }
+  void setUnsafe(bool u) { isUnsafe = u; }
 
 private:
   std::vector<Param> params;
@@ -308,6 +310,7 @@ private:
   bool isOverride = false;
   int vtableIndex = -1;
   bool isView = false;
+  bool isUnsafe = false;
 };
 
 class ClassDecl : public Decl {

@@ -5143,30 +5143,47 @@ private:
           std::make_unique<StoreInst>(nullVal, alloca, varDecl->getLoc()));
     }
 
-    if (!scopeStack.empty() && rawType) { // <--- USE rawType HERE
+    if (!scopeStack.empty() && rawType) {
       bool isShared = false;
       bool isOwned = false;
 
       // 1. Check explicit pointer ownership first!
-      if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(
-              rawType)) { // <--- USE rawType HERE
+      if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(rawType)) {
         if (ptrTy->getOwnership() == hir::Ownership::Shared) {
           isShared = true;
         } else if (ptrTy->getOwnership() == hir::Ownership::Owned ||
                    ptrTy->getOwnership() == hir::Ownership::None) {
-          // If it is a standard class/struct allocated via `new`, we own it
           if (ptrTy->getPointee() &&
               ptrTy->getPointee()->getKind() == hir::TypeKind::Struct) {
-            isOwned = true;
+
+            if (ptrTy->getOwnership() == hir::Ownership::Owned) {
+              isOwned = true;
+            } else {
+              MIRValue *trace = initVal;
+              while (auto *cast = llvm::dyn_cast_or_null<CastInst>(trace)) {
+                trace = cast->getValue();
+              }
+              if (auto *call = llvm::dyn_cast_or_null<CallInst>(trace)) {
+                if (call->getCallee() &&
+                    call->getCallee()->getName() == "__moksha_alloc") {
+                  isOwned = true;
+                }
+              } else if (auto *invoke =
+                             llvm::dyn_cast_or_null<InvokeInst>(trace)) {
+                if (invoke->getCallee() &&
+                    invoke->getCallee()->getName() == "__moksha_alloc") {
+                  isOwned = true;
+                }
+              }
+            }
           }
         }
-      } else if (llvm::dyn_cast_or_null<hir::ReferenceType>(
-                     rawType)) { // <--- USE rawType HERE
+      } else if (llvm::dyn_cast_or_null<hir::ReferenceType>(rawType)) {
         // References are always borrowed, do nothing.
       }
       // 2. Only string match if it is an actual value type!
       else {
-        std::string tyStr = rawType->toString(); // <--- USE rawType HERE
+        std::string tyStr = rawType->toString();
         if (tyStr.find("Arc<") != std::string::npos ||
             tyStr.find("shared ") != std::string::npos) {
           isShared = true;

@@ -49,9 +49,7 @@ void test_atomic_ordering() {
 extern "C" int terminal_callee(int x);
 
 int test_tail_call_verification(int x) {
-    // Verification: The generated ASM must show 'jmp' instead of 'call'
-    // and must not move the stack pointer (RSP). [cite: 125, 126]
-    return terminal_callee(x);
+    unsafe { return terminal_callee(x); }
 }
 
 // ============================================================================
@@ -74,8 +72,7 @@ void test_tls_isolation() {
 extern "C" void external_c_thrower();
 
 void test_unwind_safety() {
-    // If an exception passes through here, Moksha must have valid .eh_frame entries.
-    external_c_thrower();
+    unsafe { external_c_thrower(); }
 }
 
 // ============================================================================

@@ -22,15 +22,17 @@ void process_vector(Vector4 v) {
 }
 
 void test_abi_lowering() {
-    win32_api(10, 20);                  // Expected: win32_api: 30
-    x64_sysv_abi(1, 2, 3, 4);           // Expected: sysv_abi: 10
+    unsafe {
+        win32_api(10, 20);                  // Expected: win32_api: 30
+        x64_sysv_abi(1, 2, 3, 4);           // Expected: sysv_abi: 10
+    }
 
     BigData tbl = get_kernel_table();
-    println(tbl.data[0]);             // Expected: 999
+    println(tbl.data[0]);                   // Expected: 999
 
     Vector4 vec;
     vec.x = 3.14;
-    process_vector(vec);                // Expected: 3.14
+    process_vector(vec);                    // Expected: 3.14
 }
 
 test_abi_lowering();

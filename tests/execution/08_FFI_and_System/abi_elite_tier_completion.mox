@@ -27,7 +27,7 @@ extern "C" void spill_args(
 void test_arg_spilling() {
     // Verifies that the backend correctly calculates the stack offset for a7/a8
     // and maintains the 16-byte alignment of the caller's frame.
-    spill_args(1, 2, 3, 4, 5, 6, 7, 8);
+    unsafe { spill_args(1, 2, 3, 4, 5, 6, 7, 8); }
 }
 
 // ============================================================================
@@ -62,11 +62,11 @@ extern "C" void set_rounding_downward();
 extern "C" int get_rounding_mode();
 
 void test_fp_env() {
-    set_rounding_downward();
-    // A subsequent call to any function should not reset the rounding mode
-    // unless the calling convention explicitly allows it.
-    int mode = get_rounding_mode();
-    println(`Rounding Mode Preserved: ${mode}`);
+    unsafe {
+        set_rounding_downward();
+        int mode = get_rounding_mode();
+        println(`Rounding Mode Preserved: ${mode}`);
+    }
 }
 
 // ============================================================================
@@ -82,9 +82,7 @@ void test_vararg_struct() {
     Small s;
     s.a = 1;
     s.b = 2;
-    // Verifies if the struct is passed by value (copied to register/stack)
-    // or if the compiler mistakenly passes a pointer.
-    printf("Struct in vararg: %d %d\n", s);
+    unsafe { printf("Struct in vararg: %d %d\n", s); }
 }
 
 // ============================================================================
@@ -94,9 +92,10 @@ void test_vararg_struct() {
 extern "C" int tail_recursive_sum(int count, int acc);
 
 void test_tail_call_stability() {
-    // Should be able to handle 1,000,000 iterations if tail-call is optimized.
-    int result = tail_recursive_sum(1000000, 0);
-    println(`Tail Call Result: ${result}`);
+    unsafe {
+        int result = tail_recursive_sum(1000000, 0);
+        println(`Tail Call Result: ${result}`);
+    }
 }
 
 // ============================================================================
