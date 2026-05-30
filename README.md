@@ -1,4 +1,4 @@
-<p align="center">
+<p align="left">
   <img src="logo.svg" alt="Moksha Language Logo" width="150" />
 </p>
 
