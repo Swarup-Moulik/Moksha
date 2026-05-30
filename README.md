@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.svg" alt="Moksha Language Logo" width="150" />
+</p>
+
 # Moksha
 
 Moksha is a statically typed systems programming language with a custom multi-stage compilation pipeline, aimed to
