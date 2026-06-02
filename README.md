@@ -13,7 +13,7 @@ bridge the performance with flexibility and safety.
 
 Here is a quick look at Moksha's safe borrowing and reference mechanisms:
 
-````moksha
+```moksha
     int data = 10;
     *mut int m1 = &data;
 
@@ -27,12 +27,13 @@ Here is a quick look at Moksha's safe borrowing and reference mechanisms:
 
     *m1 = 20; // Safe to use m1 again!
     println(data); // Expected: 20
-````
+```
 
 ---
 
 # Architecture
 
+```mermaid
 graph TD
     Source[(Source Code)] --> Frontend
 
@@ -73,6 +74,7 @@ graph TD
     end
 
     RuntimeEnvironment -. Links to .-> Exec
+```
 
 ---
 
@@ -96,7 +98,7 @@ pacman -S --needed mingw-w64-x86_64-toolchain \
   mingw-w64-x86_64-mlir \
   mingw-w64-x86_64-cmake \
   mingw-w64-x86_64-ninja
-````
+```
 
 ---
 
