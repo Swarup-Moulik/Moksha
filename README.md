@@ -9,36 +9,69 @@ bridge the performance with flexibility and safety.
 
 ---
 
+## Code Example
+
+Here is a quick look at Moksha's safe borrowing and reference mechanisms:
+
+````moksha
+    int data = 10;
+    *mut int m1 = &data;
+
+    // Reborrow from the reference itself
+    *view int v = &*m1;
+
+    int read = *v;
+    println(read); // Expected: 10
+
+    // 'v' dies here, releasing the view borrow.
+
+    *m1 = 20; // Safe to use m1 again!
+    println(data); // Expected: 20
+
+---
+
 # Architecture
 
-## Frontend
+graph TD
+    Source[(Source Code)] --> Frontend
 
-- Lexer
-- Parser
-- Semantic analysis
-- Generic resolution
-- AST → HIR lowering
+    subgraph Frontend [1. Frontend]
+        direction TB
+        L[Lexer] --> P[Parser]
+        P --> SA[Semantic Analysis]
+        SA --> GR[Generic Resolution]
+        GR --> AST[AST → HIR Lowering]
+    end
 
-## Middle-end
+    Frontend --> MiddleEnd
 
-- HIR representation
-- Ownership analysis (ARC)
-- Non Lexical Lifetime Borrow Checking
-- HIR → MIR lowering
-- MIR verification & dominance analysis
+    subgraph MiddleEnd [2. Middle-end]
+        direction TB
+        HIR[HIR Representation] --> ARC[Ownership Analysis ARC]
+        ARC --> NLL[Non-Lexical Lifetime Borrow Checking]
+        NLL --> H2M[HIR → MIR Lowering]
+        H2M --> MV[MIR Verification & Dominance Analysis]
+    end
 
-## Backend
+    MiddleEnd --> Backend
 
-- Custom MLIR dialect
-- MIR → MLIR lowering
-- MLIR → LLVM lowering
+    subgraph Backend [3. Backend]
+        direction TB
+        MLIR[Custom MLIR Dialect] --> M2M[MIR → MLIR Lowering]
+        M2M --> LLVM[MLIR → LLVM Lowering]
+    end
 
-## Runtime
+    Backend --> Exec[(Executable)]
 
-- ARC runtime
-- Strings
-- Arrays
-- Panic handling
+    subgraph RuntimeEnvironment [Runtime Components]
+        direction LR
+        RT_ARC[ARC Runtime]
+        RT_STR[Strings]
+        RT_ARR[Arrays]
+        RT_PANIC[Panic Handling]
+    end
+
+    RuntimeEnvironment -. Links to .-> Exec
 
 ---
 
@@ -62,7 +95,7 @@ pacman -S --needed mingw-w64-x86_64-toolchain \
   mingw-w64-x86_64-mlir \
   mingw-w64-x86_64-cmake \
   mingw-w64-x86_64-ninja
-```
+````
 
 ---
 
