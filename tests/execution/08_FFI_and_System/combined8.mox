@@ -1,0 +1,1438 @@
+﻿println("--- [E2E] low_level_abi.mox ---")
+
+// Verifies 'extern' parsing and linkage string extraction
+extern "C" void printf(string fmt, ...) {
+    println(fmt); // Mocking printf with our safe println
+}
+
+section(".multiboot") align(4) packed struct MultibootHeader {
+    unsigned int magic;
+    unsigned int flags;
+    unsigned int checksum;
+}
+
+// Variables & attributes
+volatile unsigned int LAPIC_ID_REG = 0xFEE00020_u32;
+
+void test_low_level() {
+    // Wrap the extern function call in an unsafe block
+    unsafe {
+        printf("Testing variadic C ABI"); // Expected: Testing variadic C ABI
+    }
+
+    mut MultibootHeader header;
+    header.magic = 0x1BADB002_u32;
+    println(header.magic);            // Expected: 464367618 (0x1BADB002)
+
+    // volatile read
+    println(LAPIC_ID_REG);            // Expected: 4276092960 (0xFEE00020)
+}
+
+test_low_level();
+println("--- [E2E] abi_certification_master.mox ---")
+
+// ============================================================================
+// 1. FLOAT RETURN ABI
+// ============================================================================
+extern "C" double return_double_identity(double x);
+
+void test_f64_return() {
+    double input1 = 1.23456789;
+    unsafe { double output = return_double_identity(input1); }
+}
+
+// ============================================================================
+// 2. COMPLEX NUMBERS: AGGREGATE VS REGISTER PAIR
+// ============================================================================
+struct ComplexDouble { double re; double im; }
+extern "C" ComplexDouble return_complex_pair();
+
+// ============================================================================
+// 3. INTEGER EXTENSION: SIGN vs ZERO EXTENSION
+// ============================================================================
+extern "C" void takes_signed_char(char c);
+extern "C" void takes_unsigned_char(unsigned char c);
+
+// ============================================================================
+// 4. THE 256-BIT VECTOR (AVX) & STACK PROBING
+// ============================================================================
+// Stresses stack alignment beyond 16 bytes. AVX requires 32-byte alignment.
+struct Vec256 {
+    float f1; float f2; float f3; float f4;
+    float f5; float f6; float f7; float f8;
+}
+extern "C" void pass_vec256(Vec256 v);
+
+// ============================================================================
+// 5. NATIVE REFERENCE ABI
+// ============================================================================
+// Tests passing by native reference (`&`) which should lower to a pointer in LLVM IR
+struct RefTarget {
+    int x;
+}
+extern "C" void take_by_ref(&RefTarget c);
+
+void test_native_reference() {
+    RefTarget target;
+    target.x = 42;
+    // Call it to force the compiler to emit the function declaration and struct definition!
+    unsafe { take_by_ref(target); }
+}
+
+// ============================================================================
+// 6. NaN PAYLOAD PRESERVATION
+// ============================================================================
+// Tests if the backend/optimizer "quiets" or canonicalizes NaNs.
+void test_nan_payload() {
+    // 0x7FC01234 is a Quiet NaN with a specific payload.
+    float nan_val = cast<float>(0x7FC01234_u32);
+}
+
+// ============================================================================
+// 7. PLT/GOT RELOCATION (DYNAMIC LINKING)
+// ============================================================================
+// Ensures function calls to external DSOs use the Procedure Linkage Table (PLT).
+extern "C" void external_shared_lib_func();
+
+void test_plt_call() {
+    unsafe { external_shared_lib_func(); }
+}
+
+// ============================================================================
+// 8. EVALUATION ORDER BARRIER
+// ============================================================================
+extern "C" void side_effect(int a, int b);
+
+void test_eval_order() {
+    mut int x = 1;
+    // ABI + Language Spec must guarantee evaluation order (typically left-to-right).
+    unsafe { side_effect(x++, x++); }
+}
+
+// ============================================================================
+// 9. DWARF CFI & UNWIND METADATA
+// ============================================================================
+void test_unwind_metadata() {
+    println("Verifying CFI (Call Frame Information) emission...");
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_nan_payload();
+test_eval_order();
+test_f64_return();
+test_unwind_metadata();
+test_native_reference();
+test_plt_call();
+
+Vec256 v;
+v.f1 = 1.0; v.f8 = 8.0;
+
+unsafe {
+    takes_signed_char(-5i8);
+    takes_unsigned_char(250u8);
+    pass_vec256(v);
+    ComplexDouble c = return_complex_pair();
+    println(cast<any>(c.re));
+}
+println("--- [E2E] abi_elite_tier_completion.mox ---")
+
+// ============================================================================
+// 1. BROKEN HFA: THE "ONE ROGUE FIELD" TRAP
+// ============================================================================
+// Homogeneous Floating Aggregates (HFA) are passed in SIMD/XMM registers.
+// Adding even ONE non-float field (like an int) breaks this optimization,
+// forcing the entire struct into GPRs or Memory.
+struct BrokenHFA {
+    float a;
+    float b;
+    int c;   // This breaks HFA status on ARM64/x86_64
+}
+
+extern "C" void check_broken_hfa(BrokenHFA s);
+
+// ============================================================================
+// 2. REGISTER EXHAUSTION: STACK SPILLING
+// ============================================================================
+// Stresses the transition from registers to stack memory.
+// SysV uses 6 GPRs for integers. Arguments 7 and 8 MUST be on the stack.
+extern "C" void spill_args(
+    int a1, int a2, int a3, int a4, int a5, int a6, // Registers
+    int a7, int a8                                  // Must be Stack
+);
+
+void test_arg_spilling() {
+    // Verifies that the backend correctly calculates the stack offset for a7/a8
+    // and maintains the 16-byte alignment of the caller's frame.
+    unsafe { spill_args(1, 2, 3, 4, 5, 6, 7, 8); }
+}
+
+// ============================================================================
+// 3. INLINE ASM: CONDITION CODE (CC) CLOBBER
+// ============================================================================
+// Prevents the optimizer from reordering instructions across assembly that
+// modifies status flags (EFLAGS).
+void test_cc_clobber() {
+    int x = 10;
+    // Standard Moksha asm syntax.
+    // Note: The compiler backend will need to be updated to map local variables to these operands.
+    asm("add $$1, $0") inout("+r"(x)) clobber("cc") volatile;
+    println(`CC Clobber Check: ${x}`);
+}
+
+// ============================================================================
+// 4. TLS MODELS: FORCING GLOBAL-DYNAMIC
+// ============================================================================
+// Stresses thread-local storage models.
+thread_local int tls_complex = 42;
+
+void test_tls_dynamic() {
+    println(tls_complex);
+}
+
+// ============================================================================
+// 5. FP ENVIRONMENT: ROUNDING MODE PRESERVATION
+// ============================================================================
+// The ABI requires that the Floating Point Environment (rounding modes,
+// exception flags) remains stable across standard function calls.
+extern "C" void set_rounding_downward();
+extern "C" int get_rounding_mode();
+
+void test_fp_env() {
+    unsafe {
+        set_rounding_downward();
+        int mode = get_rounding_mode();
+        println(`Rounding Mode Preserved: ${mode}`);
+    }
+}
+
+// ============================================================================
+// 6. VARARGS + AGGREGATES
+// ============================================================================
+// Passing a struct to a variadic function is a common source of
+// "hidden" pointer bugs.
+struct Small { int a; int b; }
+
+extern "C" int printf(string fmt, ...);
+
+void test_vararg_struct() {
+    Small s;
+    s.a = 1;
+    s.b = 2;
+    unsafe { printf("Struct in vararg: %d %d\n", s); }
+}
+
+// ============================================================================
+// 7. TAIL CALL: STACK GROWTH STABILITY
+// ============================================================================
+// Validates that deep recursion with tail calls does not cause stack overflow.
+extern "C" int tail_recursive_sum(int count, int acc);
+
+void test_tail_call_stability() {
+    unsafe {
+        int result = tail_recursive_sum(1000000, 0);
+        println(`Tail Call Result: ${result}`);
+    }
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_arg_spilling();
+test_cc_clobber();
+test_tls_dynamic();
+test_fp_env();
+test_vararg_struct();
+test_tail_call_stability();
+println("--- [E2E] abi_final_impossible_suite.mox ---")
+
+// ============================================================================
+// 1. NON-HFA VECTORIZABLE STRUCTS (XMM PACKING)
+// ============================================================================
+// On SysV, this is 128-bit. Stresses the IR generator to ensure it
+// lowers to <2 x double> for XMM0 usage, rather than an {i64, i64} aggregate.
+struct VecLike {
+    double a;
+    double b;
+}
+extern "C" void take_veclike(VecLike v);
+
+// ============================================================================
+// 2. BYVAL + ALIGN(32) INTERACTION
+// ============================================================================
+// Forces the backend to handle over-aligned stack-passed parameters.
+// Validates 'byval align 32' in the IR.
+align(32) struct BigAligned {
+    float[8] data;
+}
+extern "C" void take_big_aligned(BigAligned b);
+
+// ============================================================================
+// 3. FLEXIBLE ARRAY MEMBER (FAM)
+// ============================================================================
+// ABI rule: sizeof(Packet) must ignore the flexible tail.
+// Passing/returning must treat it as a 4-byte (int) header only.
+struct Packet {
+    int len;
+    char[0] data;
+}
+void test_fam_semantics() {
+    println(`FAM Struct Size: ${sizeof(Packet)}`); // Expected: 4
+}
+
+// ============================================================================
+// 4. UNION ABI CLASSIFICATION
+// ============================================================================
+// Stresses classification based on the largest member.
+// If i32 and float alias, the ABI must decide between GPR and SSE.
+union U {
+    int i;
+    float f;
+}
+extern "C" void pass_union(U u);
+
+// ============================================================================
+// 5. LONG DOUBLE PASSING (SYSV MEMORY VS WIN64 ALIAS)
+// ============================================================================
+// Cross-platform divergence point: x86_64 SysV uses memory/x87 stack,
+// while Windows often aliases this to a 64-bit double.
+extern "C" void take_ld(double x);
+
+// ============================================================================
+// 6. FUNCTION RETURNING FUNCTION POINTER
+// ============================================================================
+// Validates CC (Calling Convention) metadata preservation through nesting.
+extern "C" (int) => void get_callback();
+
+// ============================================================================
+// 7. MULTI-DIMENSIONAL ARRAY DECAY
+// ============================================================================
+// ABI Rule: int[3][4] must decay to int (*)[4], not int**.
+extern "C" void take_2d(int[3][4] arr);
+
+// ============================================================================
+// 8. SMALL ENUM WIDTH (EXPLICIT STORAGE)
+// ============================================================================
+// Validates that Moksha doesn't promote i8 enums to i32 in standard FFI.
+enum SmallEnum {
+    A = 1
+}
+extern "C" void pass_small_enum(SmallEnum e);
+
+// ============================================================================
+// 9. CROSS-LANGUAGE INTEROP (C VS C++)
+// ============================================================================
+// Validates layout consistency. In Moksha's Gradient Memory Model,
+// we must ensure that a 'class' (value type) or 'ref class' doesn't
+// inject unexpected padding compared to a standard C struct. [cite: 2]
+extern "C" {
+    struct CData { int x; char y; }
+}
+extern "C++" {
+    struct CppData { int x; char y; }
+}
+
+// ============================================================================
+// 10. ZERO-INITIALIZED TLS (.TBSS VS .TDATA)
+// ============================================================================
+// Ensures zero-init TLS variables are placed in .tbss to minimize binary size.
+thread_local int zero_tls = 0;
+
+// ============================================================================
+// 11. WEAK + INLINE + ODR PATHOLOGY
+// ============================================================================
+// Stresses LTO. If 'foo' is inlined before the weak symbol is resolved,
+// it creates a permanent ODR violation.
+inline weak void weak_inline_test() {
+    println("Default Weak Inline");
+}
+
+// ============================================================================
+// 12. CALLING CONVENTION + VARARGS (WINDOWS DEGRADATION)
+// ============================================================================
+// On Windows, 'stdcall' varargs must degrade to 'cdecl' to prevent stack corruption.
+extern "stdcall" int win_printf(string fmt, ...);
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_fam_semantics();
+println(`TLS Address: ${&zero_tls}`);
+println("--- [E2E] abi_final_polishing_fixed.mox ---")
+
+// ============================================================================
+// 1. ABI CLASSIFICATION: NESTED & RECURSIVE AGGREGATES
+// ============================================================================
+// On SysV ABI, if this struct fits in 128 bits, it must be flattened and
+// passed in registers.
+struct Inner {
+    int a;
+    float b;
+}
+struct Outer {
+    Inner x;
+    Inner y;
+}
+extern "C" void pass_nested_aggregate(Outer o);
+
+// ============================================================================
+// 2. ABI CLASSIFICATION: PADDING SENSITIVITY
+// ============================================================================
+// Total size: 8 bytes. 1 byte 'a', 3 bytes padding, 4 bytes 'b'.
+struct Padded {
+    char a;
+    int b;
+}
+extern "C" Padded return_padded_struct();
+
+void test_padding() {
+    unsafe {
+        Padded p = return_padded_struct();
+        println(p.b);
+    }
+}
+
+// ============================================================================
+// 3. FUNCTION POINTER ABI MISMATCH PREVENTION
+// ============================================================================
+extern "C" void register_float_callback((float) => void cb);
+
+void correct_cb(float x) { println("OK"); }
+void wrong_cb(int x) { println("FAIL"); }
+
+void test_callback_signatures() {
+    unsafe { register_float_callback(correct_cb); }
+
+    // RED TEAM: register_float_callback(wrong_cb);
+    // Semantic Analyzer Fix: The type checker must verify not just the return
+    // type, but execute a deep equality check on the parameter types array.
+}
+
+// ============================================================================
+// 4. THREAD-LOCAL STORAGE (TLS)
+// ============================================================================
+// Must map to LLVM's thread_local global and placed in .tdata/.tbss
+thread_local int cpu_core_id = 0;
+
+void test_tls() {
+    cpu_core_id = 1;
+    println(cpu_core_id);
+}
+
+// ============================================================================
+// 5. VOLATILE: POINTER VS POINTEE (FIXED)
+// ============================================================================
+void test_volatile_ast() {
+    int target = 42;
+    volatile int vol_target = 42; // ADDED: Need a volatile base to point to without unsafe casting.
+
+    // 1. Non-volatile pointer to a volatile integer.
+    // FIX: Must point to an actually volatile variable to satisfy strict type checking.
+    volatile *mut int p1 = &vol_target;
+
+    // 2. Volatile pointer to a non-volatile integer.
+    // FIX: Can point to the standard target, but the pointer itself is volatile.
+    *mut volatile int p2 = &target;
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_padding();
+test_tls();
+test_callback_signatures();
+test_volatile_ast();
+extern "C" float pass_float(float f);
+
+void test_fp_boundaries() {
+    // 1. Signaling NaN: Tests if the ABI preserves the 'signaling' bit
+    // or if the frontend/backend accidentally quiets it.
+    float snan = cast<float>(0x7FA00000);
+
+    // 2. Denormalized Numbers: Tests if the backend sets subnormal flushing (FTZ/DAZ).
+    float denorm = 1.4e-45f32;
+
+    unsafe {
+        float res1 = pass_float(snan);
+        float res2 = pass_float(denorm);
+    }
+}
+
+test_fp_boundaries()
+println("--- [E2E] abi_gap_closure.mox ---")
+
+// ============================================================================
+// 1. SRET: HIDDEN RETURN POINTER VALIDATION
+// ============================================================================
+// Your current tests cover large structs[cite: 101], but this explicitly
+// validates the 'sret' attribute for structs far exceeding register limits.
+struct Huge {
+    long[8] data;
+}
+
+extern "C" Huge return_huge();
+
+void test_sret() {
+    unsafe {
+        Huge h = return_huge();
+        println(h.data[0]);
+    }
+}
+
+// ============================================================================
+// 2. MIXED RETURN ABI: GPR + XMM SPLITTING
+// ============================================================================
+// You currently test mixed arguments[cite: 58, 65], but returning mixed
+// types is a separate path in the SysV ABI logic.
+struct MixedRet {
+    int a;    // Should go in RAX
+    float b;  // Should go in XMM0
+}
+
+extern "C" MixedRet return_mixed();
+
+void test_mixed_return() {
+    unsafe {
+        MixedRet m = return_mixed();
+        println(m.a);
+        println(m.b);
+    }
+}
+
+// ============================================================================
+// 3. VARARGS: REGISTER SAVE AREA STRESS
+// ============================================================================
+// Verifies that the SysV "Register Save Area" is correctly populated.
+// If the SSE/GPR save counts are off, the callee reads garbage.
+extern "C" int printf(string fmt, ...);
+
+void test_vararg_spilling() {
+    unsafe { printf("Spill: %d %f %d %f %d", 1, 2.0, 3, 4.0, 5); }
+}
+
+// ============================================================================
+// 4. FUNCTION POINTER: INDIRECT CALL LOWERING
+// ============================================================================
+// You've tested passing pointers to OS callbacks[cite: 52, 54], but
+// invoking an arbitrary pointer requires strict ABI preservation in the IR.
+void my_local_func(int x) { println(`Value: ${x}`); }
+
+void test_indirect_calls() {
+    (int) => void fp = my_local_func;
+    fp(100); // Ensures correct indirect call lowering and CC preservation
+}
+
+// ============================================================================
+// 5. BITFIELD / SUB-BYTE PACKING (Moksha 2026 Milestone)
+// ============================================================================
+// Validates bit-level layout for interop with C bitfields.
+// SysV packs these into an integer base with specific bit offsets.
+struct Bitfield {
+    unsigned int a : 3;
+    unsigned int b : 5;
+    unsigned int c : 8;
+}
+
+void test_bitfield_layout() {
+    Bitfield bf;
+    bf.a = 7;
+    bf.b = 31;
+    println(sizeof(Bitfield)); // Should be 4 (or 1 depending on packing)
+}
+
+// ============================================================================
+// 6. VOLATILE: REORDERING BARRIER VALIDATION
+// ============================================================================
+// Extends your MMIO tests[cite: 151]. This ensures that multiple
+// volatile assignments are not coalesced or reordered by the optimizer.
+volatile int x_reg;
+volatile int y_reg;
+
+void test_volatile_barrier() {
+    x_reg = 1;
+    y_reg = 2;
+    // IR must show: store volatile 1 -> store volatile 2
+}
+
+// ============================================================================
+// 7. TLS: ACCESS MODEL & INIT ORDER
+// ============================================================================
+// Tests dependent initialization within Thread Local Storage[cite: 21].
+thread_local int tls_a = 10;
+thread_local int tls_b = tls_a + 5;
+
+void test_tls_logic() {
+    println(tls_b); // Expected: 15
+}
+
+// ============================================================================
+// 8. INLINE ASM: REGISTER CLOBBER VALIDATION
+// ============================================================================
+// Extends memory clobber tests[cite: 42]. Prevents LLVM from
+// reusing registers that the assembly block modifies.
+void test_reg_clobber() {
+    int val = 1;
+    // Explicitly clobbering rax and rbx
+   asm("mov $$42, %rax") clobber("rax", "rbx") volatile;
+    println(val);
+}
+
+// ============================================================================
+// 9. STACK ALIGNMENT: SIMD PREPARATION
+// ============================================================================
+struct Vector4 { float x}
+
+// While you support align(16)[cite: 55], this validates that the
+// function call itself maintains the 16-byte boundary required by SysV.
+extern "C" void simd_func(Vector4 v);
+
+void test_stack_alignment() {
+    Vector4 v;
+    v.x = 0;
+    unsafe { simd_func(v); }
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_sret();
+test_mixed_return();
+test_vararg_spilling();
+test_indirect_calls();
+test_bitfield_layout();
+test_volatile_barrier();
+test_tls_logic();
+test_reg_clobber();
+test_stack_alignment()
+println("--- [E2E] abi_killshot_conformance.mox ---")
+
+// ============================================================================
+// 1. THE 8-BYTE SPLIT: MIXED CLASSIFICATION (INTEGER + SSE)
+// ============================================================================
+// SysV requires classification of each 8-byte chunk. [cite: 8]
+// If a single 8-byte chunk contains both float and int, it is complex.
+struct Split {
+    float a; // 4 bytes (SSE)
+    int b;   // 4 bytes (INTEGER)
+}
+// Verification: Ensures the backend doesn't take the "easy way" and
+// push the whole struct to memory or a single register type.
+extern "C" void pass_split_struct(Split s);
+
+// ============================================================================
+// 2. CROSS-BOUNDARY BITFIELDS
+// ============================================================================
+// Stresses endianness and bit-offset spilling across storage unit boundaries. [cite: 13, 93]
+struct CrossBitfield {
+    unsigned int a : 31;
+    unsigned int b : 2; // This bit crosses the 32-bit (4-byte) boundary.
+}
+
+void test_bitfield_spill() {
+    CrossBitfield cb;
+    cb.a = 0x7FFFFFFF;
+    cb.b = 3;
+    println(sizeof(CrossBitfield)); // Typically 8 bytes in C/C++
+}
+
+// ============================================================================
+// 3. ATOMIC MEMORY MODEL (ACQUIRE / RELEASE)
+// ============================================================================
+// Volatile is for hardware side-effects; Atomics are for concurrency. [cite: 23, 68]
+// This ensures Moksha isn't just "thread-safe by accident."
+void test_atomic_ordering() {
+    int sync_flag = 0;
+    int data = 0;
+
+    // RELEASE: Ensures 'data' write is visible before 'sync_flag'
+    atomic_store(&data, 42, 3);
+    atomic_store(&sync_flag, 1, 3);
+}
+
+// ============================================================================
+// 4. TAIL CALL STACK NEUTRALITY
+// ============================================================================
+extern "C" int terminal_callee(int x);
+
+int test_tail_call_verification(int x) {
+    unsafe { return terminal_callee(x); }
+}
+
+// ============================================================================
+// 6. MULTI-THREADED TLS ISOLATION
+// ============================================================================
+// Validates that TLS isn't just "global with extra steps." [cite: 20, 21]
+thread_local int thread_secret = 10;
+
+void test_tls_isolation() {
+    // Expected behavior: Modifications in a spawned thread do not affect
+    // the value in the parent thread.
+    println(`Local Secret: ${thread_secret}`);
+}
+
+// ============================================================================
+// 7. EXCEPTION UNWINDING ACROSS FFI
+// ============================================================================
+// Even if Moksha doesn't support C++ style catch, it must allow
+// unwinding to pass through its frames without corrupting the stack. [cite: 126, 128]
+extern "C" void external_c_thrower();
+
+void test_unwind_safety() {
+    unsafe { external_c_thrower(); }
+}
+
+// ============================================================================
+// 8. SIZED ENUMS & PROMOTION
+// ============================================================================
+// Enums with explicit underlying types change the ABI passing width. [cite: 91]
+enum HugeEnum {
+    MAX_VAL = 0xFFFFFFFFFFFFFFFF_u64
+}
+
+extern "C" void pass_huge_enum(HugeEnum e);
+
+// ============================================================================
+// 9. THE 3-REGISTER RETURN (192-BIT EDGE)
+// ============================================================================
+// SysV return limit is 128 bits (RAX+RDX). 192 bits forces memory return. [cite: 30]
+struct ThreeReg {
+    long a; long b; long c;
+}
+extern "C" ThreeReg return_three_reg();
+
+// ============================================================================
+// 10. UB & OPTIMIZER ASSUMPTIONS
+// ============================================================================
+// Validates if the compiler treats arithmetic overflow as UB for optimization.
+void test_arithmetic_ub(int x) {
+    // If (x + 1) > x is folded to 'true', the compiler is assuming signed overflow UB.
+    if ((x + 1) > x) {
+        println("Optimizer assumes standard signed overflow");
+    }
+}
+
+// ============================================================================
+// 11. MISALIGNED ACCESS & ENDIANNESS
+// ============================================================================
+// Stresses targets where unaligned loads cause hardware faults or slow paths. [cite: 94]
+void test_misalignment() {
+    char[8] buffer = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+    // Misaligned read of an int from index 1.
+    int x = *cast<*int>(&buffer[1]);
+    println(`Unaligned read (Endian check): ${x}`);
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_bitfield_spill();
+test_atomic_ordering();
+test_tls_isolation();
+test_arithmetic_ub(10);
+test_misalignment();
+println("--- [E2E] abi_pathological_edge_cases.mox ---")
+
+// ============================================================================
+// 1. ABI CLASSIFICATION: STRUCT BOUNDARIES
+// ============================================================================
+
+// (a) Exactly 128-bit Struct (Two Registers)
+// SysV ABI requires this to be returned in RAX + RDX, NOT via hidden memory pointer.
+struct TwoRegStruct {
+    long a; // 64-bit
+    long b; // 64-bit
+}
+extern "C" TwoRegStruct return_two_reg();
+
+// (b) Homogeneous Floating Aggregates (HFA)
+// ARM64 and x86_64 require this to be passed/returned exclusively in XMM/SIMD registers.
+struct Float4 {
+    float x; float y; float z; float w;
+}
+extern "C" Float4 process_hfa(Float4 input1);
+
+// (c) Zero-Sized Types (ZST)
+// C++ allows empty structs (size 1). Rust allows size 0.
+// Your ABI must decide if this consumes a register/stack slot or is completely elided.
+struct Empty {}
+extern "C" void pass_empty(Empty e);
+
+// ============================================================================
+// 2. VARIADIC PROMOTION RULES
+// ============================================================================
+extern "C" int printf(string fmt, ...);
+
+void test_variadic_promotion() {
+    char c = 10;
+    short s = 20;
+    unsafe { printf("Promotions: %d, %d\n", c, s); }
+}
+
+// ============================================================================
+// 3. HARDWARE & VOLATILE ALIASING
+// ============================================================================
+
+volatile *mut int hw_reg = cast<volatile *mut int>(0x40022000);
+
+void test_volatile_alias_loss() {
+    // RED TEAM: Does casting away the explicit volatile keyword drop the
+    // volatile flag in the LLVM IR load/store instructions?
+    *mut int stripped_ptr = cast<*mut int>(hw_reg);
+
+    // If the optimizer elides this write because of the cast, you have a major bug.
+    *stripped_ptr = 42;
+}
+
+// ============================================================================
+// 4. INLINE ASM MEMORY CLOBBERS
+// ============================================================================
+void test_asm_clobber() {
+    int secret = 1;
+
+    // The "memory" clobber acts as a compiler optimization barrier.
+    // LLVM is strictly forbidden from caching `secret` in a register across this instruction.
+    asm(" ") clobber("memory");
+
+    secret = 2;
+}
+
+// ============================================================================
+// 5. INTERRUPT + NAKED INTERACTION
+// ============================================================================
+// Combining these two is famously fragile in LLVM.
+// [interrupt] wants to emit `pusha` and `iret`.
+// [naked] tells the compiler "emit absolutely no prologue/epilogue".
+// The compiler must prioritize [naked] and let the developer write the raw assembly.
+
+interrupt naked void extreme_custom_isr() {
+    asm("push %rax"); // Added % prefix
+    // ... custom handler ...
+    asm("pop %rax");  // Added % prefix
+    asm("iretq");
+}
+
+// ============================================================================
+// 6. GLOBAL INITIALIZATION DEPENDENCY ORDER
+// ============================================================================
+// If your compiler emits these into `@llvm.global_ctors` in the wrong order,
+// `global_b` will be initialized with garbage data (0 + 5 instead of 10 + 5).
+int init_a() { return 10; }
+
+int global_a = init_a();
+int global_b = global_a + 5;
+
+void test_init_order() {
+    println("Dependent Global: " + string(global_b)); // Expected: 15
+}
+
+// ============================================================================
+// 7. FUNCTION POINTERS ACROSS FFI
+// ============================================================================
+extern "C" void register_os_callback((int) => void callback);
+
+void my_callback(int status) {
+    println("OS Status: " + string(status));
+}
+
+void test_ffi_callbacks() {
+    unsafe { register_os_callback(my_callback); }
+}
+
+// ============================================================================
+// 8. OVER-ALIGNMENT
+// ============================================================================
+// Forces LLVM to align this struct to a 16-byte boundary, critical for SIMD ops.
+align(16) struct SimdData {
+    int[4] vectors;
+}
+
+void test_over_alignment() {
+    SimdData data;
+    // Un-testable at runtime without pointer math, but IR should emit `align 16`
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_variadic_promotion();
+test_init_order();
+test_over_alignment()
+test_ffi_callbacks();
+println("--- [E2E] abi_systems_edge_cases.mox ---")
+
+// ============================================================================
+// 1. ABI EDGE CASES & CLASSIFICATION
+// ============================================================================
+
+// (a) Mixed Integer + Float ABI Passing (Tests GPR vs XMM register splitting)
+extern "C" void mixed_args(int a, float b, double c, int d);
+
+// (b) Struct ABI Classification (Register packed vs memory passed)
+struct SmallPair { int a; int b; }
+struct MixedStruct { int a; float b; }
+
+extern "C" SmallPair return_small_pair();
+extern "C" void pass_mixed_struct(MixedStruct m);
+
+// (c) Pass-by-reference ABI (Mutability across boundary)
+extern "C" void modify_ptr(*mut int ptr) {
+    *ptr = 123;
+}
+
+// (d) Variadic Edge Cases (Multiple argument types)
+extern "C" int printf(string fmt, ...);
+
+void test_abi_edges() {
+    unsafe {
+        mixed_args(1, 3.14f32, 2.718, 4);
+        SmallPair sp = return_small_pair();
+
+        MixedStruct ms;
+        ms.a = 10;
+        ms.b = 5.5f32;
+        pass_mixed_struct(ms);
+
+        int val = 0;
+        modify_ptr(&val);
+        println(val); // Expected: 123
+
+        printf("Variadic test: %d, %f, %s\n", 42, 3.14159, "hello");
+    }
+}
+
+// ============================================================================
+// 2. VOLATILE SEMANTICS (Ordering & No-Elision)
+// ============================================================================
+// Create a real variable in standard memory to act as our "hardware register"
+int dummy_hardware_memory = 0;
+
+// Point the volatile pointer to our safe memory
+volatile *mut int hardware_reg = &dummy_hardware_memory;
+
+void test_volatile_ordering() {
+    *hardware_reg = 10;
+    int readback = *hardware_reg;
+    *hardware_reg = 1;
+    *hardware_reg = 2;
+}
+
+// ============================================================================
+// 3. UNSAFE / POINTER SYSTEM
+// ============================================================================
+void test_pointer_system() {
+    // Null pointer initialization
+    *mut int null_p = null;
+
+    // Pointer arithmetic (p + 1 must add sizeof(int) bytes, not 1 byte)
+    *mut int base = cast<*mut int>(0x1000);
+    *mut int offset_p = base + 1;
+
+    // Strict Aliasing Violation Test (TBAA in LLVM)
+    int x = 42;
+    *mut int p_x = &x;
+    *mut float p_f = cast<*mut float>(p_x);
+    // *p_f = 3.14f; // If uncommented, tests undefined behavior handling / type-punning
+}
+
+// ============================================================================
+// 4. DEFER SEMANTICS EDGE CASES
+// ============================================================================
+int test_defer_early_return() {
+    int state = 0;
+    defer {
+        println("Defer on early return executing");
+    }
+    return state; // Return evaluates, defer executes, then frame pops
+}
+
+void test_defer_inside_loops() {
+    // Tests scope boundaries for defer.
+    // Defers must execute at the end of EACH iteration, not at the end of the function.
+    for (int i = 0; i < 2; i = i + 1) {
+        defer { println("Defer iter: " + string(i)); }
+    }
+}
+
+// ============================================================================
+// 5. INLINE ASSEMBLY CONSTRAINTS
+// ============================================================================
+void test_asm_constraints() {
+    int in_val = 5;
+    int out_val = 0;
+    asm("mov $1, ($0)") in("r"(&out_val)) in("r"(in_val));
+    println("Asm out: " + string(out_val)); // Expected: 5
+}
+
+// ============================================================================
+// 6. INTERRUPT ABI & STACK FRAMES
+// ============================================================================
+struct InterruptFrame {
+    int ip;
+    int cs;
+    int flags;
+}
+
+// Tests CPU-pushed parameters for ISRs. The LLVM `x86_intrcc` calling convention
+// strictly dictates how this frame is passed and how `iret` is emitted.
+interrupt void handle_page_fault(InterruptFrame* frame, int error_code) {
+    println("Fault at IP: " + string(frame.ip));
+    println("Error code: " + string(error_code));
+}
+
+// ============================================================================
+// 7. FREESTANDING / GLOBAL INITIALIZATION ORDER
+// ============================================================================
+// Tests LLVM `.init_array` / `@llvm.global_ctors` linking correctness.
+int init_global_x() { println("Init X"); return 100; }
+int init_global_y() { println("Init Y"); return 200; }
+
+int global_x = init_global_x();
+int global_y = init_global_y();
+
+// ============================================================================
+// 8. WEAK SYMBOL OVERRIDE
+// ============================================================================
+weak void default_handler() {
+    println("Weak handler (Should NOT print)");
+}
+
+// ============================================================================
+// 9. TYPE SYSTEM ABI INTEROP
+// ============================================================================
+enum Status { OK = 0, FAIL = 1 }
+
+extern "C" void log_status(Status s);    // Checks if Enum lowers to correct integer type ABI
+extern "C" void enable_feature(bool b);  // Checks bool ABI (i1 vs i8 promotion in C ABI)
+
+// ============================================================================
+// 10. ALIGNMENT & PACKING
+// ============================================================================
+packed struct UnalignedHeader {
+    char magic;       // 1 byte
+    int payload_size; // 4 bytes
+}
+
+void test_alignment_packing() {
+    // If not packed, ABI padding makes this 8 bytes.
+    // Because it is [packed], it MUST be exactly 5 bytes.
+    println("Packed size: " + string(sizeof(UnalignedHeader))); // Expected: 5
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_abi_edges();
+test_volatile_ordering();
+test_pointer_system();
+test_defer_early_return();
+test_defer_inside_loops();
+test_asm_constraints();
+default_handler(); // Expected to print the Strong version
+test_alignment_packing();
+println("--- [E2E] abi_torture.mox ---")
+
+// We define the externs locally so the Clang linker doesn't fail on Windows.
+extern "stdcall" void win32_api(int a, int b) {
+    println(`win32_api: ${a + b}`);
+}
+
+extern "fastcall" void x64_sysv_abi(int a, int b, int c, int d) {
+    println(`sysv_abi: ${a + b + c + d}`);
+}
+
+struct BigData { long[16] data; }
+BigData get_kernel_table() {
+    mut BigData bd;
+    bd.data[0] = 999_i64;
+    return bd;
+}
+
+struct Vector4 { float x; float y; float z; float w; }
+void process_vector(Vector4 v) {
+    println(v.x);
+}
+
+void test_abi_lowering() {
+    unsafe {
+        win32_api(10, 20);                  // Expected: win32_api: 30
+        x64_sysv_abi(1, 2, 3, 4);           // Expected: sysv_abi: 10
+    }
+
+    BigData tbl = get_kernel_table();
+    println(tbl.data[0]);                   // Expected: 999
+
+    Vector4 vec;
+    vec.x = 3.14;
+    process_vector(vec);                    // Expected: 3.14
+}
+
+test_abi_lowering();
+// Compilation Unit B
+struct Foo {
+    int a;
+    float b;
+}
+
+extern Foo make_foo(int x, float y);
+
+void test_ctu_consistency() {
+    unsafe {
+        Foo f = make_foo(10, 3.14);
+
+        if (f.a == 10) {
+            println("CTU Consistency: SUCCESS");
+        } else {
+            println("CTU Consistency: FAILED");
+        }
+    }
+}
+
+test_ctu_consistency();
+// Compilation Unit A
+struct Foo {
+    int a;
+    float b;
+}
+
+// Ensure this lowers to a GPR (a) and an XMM (b) consistently
+extern "C" Foo make_foo(int x, float y) {
+    Foo f;
+    f.a = x;
+    f.b = y;
+    return f;
+}
+println("--- [E2E] c_strings.mox ---")
+
+void test_valid_c_strings() {
+    // 1. 1D Array with String Literal (Exact fit)
+    char[6] str1 = "Hello";
+
+    // 2. 1D Array with String Literal (Loose fit - padded with nulls)
+    char[10] str2 = "Hi";
+
+    // 3. 1D Array with Char Array Literal
+    char[6] str3 = ['H', 'e', 'l', 'l', 'o', '\0'];
+
+    // 4. 2D Array with String Literals
+    char[2][10] arr1 = ["Hello ", "World !"];
+
+    // 5. Implicit String Decay and Printing
+    string decayed_str = str1;
+
+    // Testing native string printing for char[n] arrays
+    println(str1);        // Expected: Hello
+    println(decayed_str); // Expected: Hello
+    println(str3);        // Expected: Hello
+
+    // 6. Safe Reassignment
+    str2 = "Reassign";
+    println(str2);        // Expected: Reassign
+}
+
+test_valid_c_strings();
+println("--- [E2E] defer_and_unsafe.mox ---")
+
+void test_defer_logic() {
+    int x = 10;
+
+    // Defers are executed in LIFO (Last-In, First-Out) order
+    defer { println(`Deferred 1: ${x}`); }
+    defer { println(`Deferred 2: ${x}`); }
+
+    x = x + 10;
+    println(`Normal execution: ${x}`);
+}
+
+void test_systems() {
+    int val = 42;
+    unsafe {
+        *mut int ptr = &val;
+        *ptr = 99;
+    }
+    println(val); // Expected: 99
+}
+
+test_defer_logic();
+// Expected: Normal execution: 20
+// Expected: Deferred 2: 20
+// Expected: Deferred 1: 20
+
+test_systems();
+println("--- [E2E] final_abi_torture_master.mox ---")
+
+// ============================================================================
+// 1. ABI CLASSIFICATION: THE MEMORY FALLBACK TRAP
+// ============================================================================
+// SysV Rule: If a struct has an SSE + INTEGER mix across the same 8-byte boundary,
+// or exceeds register slots, it MUST fall back to 'sret' (memory)[cite: 7, 8, 30].
+struct WeirdCollision {
+    double a;  // Slot 0: SSE
+    int b;     // Slot 1: INTEGER
+    double c;  // Slot 1/2: SSE (Collides with Slot 1)
+}
+
+extern "C" WeirdCollision return_weird();
+
+// ============================================================================
+// 2. SRET & BYVAL: LLVM ATTRIBUTE VALIDATION
+// ============================================================================
+struct HugeData { long[16] data; } // [cite: 100]
+
+// Verifies that 'HugeData' is returned via hidden sret pointer
+extern "C" HugeData return_huge_sret();
+
+// Verifies that 'BigData' is passed via 'byval' (caller-allocated stack copy)
+extern "C" void take_huge_byval(HugeData d);
+
+// ============================================================================
+// 3. FLOATING POINT & SIMD: THE NATIVE REGISTER PATH
+// ============================================================================
+// On SysV, 'long double' (80-bit x87) is passed via ST0, not XMM[cite: 31, 32].
+extern "C" double pass_ld(double x);
+
+// Verifies 'vector' attribute lowers to LLVM <4 x float>, NOT an aggregate struct.
+struct Float4 { float x; float y; float z; float w; }
+extern "C" void pass_true_vector(Float4 v);
+
+// ============================================================================
+// 4. CALLER-SAVED & RED ZONE STRESS
+// ============================================================================
+extern "C" void clobber_registers();
+
+void test_reg_preservation() {
+    int x = 42;
+    unsafe { clobber_registers(); }
+    println(`Preservation check: ${x}`);
+}
+
+// x86_64 SysV has a 128-byte 'Red Zone' below RSP.
+// ISRs MUST NOT use the red zone as the CPU hardware interrupts don't respect it[cite: 45, 83].
+interrupt naked void check_red_zone_safety() {
+    // Backend MUST NOT emit red-zone-using code here.
+    asm("push %rax");
+    asm("pop %rax");
+    asm("iretq");
+}
+
+// ============================================================================
+// 5. CALLING CONVENTION & INDIRECT MISMATCHES
+// ============================================================================
+extern "stdcall" void win32_func(int a); // [cite: 98]
+extern "C" void c_func(int a);           // [cite: 1]
+
+void test_cc_mismatch() {
+    // RED TEAM: This cast should ideally be caught by the type system,
+    // but we test if the indirect call correctly lowers to 'call stdcall' vs 'call ccc'.
+    (int) => void fp = cast<(int) => void>(win32_func);
+    // fp(10); // UB if called as C-convention
+}
+
+// ============================================================================
+// 6. TAIL CALL & VARARG REG-SAVE-AREA
+// ============================================================================
+extern "C" int terminal_callee(int x);
+
+int test_tail_call(int x) {
+    unsafe { return terminal_callee(x); }
+}
+
+extern "C" int printf(string fmt, ...); // [cite: 35, 61]
+void test_vararg_spill() {
+    unsafe { printf("%d %f %d %f %d %f", 1, 1.1, 2, 2.2, 3, 3.3); }
+}
+
+// ============================================================================
+// 7. BITCAST VS CONVERSION
+// ============================================================================
+void test_bitcast() {
+    unsigned int raw_bits = 0x3f800000_u32;
+    // bitcast must NOT generate 'cvtsi2ss'. It must generate 'movd' or IR bitcast.
+    float f = bitcast<float>(raw_bits);
+    println(`Bitcast 1.0: ${f}`);
+}
+
+// ============================================================================
+// 8. VOLATILE BARRIERS & ALIASING
+// ============================================================================
+volatile int barrier_x;
+volatile int barrier_y;
+
+void test_volatile_reordering() {
+    // IR must strictly maintain this order to prevent hardware hazards[cite: 68, 69].
+    barrier_x = 100;
+    barrier_y = 200;
+}
+
+void test_strict_aliasing() {
+    int x = 0;
+    // TBAA Metadata check: If the compiler assumes 'int' and 'float' don't alias,
+    // the optimizer might incorrectly reorder these stores[cite: 73, 74].
+    *mut float p_f = cast<*mut float>(&x);
+    *p_f = 1.0f32;
+    // println(x);
+}
+
+// ============================================================================
+// 9. CROSS-MODULE ODR / TLS
+// ============================================================================
+// TU-1 defines 'Foo' with 'int'. TU-2 defines 'Foo' with 'float'.
+// Moksha must detect this mismatch during linking or CTU analysis[cite: 105, 108].
+struct Node {
+    int val;
+    *mut Node next; // Recursive type layout check [cite: 71, 72]
+}
+
+thread_local int tls_primary = 1;
+// Verifies 'initial-exec' vs 'global-dynamic' models[cite: 21].
+thread_local int tls_dependent = tls_primary + 1;
+
+// ============================================================================
+// MISSING TEST WRAPPERS
+// ============================================================================
+
+void test_memory_fallback() {
+    unsafe {
+        WeirdCollision w = return_weird();
+        println(`Memory fallback: a=${w.a}, b=${w.b}, c=${w.c}`);
+    }
+}
+
+void test_sret_byval() {
+    unsafe {
+        HugeData h = return_huge_sret();
+        println(`SRET data check: ${h.data[15]}`); // Expected: 165
+        take_huge_byval(h);
+    }
+}
+
+void test_simd_vectors() {
+    Float4 v;
+    v.x = 1.1; v.y = 2.2; v.z = 3.3; v.w = 4.4;
+    unsafe { pass_true_vector(v); }
+}
+
+// ============================================================================
+// EXECUTION
+// ============================================================================
+test_reg_preservation();
+test_vararg_spill();
+test_bitcast();
+test_memory_fallback();  // <-- Added
+test_sret_byval();       // <-- Added
+test_simd_vectors();     // <-- Added
+test_tail_call(100);     // <-- Added call to existing test
+test_cc_mismatch();      // <-- Added call to existing test
+test_volatile_reordering();
+test_strict_aliasing();
+println("--- [E2E] intrinsics.mox ---")
+
+macro GET_SIZE(obj) {
+    sizeof(obj)
+}
+
+void test_intrinsics() {
+    unsigned int data = 0x000000FF_u32;
+
+    // 1. Bit Manipulation Intrinsics
+    unsigned int reversed = bswap32(data);
+    int leading_zeros = clz(data);
+
+    println(reversed);      // Expected: 4278190080 (0xFF000000)
+    println(leading_zeros); // Expected: 24
+
+    // 2. SizeOf Expression (Evaluates to usize)
+    usize data_size = sizeof(data);
+    println(data_size);     // Expected: 4
+
+    // 3. Macro expansion of sizeof
+    println(GET_SIZE(data)); // Expected: 4
+}
+
+test_intrinsics();
+println("--- [E2E] isr_safety.mox ---")
+
+// 'pure' guarantees no side effects, allowing the MIR optimizer to fold/memoize
+pure int compute_hash(int input_data) {
+    return (input_data * 16777619) ^ 2166136261;
+}
+
+// 'inline' aggressively pushes this into the caller's MIR block
+inline int quick_status_check() {
+    return 1;
+}
+
+// ISRs compiled to test LLVM x86_intrcc lowering (bypassed at runtime)
+interrupt void handle_keyboard_isr() {
+    // Intentionally empty for safe linkage
+}
+
+naked noreturn void cpu_halt() {
+    asm("cli");
+    asm("1: hlt; jmp 1b");
+}
+
+void test_isr_safety() {
+    println(compute_hash(42));       // Expected: Computed Hash Output
+    println(quick_status_check());   // Expected: 1
+}
+
+test_isr_safety();
+println("--- [E2E] linkage_and_abi.mox ---")
+
+// Weak symbols (Allowing user-overrides for drivers)
+weak void default_irq_handler() {
+    println("Default IRQ Handler executed");
+}
+
+// Verifies 'used' attribute (prevents DCE in optimizer)
+used section(".metadata") static int kernel_version = 1;
+
+// Verifies complex section names (linker script compatibility)
+section(".init.text") void arch_init() {
+    println("Architecture initialized");
+}
+
+void test_linkage() {
+    default_irq_handler(); // Expected: Default IRQ Handler executed
+    arch_init();           // Expected: Architecture initialized
+    println(kernel_version); // Expected: 1
+}
+
+test_linkage();
+void test_volatile_aliasing() {
+    volatile int target = 0;
+    *mut int p_normal = cast<*mut int>(&target);
+    *mut volatile int p_vol = &target;
+
+    // The optimizer might think 'p_normal' is a standard store and
+    // attempt to coalesce it with 'p_vol'.
+    // Your IR must strictly maintain 'load volatile' and 'store volatile'.
+    *p_normal = 10;
+    *p_vol = 20;
+
+    int val = *p_normal;
+    print(val); // Must print '20'
+}
+
+test_volatile_aliasing()
+println("--- [E2E] volatile_mmio.mox ---")
+
+void test_mmio() {
+    // 1. Setup a safe local memory address to act as our "Hardware Register"
+    unsigned int dummy_uart = 0_u32;
+    *mut unsigned int safe_ptr = &dummy_uart;
+    usize hardware_addr = cast<usize>(safe_ptr);
+
+    // 2. MMIO: Casting the integer address to a mutable volatile pointer
+    *mut volatile unsigned int uart0 = cast<*mut volatile unsigned int>(hardware_addr);
+
+    // 3. Verifies that TypeChecker allows writes to *mut volatile pointers
+    unsafe {
+        *uart0 = cast<unsigned int>('A'); // ASCII 65
+    }
+
+    println(dummy_uart); // Expected: 65
+}
+
+test_mmio();

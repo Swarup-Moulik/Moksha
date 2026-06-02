@@ -1,0 +1,393 @@
+﻿import { TestConfig } from "test"
+
+// 1. Macro with Control Flow Injection
+macro earlyReturnIf(cond) {
+    if (cond) {
+        println("Macro triggering early return...");
+        return;
+    }
+}
+
+// 2. Macro Argument Order and Evaluation
+macro orderTest(a, b) {
+    println(`First arg: ${a}`);
+    println(`Second arg: ${b}`);
+}
+
+// 3. Inheritance: Dynamic Dispatch and Field Shadowing
+ref class Parent {
+    public int value = 10;
+    public virtual void identify() { println("I am Parent"); }
+}
+
+ref class Child(Parent) {
+    public int value = 20; // Field Shadowing
+    public override void identify() { println("I am Child"); } // Override
+}
+
+// 4. Object Mutation Macro for Chaining
+macro incrementVersion(cfg) {
+    cfg.version = cfg.version + 1;
+    cfg // Return the object for the next pipe
+}
+
+int sideEffectCounter = 0;
+int next() {
+    sideEffectCounter = sideEffectCounter + 1;
+    return sideEffectCounter;
+}
+
+void run_compiler_breaker() {
+    println("--- [FINAL] Compiler Breaker Suite ---");
+
+    // --- TEST 1: Pipe Precedence ---
+    // Does (1 + 2) |> println() or 1 + (2 |> println()) happen?
+    // Correct behavior: 3
+    1 + 2 |> println();
+
+    // --- TEST 2: Macro Argument Evaluation Order ---
+    // Tests if arguments are evaluated left-to-right (1, then 2)
+    orderTest(next(), next());
+    println(`Final Counter: ${sideEffectCounter}`); // Expected: 2
+
+    // --- TEST 3: Any Type & Implicit Casting ---
+    any dynamicVar = 100;
+    int staticVar = dynamicVar; // Tests implicit downcasting from 'any'
+    println(`Cast result: ${staticVar}`);
+
+    // --- TEST 4: Method Dispatch & Shadowing ---
+    Parent p = new Child();
+    p.identify(); // Expected: "I am Child" (Dynamic Dispatch)
+    println(`Shadowed Value: ${p.value}`); // Checks if it accesses Parent.value or Child.value
+
+    // --- TEST 5: Macro Control Flow ---
+    earlyReturnIf(true);
+    println("ERROR: This line should never execute if macro return injected correctly.");
+
+    // --- TEST 6: The "Grand Chain" (Feature Collision) ---
+    // Combines Imports, Classes, Macros, and Pipes
+    TestConfig cfg = new TestConfig(10);
+    cfg
+    |> incrementVersion()
+    |> incrementVersion()
+    |> println(); // Expected: TestConfig object with version 12
+}
+
+// 5. Bounded Recursion (Observed)
+int factorial(int n) {
+    if (n <= 1) return 1;
+    return n * factorial(n - 1);
+}
+
+void test_recursion() {
+    println(`Factorial 5: ${factorial(5)}`); // Expected: 120
+}
+
+run_compiler_breaker();
+test_recursion();
+import { TestConfig } from "test"
+
+macro updateAndLog(obj, val) {
+    obj.version = val;
+    obj.version |> println();
+}
+
+void test_integration() {
+    TestConfig cfg = new TestConfig(1);
+
+    // Macro + Class Field + Pipe
+    cfg |> updateAndLog(42); // Expected: 42
+
+    // Type transition across pipe
+    any raw = 100;
+    raw |> println(); // Testing 'any' to 'println' transition
+}
+
+test_integration()
+println("--- [E2E] depth_stress.mox ---")
+
+// Mock functions for the pipeline test
+int processInt(int x) { return x; }
+any processAny(any x) { return x; }
+
+void test_depth() {
+    // 1. Scope depth stress (20 levels)
+    { { { { { { { { { { { { { { { { { { { {
+        int deepVar = 42;
+        println(deepVar); // Expected: 42
+    } } } } } } } } } } } } } } } } } } } }
+
+    // 2. Expression depth stress
+    // Tests if recursive descent parser blows the stack
+    int x = 1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + 0)))))))));
+    println(x); // Expected: 10
+
+    // 3. Chained Pipe depth stress
+    x |> processInt() |> processAny() |> processAny() |> processAny() |> processAny() |> println();
+    // Expected: 10
+}
+
+test_depth();
+println("--- [E2E] enums_and_macros.mox ---")
+
+// Enum Definition
+enum Color {
+    Red,
+    Green,
+    Blue = 10,
+    Alpha
+}
+
+// Macro Definition
+macro swap(a, b) {
+    int temp = a;
+    a = b;
+    b = temp;
+}
+
+void test_enums_and_macros() {
+    // Enums implicitly cast to their integer values in memory
+    Color c = Color.Green;
+    println(c);           // Expected: 1
+    println(Color.Blue);  // Expected: 10
+    println(Color.Alpha); // Expected: 11
+
+    int x = 10;
+    int y = 20;
+
+    // Macro Expansion check
+    swap(x, y);
+
+    println(x); // Expected: 20
+    println(y); // Expected: 10
+}
+
+test_enums_and_macros();
+enum Status { Ready = 5, Busy = 10 }
+
+void test_enum_logic() {
+    Status s = Status.Ready;
+
+    // Comparison against literals requires an explicit cast
+    if (cast<int>(s) == 5) { println("Match: Literal"); }
+
+    // Enum Arithmetic requires an explicit cast
+    int offset = cast<int>(Status.Busy) + 2;
+    println(offset); // Expected: 12
+}
+
+test_enum_logic();
+println("--- [E2E] imports_and_files.mox ---")
+
+// Import specific symbols from the local "test.mox" file
+import { test_multiplier, calculate_magic, TestConfig } from "test"
+
+void run_import_test() {
+    // 1. Test importing a global variable
+    println(test_multiplier); // Expected: 5
+
+    // 2. Test importing and calling a function
+    int result = calculate_magic(10, 20);
+    println(result); // Expected: 150  ((10 + 20) * 5)
+
+    // 3. Test importing and instantiating a class
+    TestConfig config = new TestConfig(42);
+    println(config.version); // Expected: 42
+}
+
+run_import_test();
+println("--- [E2E] input_expr.mox ---")
+
+void testInputVariations() {
+    // 1. With a string prompt
+    string name = input("What is your name? ");
+    println(`Registered name: ${name}`);
+
+    // 3. Inline expression usage (testing string concatenation)
+    string greeting = "Hello, " + input("Enter nickname: ") + "!";
+    println(greeting);
+
+    // 4. Passing as an argument
+    println(input("Press Enter to continue..."));
+}
+
+testInputVariations();
+// 1. Nested Macro Expansion
+macro inner(x) {
+    println(`Inner: ${x}`);
+}
+macro outer(x) {
+    inner(x); // Does the compiler resolve inner during outer's expansion?
+}
+
+// 2. The Side-Effect Trap (Double expansion check)
+macro square(x) {
+    (x) * (x)
+}
+
+// 3. Potential Infinite Recursion (Compiler should catch this)
+macro infinite(x) {
+    infinite(x);
+}
+
+void test_macro_chaos() {
+    outer("Hello"); // Expected: "Inner: Hello" [cite: 17, 23]
+
+    int i = 2;
+    int result = square(i++);
+    // If double-expanded without care: (2) * (3) = 6, and i becomes 4.
+    // If handled correctly: 2 * 2 = 4, and i becomes 3.
+    println(result);
+
+    // infinite(1); // UNCOMMENT TO TEST COMPILER TIMEOUT/RECURSION LIMIT
+}
+
+test_macro_chaos()
+println("--- [E2E] macro_hygiene.mox ---")
+
+macro setDouble(target, val) {
+    // Hygiene ensures 'internal_temp' becomes something like 'internal_temp_h123'
+    // so it can never clash with a variable named 'internal_temp' in the caller's code.
+    int internal_temp = val;
+    target = internal_temp * 2;
+}
+
+void test_hygiene() {
+    // 1. Global variable to test that the macro doesn't "leak" its internal temp
+    int internal_temp = 100;
+
+    int safeVal = 5;
+    int result = 0; // Explicitly initialized to 0
+
+    // 2. Expand: { int internal_temp_hXXX = safeVal; result = internal_temp_hXXX * 2; }
+    // The hygiene system MUST preserve the name 'result' as it is a passed argument.
+    setDouble(result, safeVal);
+
+    println(result); // Expected: 10
+
+    // 3. This MUST still be 100.
+    // If hygiene failed, the macro's 'internal_temp = 5' would have overwritten this.
+    println(internal_temp); // Expected: 100
+}
+
+test_hygiene();
+println("--- [E2E] macro_type_interaction.mox ---")
+
+// Macros interacting with custom language operators
+macro pipeLog(val) {
+    val |> println();
+}
+
+void test_macro_pipes() {
+    // Expand macro into a pipe chain
+    "Testing macro pipe" |> pipeLog();
+    // Expected: Testing macro pipe
+}
+
+test_macro_pipes();
+import { b_func } from "module_b"
+
+public void a_func() {
+    println("In A");
+    // b_func(); // Potential infinite loop at runtime if called
+}
+import { a_func } from "module_a"
+
+public void b_func() {
+    println("In B");
+    a_func();
+}
+
+b_func();
+int f() { println("f"); return 1; }
+int g() { println("g"); return 10; }
+
+void test_execution_contract() {
+    // 1. Left-to-Right Guarantee
+    // Should print "f", then "g", then "11"
+    println(f() + g());
+
+    // 2. Sequential Input Buffering
+    println("Enter two numbers:");
+    int sum = input("A :- ") + input("B :- ");
+    println(`Combined: ${sum}`);
+}
+
+test_execution_contract()
+macro C(x) { println(`Result: ${x}`); }
+macro B(x) { C((x) * 2); }
+macro A(x) { B((x) + 1); }
+
+void test_chains_and_shadows() {
+    // 1. Multi-level expansion order
+    A(5); // Expected: ((5 + 1) * 2) -> "Result: 12"
+
+    // 2. Shadow Chains (Symbol Resolution Depth)
+    int x = 1;
+    {
+        int x = 2;
+        {
+            int x = 3;
+            println(x); // Expected: 3
+        }
+        println(x);     // Expected: 2
+    }
+    println(x);         // Expected: 1
+}
+
+test_chains_and_shadows()
+public int test_multiplier = 5;
+
+public int calculate_magic(int a, int b) {
+    return (a + b) * test_multiplier;
+}
+
+public class TestConfig {
+    public int version;
+    constructor(int v) {
+        this.version = v;
+    }
+}
+println("--- [E2E] visibility.mox ---")
+
+// Base class defining different access levels
+ref class Base {
+    public int publicField = 1;
+    protected int protectedField = 2;
+    private int privateField = 3;
+
+    public void testInternal() {
+        // Legal: All members accessible inside their own class
+        println(this.publicField);    // Expected: 1
+        println(this.protectedField); // Expected: 2
+        println(this.privateField);   // Expected: 3
+    }
+}
+
+// Subclass testing inheritance access
+ref class Derived(Base) {
+    public void testInheritance() {
+        println(this.publicField);    // Expected: 1 (Legal: public)
+        println(this.protectedField); // Expected: 2 (Legal: protected is visible to children)
+
+        // ILLEGAL: private not visible to children. Left commented to ensure compilation.
+        // println(this.privateField);
+    }
+}
+
+void test_visibility_enforcement() {
+    // --- Top-level Execution (Implicit Main) ---
+    // This acts as the "external" context
+    Base b = new Base();
+    println(b.publicField);    // Expected: 1 (Legal: public)
+
+    // ILLEGAL: protected and private not visible to external caller.
+    // println(b.protectedField);
+    // println(b.privateField);
+
+    Derived d = new Derived();
+    d.testInheritance();
+    println(d.publicField);    // Expected: 1 (Legal: public inherited member)
+}
+
+test_visibility_enforcement();

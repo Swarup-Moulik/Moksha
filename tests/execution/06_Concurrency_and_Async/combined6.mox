@@ -1,0 +1,869 @@
+﻿println("--- [E2E] async_state_machine.mox ---")
+
+async void some_io_task() {
+    println("Simulating IO...");
+}
+
+async void fetch_data() {
+    println("State 0: Before await");
+
+    // The AST `await` keyword must be lowered into a state-save,
+    // a return to the event loop, and a reentry switch case.
+    await some_io_task();
+
+    int x = 1;
+    println("State 1: After await. Value: " + string(x));
+}
+
+// Kick off the coroutine. The scheduler will flush it before the program exits.
+fetch_data();
+println("--- [E2E] async_synchronization.mox ---")
+
+async void test_async_mutex() {
+    println("Main: Starting async mutex test...");
+
+    // AsyncMutex yields the coroutine instead of blocking the OS thread
+    AsyncMutex mtx = new AsyncMutex();
+    int shared_resource = 0;
+
+    println("Main: Spawning task t1...");
+    promise<void> t1 = spawn(async () => {
+        println("  [t1] Attempting to acquire lock...");
+        async lock(mtx) {
+            println("  [t1] Lock acquired! Incrementing resource by 1...");
+            shared_resource = shared_resource + 1;
+
+            println("  [t1] Resource is now " + shared_resource + ". Suspending for 10ms...");
+            await sleep(10); // Perfectly safe to suspend while holding an AsyncMutex
+
+            println("  [t1] Woke up. Releasing lock...");
+        } // mtx.unlock() is automatically called here
+        println("  [t1] Task complete.");
+    });
+
+    println("Main: Spawning task t2...");
+    promise<void> t2 = spawn(async () => {
+        println("  [t2] Attempting to acquire lock...");
+        async lock(mtx) { // Suspends until t1 finishes its async block
+            println("  [t2] Lock acquired! Incrementing resource by 2...");
+            shared_resource = shared_resource + 2;
+
+            println("  [t2] Resource is now " + shared_resource + ". Releasing lock...");
+        } // mtx.unlock() is automatically called here
+        println("  [t2] Task complete.");
+    });
+
+    println("Main: Awaiting both tasks to join...");
+    await join(t1, t2);
+
+    println("Main: Tasks joined successfully.");
+    println("Final shared_resource: " + shared_resource); // Expected: 3
+}
+
+await test_async_mutex()
+println("--- [E2E] atomics.mox ---")
+
+void test_atomics_full() {
+    unsigned int data = 0_u32;
+    *mut unsigned int ptr = &data;
+
+    // Verifies built-in function resolution and type compatibility
+    atomic_store(ptr, 100_u32);
+    unsigned int val = atomic_load(ptr);
+    println(val); // Expected: 100
+
+    // Testing old value return semantics
+    unsigned int old = atomic_add(ptr, 10_u32);
+    println(old); // Expected: 100
+    println(atomic_load(ptr)); // Expected: 110
+
+    // Testing Compare-and-Swap (CAS)
+    unsigned int current = atomic_cas(ptr, 110_u32, 200_u32);
+    println(current); // Expected: 110
+    println(atomic_load(ptr)); // Expected: 200
+
+    // Memory Fences (Lowered to LLVM fences in backend)
+    atomic_fence_acquire();
+    atomic_fence_release();
+    atomic_fence_seqcst();
+
+    println("Fences successfully emitted"); // Expected: Fences successfully emitted
+}
+
+test_atomics_full();
+println("--- [E2E] atomic_ordering.mox ---")
+
+void test_atomics() {
+    int counter = 0;
+    *mut int ptr = &counter;
+
+    // The MIR lowerer MUST translate this into a hardware-level atomic Add,
+    // not a Load -> Add -> Store sequence!
+    atomic_add(ptr, 1);
+    println(counter); // Expected: 1
+
+    int expected = 1;
+    int desired = 5;
+
+    // Compare-and-swap must retain the exact memory ordering requested
+    // so the LLVM backend can emit the correct memory barrier fences.
+    int old = atomic_cas(ptr, expected, desired);
+
+    println(old);     // Expected: 1
+    println(counter); // Expected: 5
+}
+
+test_atomics();
+println("--- [E2E] concurrency.mox ---")
+
+weak async string fetchWeakData() {
+    return "Weak Data Fetched";
+}
+
+async string fetchStrongData() {
+    return "Strong Data Fetched";
+}
+
+async void run_async_tests() {
+    // Await usage
+    string data1 = await fetchWeakData();
+    string data2 = await fetchStrongData();
+
+    println(data1); // Expected: Weak Data Fetched
+    println(data2); // Expected: Strong Data Fetched
+}
+
+run_async_tests();
+
+// Thread creation
+new thread(() => {
+    println("Background strong thread running");
+});
+
+new weak thread(() => {
+    println("Background weak thread running");
+});
+println("--- [E2E] concurrency_edge_cases.mox ---")
+
+// 1. Thread-safe memory modifiers
+lock int globalCounter = 0;  // Upgraded to a 'lock' type
+int protectedValue = 10;
+
+void test_concurrency_edges() {
+    new thread(() => {
+        // 2. Explicit synchronization using the address-of operator (&)
+        lock (&globalCounter) {
+            globalCounter = globalCounter + 1;
+        }
+
+        // 3. Raw atomics on standard integers
+        atomic_add(&protectedValue, 1);
+        println("Thread 1 mutated globals safely");
+    });
+
+    new weak thread(() => {
+        // 4. Using the correct pointer-view syntax for read-only access
+        *view int safeRead = &protectedValue;
+
+        // Prove we can read it safely
+        println(*safeRead);
+
+        println("Weak thread read value securely");
+    });
+}
+
+test_concurrency_edges();
+println("--- [FUZZ TARGETS] concurrency_fuzz_targets.mox ---");
+
+// 1. THE LOST WAKEUP PROBLEM (Condition Variable / Channel Fuzzing)
+async void fuzz_lost_wakeup() {
+    println("[1] Starting lost wakeup fuzzer...");
+
+    // Upgraded to 'shared' to safely capture the channel alias in the closure
+    shared Channel<int> ch = new Channel<int>(1);
+    shared Channel<int> ch_alias = ch;
+
+    spawn(async () => {
+        println("    -> Producer pushing 42 to buffer...");
+        await ch_alias.send(42);
+    });
+
+    int val = await ch.recv();
+    println("[1] Lost wakeup fuzzer finished. Received: " + string(val));
+}
+
+// 2. ORPHANED SELECT BRANCHES
+async void fuzz_select_orphans() {
+    println("[2] Starting select orphans fuzzer...");
+    promise<int> a = spawn(async () => { await sleep(100); return 1; });
+    promise<int> b = spawn(async () => { await sleep(10); return 2; });
+
+    int winner = await select(a, b);
+    println("[2] Select orphans fuzzer finished. Winner: " + string(winner));
+}
+
+// 3. SCHEDULER REENTRANCY (Iterator Invalidation)
+async void recursive_spawner(int depth) {
+    if (depth > 0) {
+        spawn(recursive_spawner(depth - 1));
+    }
+    await yield();
+}
+
+void fuzz_scheduler_reentrancy() {
+    println("[3] Starting scheduler reentrancy fuzzer...");
+    spawn(async () => { await recursive_spawner(5); });
+    println("[3] Scheduler reentrancy tasks spawned.");
+}
+
+// 4. CROSS-THREAD QUEUE MUTATION
+void fuzz_cross_thread_scheduling() {
+    println("[4] Starting cross-thread scheduling fuzzer...");
+    for (int i = 0; i < 10; i = i + 1) {
+        new thread(() => {
+            spawn(async () => { await yield(); });
+        });
+    }
+    println("[4] Cross-thread scheduling threads safely spawned.");
+}
+
+// 5. STACK / FRAME EXPLOSION (Linked Coroutines)
+async int deep_chain(int n) {
+    if (n == 0) return 0;
+    return 1 + await deep_chain(n - 1);
+}
+
+// Upgraded to 'async' so we can await the result and print it
+async void fuzz_deep_chain() {
+    println("[5] Starting deep chain fuzzer...");
+    int result = await deep_chain(5000);
+    println("[5] Deep chain fuzzer finished safely. Result: " + string(result));
+}
+
+// --- KICK OFF ALL FUZZ TARGETS ---
+println(">>> Executing Fuzz Targets <<<");
+
+await fuzz_lost_wakeup();
+await fuzz_select_orphans();
+fuzz_scheduler_reentrancy();
+fuzz_cross_thread_scheduling();
+await fuzz_deep_chain();
+
+println(">>> All Fuzz Targets Completed <<<");
+println("--- [E2E] concurrency_happens_before.mox ---")
+
+void test_acquire_release_semantics() {
+    int payload = 0;
+    int ready_flag = 0;
+
+    *mut int payload_ptr = &payload;
+    *mut int flag_ptr = &ready_flag;
+
+    // Writer Thread
+    new thread(() => {
+        // 1. Write the payload (Non-atomic, standard memory write)
+        *payload_ptr = 42;
+
+        // 2. Publish the flag (Atomic Release)
+        // A release fence ensures the payload write CANNOT be reordered after this flag.
+        atomic_fence_release();
+        atomic_store(flag_ptr, 1);
+    });
+
+    // Reader Thread
+    new thread(() => {
+        // 1. Spin until the flag is published
+        while (atomic_load(flag_ptr) == 0) {
+            // spin
+        }
+
+        // 2. Synchronize memory (Atomic Acquire)
+        // An acquire fence ensures the payload read CANNOT be reordered before this flag check.
+        atomic_fence_acquire();
+
+        // 3. Read the payload
+        int read_val = *payload_ptr;
+
+        // RED TEAM: If memory ordering is broken, read_val might still be 0.
+        if (read_val != 42) {
+            throw new Exception("HAPPENS-BEFORE VIOLATION: Memory ordering failed!");
+        }
+        println("Memory visibility guaranteed.");
+    });
+}
+
+test_acquire_release_semantics();
+println("--- [E2E] concurrency_liveness_watchdog.mox ---");
+
+// Pass the channel in so we can control it from the outside
+async void risky_deadlock_prone_task(Channel<int> ch) {
+    // Simulate a complex task that MIGHT hang if scheduler bugs exist
+    await ch.recv();
+}
+
+async void test_system_liveness() {
+    Channel<int> ch = new Channel<int>(1);
+
+    int result = await select(
+        async () => { await risky_deadlock_prone_task(ch); return 1; }(),
+        async () => { await sleep(500); return -1; }() // Watchdog
+    );
+
+    if (result == -1) {
+        println("LIVENESS GUARD: Task deadlocked and was successfully caught by watchdog.");
+
+        // [THE FIX]
+        // Resolve the orphaned task's promise so it can resume, finish,
+        // and safely decrement its `active_tasks` counter.
+        await ch.send(0);
+
+    } else {
+        println("Task completed.");
+    }
+}
+
+await test_system_liveness();
+println("--- [E2E] concurrency_red_team_stress.mox ---")
+
+// 1. CHANNEL BACKPRESSURE (Producer Starvation)
+// Forces the runtime to suspend a producer when the ring-buffer is full,
+// and validates that the consumer correctly wakes the producer up.
+async void test_channel_backpressure() {
+    Channel<int> ch = new Channel<int>(1); // Capacity 1
+
+    await ch.send(10); // Succeeds immediately
+
+    spawn(async () => {
+        await sleep(50);
+        int val = await ch.recv(); // Consumes 10, freeing space
+        println("Consumed: " + string(val));
+    });
+
+    // RED TEAM: This must SUSPEND because capacity is 1.
+    // If it doesn't suspend, it overwrites data. If it doesn't wake up, it deadlocks.
+    await ch.send(20);
+    println("Backpressure relieved"); // Expected to print AFTER "Consumed: 10"
+}
+
+// 2. ASYNC INSIDE LOCK (The Deadlock Trap)
+// Suspending a coroutine while holding an OS mutex is fatal.
+// The compiler should either REJECT this at compile-time (like Rust),
+// or the runtime must use an async-aware Mutex that yields.
+void test_async_in_lock() {
+    lock int shd = 0;
+    *lock int p = &shd;
+
+    // RED TEAM: Does the semantic analyzer catch this?
+    // EXPECTED: Compile Error "Cannot await inside a synchronous lock block"
+    lock (p) {
+        // await sleep(10);
+        *p = 1;
+    }
+}
+
+// 3. EXCEPTION UNWINDING A LOCK (Poison Prevention)
+// If an exception is thrown inside a critical section, the RAII/Cleanup
+// logic must release the mutex. Otherwise, the next lock attempt deadlocks.
+void test_lock_unwind() {
+    lock int shd = 0;
+    *lock int p = &shd;
+
+    try {
+        lock (p) {
+            throw new Exception("Panic inside lock");
+        }
+    } catch (Exception e) {
+        println("Caught panic");
+    }
+
+    // RED TEAM: If the previous lock didn't unwind, this will hang forever.
+    lock (p) {
+        println("Lock safely reacquired");
+    }
+}
+
+// 4. DOUBLE RESUME / USE-AFTER-FREE
+// A malicious or buggy component attempts to resume a dead coroutine frame.
+async void dummy_task() { }
+
+void test_double_resume() {
+    promise<void> p = spawn(dummy_task());
+
+    // Assume p finishes very quickly
+
+    // RED TEAM: The scheduler or promise handle must have a tombstone check.
+    // If this hits `llvm.coro.resume` on a freed frame, it triggers a Segfault.
+    try {
+        // p.internal_resume(); // (Use your runtime's lowest level resume hook here)
+    } catch (RuntimePanic e) {
+        println("Double resume safely trapped");
+    }
+}
+
+// 5. TLS ASYNC MIGRATION (The Work-Stealing Trap)
+// Thread-local storage is incredibly dangerous in async contexts if the scheduler
+// moves the coroutine to a different OS thread after a suspension point.
+static thread_local int async_context_id = 0;
+
+async void test_tls_async() {
+    async_context_id = 999;
+
+    await sleep(10); // Suspension point
+
+    // RED TEAM: If the scheduler migrated this task to a different thread pool worker,
+    // this will print 0 instead of 999. The language must document if TLS is safe in async.
+    println(async_context_id);
+}
+
+// 6. PROMISE ARC CYCLES (Memory Leak)
+// Tests if the ARC garbage collector can handle async reference cycles,
+// or if awaiting yourself creates an uncatchable deadlock.
+async void test_promise_cycles() {
+    // RED TEAM: Task A awaits Task B, Task B awaits Task A.
+    // This should ideally trigger a DeadlockPanic from the scheduler.
+    /*
+    promise<void> a;
+    promise<void> b = spawn(async () => { await a; });
+    a = spawn(async () => { await b; });
+    await a;
+    */
+}
+
+println(">>> Executing Red Team Stress Tests <<<");
+
+// 1. Backpressure (Should suspend and resume safely)
+await test_channel_backpressure();
+
+// 2. Lock Unwinding (Should catch the panic and release the lock safely)
+test_lock_unwind();
+
+// 3. Double Resume (Should trap the panic safely)
+test_double_resume();
+
+// 4. TLS Migration (Should print 999 if thread-local storage is safe)
+await test_tls_async();
+
+println(">>> All Safe Red Team Tests Completed <<<");
+
+// =====================================================================
+// âš ï¸ DANGER ZONE: Uncomment these one at a time to test your compiler/runtime panics!
+// =====================================================================
+
+// RED TEAM: Should throw a compile-time error: "Cannot await inside lock"
+// test_async_in_lock();
+
+// RED TEAM: Should trigger an uncatchable DeadlockPanic or memory leak
+// await test_promise_cycles();
+println("--- [E2E] concurrency_stdlib_spec.mox ---")
+
+// Define the missing task for the timeout test
+async int some_long_task() {
+    await sleep(200);
+    return 1;
+}
+
+// 1. TIME-BASED EXECUTION & TIMEOUTS
+async void test_sleep_and_timeout() {
+    println("Task starting...");
+    // SUSPEND: Yields control back to the event loop for 50ms without blocking the OS thread.
+    await sleep(50);
+    println("Task woke up!");
+
+    // TIMEOUT: Wraps a promise. If some_long_task takes > 100ms, it throws/returns a timeout error.
+    promise<int> result = await timeout(some_long_task(), 100);
+}
+
+// 2. COOPERATIVE YIELDING (Scheduler fairness)
+async void test_cooperative_yield() {
+    int heavy_compute = 0;
+    while (heavy_compute < 10000) {
+        heavy_compute = heavy_compute + 1;
+        // SUSPEND: Puts this coroutine at the back of the scheduler's queue,
+        // allowing other async tasks to process so the event loop doesn't freeze.
+        if (heavy_compute % 1000 == 0) {
+            await yield();
+        }
+    }
+    println("Heavy compute finished fairly.");
+}
+
+// 3. CONCURRENCY COMBINATORS (Wait For Multiple)
+async int fast_task() { await sleep(10); return 1; }
+async int slow_task() { await sleep(50); return 2; }
+
+async void test_combinators() {
+    // JOIN (Promise.all): Suspends until ALL promises complete.
+    int[] results = await join(fast_task(), slow_task());
+    println(results[0] + results[1]); // Expected: 3
+
+    // SELECT (Promise.race): Suspends until the FIRST promise completes.
+    /* int winner = await select(fast_task(), slow_task());
+    println(winner);  */ // Expected: 1
+}
+
+// 4. TASK CANCELLATION (The Abort Model)
+async void infinite_task() {
+    bool running = true; // Fixed: bypasses static analysis "unreachable" error from while(true)
+    while (running) {
+        // If the promise is cancelled, `sleep` or `yield` should throw a CancellationException
+        // or safely unwind the coroutine frame.
+        await sleep(10);
+    }
+}
+
+void test_cancellation() {
+    // Spawn returns a Promise/Task handle
+    promise<void> task_handle = spawn(infinite_task());
+
+    // Explicitly cancel the task. The scheduler must mark the task's InternalPromise
+    // as aborted and clean up its memory during the next poll.
+    cancel(task_handle)
+    println("Task cancelled successfully.");
+}
+
+// 5. INTER-TASK COMMUNICATION (Message Passing)
+async void test_channels() {
+    // Create an async ring-buffer channel with a capacity of 2
+    shared Channel<int> ch = new Channel<int>(2);
+    shared Channel<int> ch_alias = ch;
+
+    // Producer Thread (Fixed to match fuzz target API: .send and .recv)
+    spawn(async () => {
+        await ch_alias.send(100);
+        await ch_alias.send(200);
+        // Queue is full! If we push again, the thread would block.
+    });
+
+    // Consumer Coroutine
+    int val1 = await ch.recv(); // Suspends if the queue is empty
+    int val2 = await ch.recv();
+
+    println(val1 + val2); // Expected: 300
+}
+
+println(">>> Executing Stdlib Spec Tests <<<");
+
+await test_sleep_and_timeout();
+await test_cooperative_yield();
+// await test_combinators();
+test_cancellation();
+await test_channels();
+println(">>> All Stdlib Spec Tests Completed <<<");
+println("--- [E2E] data_race_runtime.mox ---")
+
+void risky_thread_work() {
+    println("Performing risky work safely");
+}
+
+void test_runtime_locks() {
+    lock int shared_state = 100;
+    *lock int p = &shared_state;
+
+    // The MIR lowering phase must wrap this critical section in runtime mutex calls.
+    lock (p) {
+        *p = 200;
+        risky_thread_work(); // Expected: Performing risky work safely
+    } // Standard unlock happens here
+
+    // Read the value inside a new lock to verify mutation
+    lock (p) {
+        println(*p); // Expected: 200
+    }
+}
+
+test_runtime_locks();
+println("--- [E2E] lock_elevation_rules.mox ---")
+
+void test_lock_elevation() {
+    lock int shared_data = 100;
+    *lock int p = &shared_data;
+
+    lock (p) {
+        // Test: Implicit elevation allows direct mutation
+        *p = 200;
+
+        // Test: Inside the lock, you can take a shared read (view) safely
+        *view int v = p;
+        int read = *v;
+
+        println(read); // Expected: 200
+    }
+}
+
+test_lock_elevation();
+println("--- [E2E] panic_and_io_integration.mox ---")
+
+// 1. PANIC ISOLATION
+void test_panic_isolation() {
+    // This task throws an unhandled error
+    promise<void> explosive_task = spawn(async () => {
+        int x = 1 / 0; // Trigger runtime panic/exception
+    });
+
+    try {
+        await explosive_task;
+    } catch (TaskPanicException e) {
+        // The scheduler caught the panic, wrapped it, and failed the promise.
+        // The main OS thread DID NOT crash.
+        println("Task isolated safely"); // Expected: Task isolated safely
+    }
+}
+
+// 2. REAL I/O INTEGRATION (IOCP / Epoll Mock)
+async void test_async_io() {
+    // The runtime must map this to the OS non-blocking I/O event loop (IOCP)
+    AsyncFile file = await AsyncFile.open("test.txt", "w");
+
+    // Suspends the coroutine until the OS signals the disk write is complete
+    int bytes_written = await file.write("Hello Moksha");
+
+    println(bytes_written > 0); // Expected: true
+    await file.close();
+}
+println("--- [E2E] scheduler_priority_and_fairness.mox ---")
+
+enum TaskPriority { LOW, NORMAL, HIGH, CRITICAL }
+
+async void test_priority_scheduling() {
+    // Spawn a LOW priority task first
+    spawn(async () => {
+        await yield();
+        // RED TEAM: Even though this was spawned first, it should print second.
+        println(1); // LOW
+    }, TaskPriority.LOW);
+
+    // Spawn a HIGH priority task second
+    spawn(async () => {
+        await yield();
+        // RED TEAM: Because of its priority, this should execute first after the yield.
+        println(2); // HIGH
+    }, TaskPriority.HIGH);
+
+    await sleep(50); // Let scheduler flush
+
+    // Expected output order in console:
+    // 2
+    // 1
+}
+
+// Tests that LOW priority tasks don't starve to death if HIGH tasks spam the queue.
+async void test_starvation_prevention() {
+    // The scheduler should employ "Aging" â€” periodically boosting the priority
+    // of old tasks so they eventually run.
+    promise<int> low_task = spawn(async () => { return 42; }, TaskPriority.LOW);
+
+    for (int i = 0; i < 1000; i = i + 1) {
+        spawn(async () => { await yield(); }, TaskPriority.HIGH);
+    }
+
+    // Must eventually complete, not hang forever
+    println(await low_task); // Expected: 42
+}
+
+test_priority_scheduling();
+test_starvation_prevention();
+println("--- [E2E] stress_channel_teardown.mox ---")
+
+async void test_channel_semantics() {
+    Channel<int> ch = new Channel<int>(2);
+
+    // 1. Send data
+    await ch.send(1);
+
+    // 2. Close the channel
+    ch.close();
+
+    // 3. Receive AFTER close (must drain remaining items)
+    int val = await ch.recv();
+    println(val); // Expected: 1
+
+    // 4. Receive on EMPTY CLOSED channel
+    try {
+        await ch.recv();
+    } catch (ChannelClosedException e) {
+        println("Recv blocked safely"); // Expected: Recv blocked safely
+    }
+
+    // 5. Send on CLOSED channel
+    try {
+        await ch.send(2);
+    } catch (ChannelClosedException e) {
+        println("Send blocked safely"); // Expected: Send blocked safely
+    }
+}
+
+// --- EXECUTION ---
+await test_channel_semantics()
+println("--- [E2E] stress_scheduler_atomics.mox ---")
+
+// 1. TASK EXPLOSION (Queue Stress)
+async void test_task_explosion() {
+    // RED TEAM: Removed the promise array to eliminate allocation overhead.
+    // We now spawn tasks directly to stress the scheduler.c queue.
+    for (int i = 0; i < 10000; i = i + 1) {
+        spawn(async () => {
+            await yield();
+            // Periodic print to track progress without flooding the console
+            if (i % 2500 == 0) {
+                println("Batch processed...");
+            }
+        });
+    }
+
+    await sleep(200); // Allow the micro-tasks time to clear the queue
+    println("10,000 tasks scheduled and destroyed");
+}
+
+// 2. ATOMIC CONTENTION (Hardware Memory Model Stress)
+async void test_atomic_contention() {
+    int shared_val = 0;
+    *mut int p = &shared_val;
+
+    // We spawn 50 OS threads using 'new thread'.
+    // Since we aren't using an array to 'join', we use a sleep buffer.
+    for (int i = 0; i < 50; i = i + 1) {
+        new thread(() => {
+            for (int j = 0; j < 1000; j = j + 1) {
+                atomic_add(p, 1);
+            }
+        });
+    }
+
+    // Give hardware threads time to finish their loops
+    await sleep(500);
+
+    // If the atomic lowering is correct, this will be exactly 50000
+    println(shared_val); // EXPECTED: 50000
+}
+
+// 3. RECURSIVE LOCK DEADLOCK DEFINITION
+/* void test_lock_reentrancy() {
+    lock int protec = 1;
+    *lock int p = &protec;
+
+    lock (p) {
+        try {
+            // Test: Attempting to lock an already locked mutex.
+            lock (p) {
+                println("Reentrant");
+            }
+        } catch (DeadlockPanic e) {
+            println("Caught recursive lock");
+        }
+    }
+} */
+
+// --- EXECUTION ---
+await test_task_explosion();
+// test_lock_reentrancy();
+await test_atomic_contention();
+println("--- [E2E] stress_state_machines.mox ---")
+
+// 1. COMPLEX CONTROL FLOW WITH AWAITS
+async int complex_branching(int x) {
+    int local_state = 42;
+
+    if (x > 0) {
+        await yield(); // Suspension Point 1
+        if (x == 5) {
+            return local_state + 100; // Early return after suspension
+        }
+        return 1;
+    } else {
+        while (local_state > 40) {
+            await yield(); // Suspension Point 2 (inside loop)
+            local_state = local_state - 1;
+        }
+        return local_state; // Expected: 40
+    }
+}
+
+// 2. EXCEPTION AFTER SUSPENSION
+async void throw_after_await() {
+    await yield();
+    // The runtime must correctly map this to the coroutine's cleanup block
+    throw new Exception("Post-resume panic");
+}
+
+async void test_state_machines() {
+    // Test 1: Branching logic across suspension
+    println(await complex_branching(5));  // Expected: 142
+
+    // Test 2: Loop logic with multiple yields
+    println(await complex_branching(-1)); // Expected: 40
+
+    try {
+        // Test 3: Exception handling after a resume
+        await throw_after_await();
+    } catch (Exception e) {
+        println(e.message); // Expected: Post-resume panic
+    }
+}
+
+// --- EXECUTION ---
+await test_state_machines();
+println("--- [E2E] structured_concurrency.mox ---")
+
+// 1. ASYNC SCOPES (The Tokio/Swift Model)
+async void test_task_group() {
+    int completed_tasks = 0;
+
+    // async_scope blocks until all spawned children complete or are cancelled
+    await async_scope((TaskGroup group) => {
+        group.spawn(async () => { await sleep(10); completed_tasks = completed_tasks + 1; });
+        group.spawn(async () => { await sleep(20); completed_tasks = completed_tasks + 1; });
+    });
+
+    // Both tasks are guaranteed to be finished when the scope exits
+    println(completed_tasks); // Expected: 2
+}
+
+// 2. FAIL-FAST CANCELLATION CASCADE
+async void test_join_cancellation_cascade() {
+    promise<int> a = spawn(async () => {
+        throw new Exception("Task A Failed");
+    });
+
+    promise<int> b = spawn(async () => {
+        await sleep(500); // Long running task
+        return 1;
+    });
+
+    try {
+        await join(a, b);
+    } catch (Exception e) {
+        println("Join aborted early"); // Expected: Join aborted early
+    }
+
+    // RED TEAM: Because 'a' failed, 'join' must explicitly send a cancel signal to 'b'.
+    // If 'b' is still running, you have a resource leak!
+    println(b.is_cancelled()); // Expected: true
+}
+
+await test_task_group()
+await test_join_cancellation_cascade()
+println("--- [E2E] tls_storage.mox ---")
+
+// Verifies TLS initialization duration and linking
+static thread_local int cpu_id = 0;
+static thread_local int[10] kernel_gs_base;
+
+void init_per_cpu(int id) {
+    cpu_id = id; // Verifies local assignment to TLS variable
+    kernel_gs_base[0] = id;
+
+    println(cpu_id);            // Expected: 42
+    println(kernel_gs_base[0]); // Expected: 42
+}
+
+void run_tls_test() {
+    init_per_cpu(42);
+
+    // Spawn a thread to prove the thread-local variables start fresh
+    new thread(() => {
+        println(cpu_id);            // Expected: 0
+        println(kernel_gs_base[0]); // Expected: 0
+    });
+}
+
+run_tls_test();

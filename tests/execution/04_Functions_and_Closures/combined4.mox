@@ -1,0 +1,739 @@
+﻿println("--- [E2E] borrow_conflict.mox ---")
+
+void test_borrow_conflict() {
+    int x = 42;
+
+    // Mutable capture
+    closure() -> void writer = &mut () => { x = x + 1; };
+
+    // Immutable capture
+    // COMPILER CHECK: Does this conflict with the mutable writer above?
+    closure() -> int reader = &() => { return x; };
+
+    writer();
+    println(reader());
+}
+
+test_borrow_conflict();
+println("Done")
+println("--- [E2E] cf_final_closure_stress.mox ---")
+
+class Vector2 {
+    int x;
+    int y;
+
+    constructor(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+
+    Vector2 operator+(Vector2 other) {
+        return new Vector2(this.x + other.x, this.y + other.y);
+    }
+
+    Vector2 operator-(Vector2 other) {
+        return new Vector2(this.x - other.x, this.y - other.y);
+    }
+}
+
+// --- Support Logic ---
+void configureWindow(int width = 800, int height = 600, string title = "Moksha App") {
+    println(`Window: ${title} (${width}x${height})`);
+}
+
+// 2. SHARED ENVIRONMENT
+// Tests that multiple closures capture the same memory location, not copies.
+void test_shared_state() {
+    int x = 0;
+    closure() -> void inc = &mut () => { x = x + 1; };
+    closure() -> int  get = &() => { return x; };
+
+    inc();
+    inc();
+    println(get()); // Expected: 2
+}
+
+// 4. CALL RESOLUTION & OPERATOR STRESS
+void test_resolution() {
+    // Default Overrides [cite: 20]
+    configureWindow(1024, 768); // Expected: Window: Moksha App (1024x768)
+
+    // Operator Chaining (Assumes Vector2 is defined [cite: 44-51])
+    Vector2 v1 = new Vector2(1, 1);
+    Vector2 v2 = new Vector2(2, 2);
+    Vector2 v3 = new Vector2(3, 3);
+    Vector2 res = v1 + v2 - v3;
+    println(res.x); // Expected: 0
+}
+
+// --- Execution ---
+test_shared_state();
+test_resolution();
+println("--- [E2E] closure_capture.mox ---")
+
+void test_closures() {
+    int x = 42;
+
+    // By default, mutating a captured primitive requires a mut closure
+    closure() -> void lambda = &mut () => {
+        x = x + 1;
+    };
+
+    lambda();
+    println(x); // Expected: 43
+}
+
+void test_snapshot_capture() {
+    int a = 10;
+    // 1. Snapshot Capture (Default by-value copy)
+    closure() -> int snap = () => { return a + 5; };
+    a = 20; // Mutating 'a' outside doesn't affect the snapshot
+    println(snap()); // Expected: 15
+}
+
+void test_view_capture() {
+    int b = 100;
+    // 2. View Capture (Immutable Borrow)
+    closure() -> int view_closure = &() => { return b; };
+    println(view_closure()); // Expected: 100
+}
+
+void test_mut_capture() {
+    int c = 50;
+    // 3. Mut Capture (Mutable Borrow)
+    closure() -> void mut_closure = &mut () => { c = c + 10; };
+    mut_closure();
+    println(c); // Expected: 60
+}
+
+void test_move_capture() {
+    string d = "Hello Moksha";
+    // 4. Move Capture (Ownership Transfer)
+    closure() -> string move_closure = move () => { return d; };
+    println(move_closure()); // Expected: Hello Moksha
+}
+
+void test_env() {
+    int a = 10;
+    string b = "hello layout";
+
+    closure() -> void func = () => {
+        println(a);
+        println(b);
+    };
+
+    // The LLVM backend must construct a struct { i32, ptr } and pass it correctly
+    func();
+    // Expected: 10
+    // Expected: hello layout
+}
+
+test_closures();
+test_snapshot_capture();
+test_view_capture();
+test_mut_capture();
+test_move_capture();
+test_env();
+println("--- [E2E] closure_drop_semantics.mox ---")
+
+class Logger {
+    public string name;
+    constructor(string n) { this.name = n; println("Created: " + n); }
+    // Finalizer/Cleanup logic to observe destruction
+    destructor() { println("Destroyed: " + this.name); }
+}
+
+void test_move_drop() {
+    Logger log = new Logger("Resource1");
+
+    // Transfer ownership to the closure [cite: 11]
+    closure() -> void f = move () => {
+        println("Using: " + log.name);
+    };
+
+    f();
+    // After 'f' goes out of scope, the environment (and log) must be cleaned up.
+}
+
+test_move_drop();
+// Expected: Created: Resource1 \n Using: Resource1 \n Destroyed: Resource1
+println("--- [E2E] closure_fat_pointer_semantics.mox ---")
+
+void test_closure_copy_alias() {
+    int x = 0;
+    // Mutating a captured primitive requires &mut [cite: 2, 9]
+    closure() -> void inc = &mut () => { x = x + 1; };
+
+    // Copying the closure should copy the fat pointer (fn ptr + env ptr)
+    closure() -> void inc2 = inc;
+
+    inc();
+    inc2();
+    println(x); // Expected: 2 (Same environment shared by alias)
+}
+
+void test_move_lifetime() {
+    string s = "Hello Ownership";
+    // Move Capture transfers ownership
+    closure() -> string f = move () => { return s; };
+
+    println(f()); // Expected: Hello Ownership
+    // Internal Check: The backend must not allow 's' to be freed twice.
+}
+
+test_closure_copy_alias();
+test_move_lifetime();
+println("--- [E2E] closure_pathological_stress.mox ---")
+
+int track(int x) {
+    print(x);
+    return x;
+}
+
+// 1. CLOSURE + DEFAULT PARAMETER
+void test_closure_defaults() {
+    closure(int) -> int f = (int x = 10) => { return x + 1; };
+    print(f());  print("-"); // Expected: 11
+    print(f(5)); print("|"); // Expected: 6
+}
+
+// 2. DEFAULT CAPTURING OUTER SCOPE
+void test_default_capture() {
+    int base = 5;
+    // The default parameter 'x = base' requires capturing 'base' into the environment
+    closure(int) -> int make = (int x = base) => { return x; };
+    print(make()); print("|"); // Expected: 5
+}
+
+// 3. EVALUATION ORDER IN CLOSURE CALLS
+void test_closure_eval_order() {
+    closure(int, int) -> int f = (int a, int b) => { return a + b; };
+    // Must print 1, then 2 strictly before invoking f
+    int res = f(track(1), track(2));
+    print("="); print(res); print("|"); // Expected: 12=3
+}
+
+// 4. CURRYING WITH MUTABLE STATE
+void test_stateful_currying() {
+    closure() -> closure() -> int make = () => {
+        int x = 0;
+        // Use 'move' here so the middle closure takes ownership of 'x'
+        return move () => {
+            // Nested closure mutating captured outer state
+            return &mut () => {
+                x = x + 1;
+                return x;
+            }();
+        };
+    };
+    closure() -> int f = make();
+    print(f()); print("-"); // Expected: 1
+    print(f()); print("|"); // Expected: 2
+}
+
+// 6. MIXED CAPTURE MODES
+void test_mixed_capture() {
+    int a = 10;
+    int b = 20;
+    // 'b' is mutated (mut capture), 'a' is just read (view/snapshot capture)
+    closure() -> int f = &mut () => {
+        b = b + 1;
+        return a + b;
+    };
+    print(f()); print("|"); // Expected: 31
+}
+
+// 7. VIEW SEMANTICS POST-CREATION REASSIGNMENT
+void test_view_reassignment() {
+    int x = 5;
+    closure() -> int f = &() => { return x; };
+    x = 10; // Mutate after closure creation
+    print(f()); print("|"); // Expected: 10
+}
+
+// 8. RECURSIVE CAPTURE
+void test_recursive_capture() {
+    int base = 1;
+    closure(int) -> int fact = (int n) => { return 0; };
+    fact = &(int n) => {
+        if (n <= 1) return base; // Captures base alongside self-reference
+        return n * fact(n - 1);
+    };
+    print(fact(3)); print("|"); // Expected: 6
+}
+
+// 9. VARIADIC CLOSURE INTERACTION
+void call_variadic(closure(int) -> int f, ...) {
+    print(f(5));
+}
+void test_variadic_closure() {
+    call_variadic((int x) => { return x + 1; }, 1, 2, 3); print("|"); // Expected: 6
+}
+
+// --- EXECUTION ---
+test_closure_defaults();
+test_default_capture();
+test_closure_eval_order();
+test_stateful_currying();
+test_mixed_capture();
+test_view_reassignment();
+test_recursive_capture();
+test_variadic_closure();
+println("--- [E2E] closure_reentrancy.mox ---")
+
+void test_reentrancy() {
+    // Self-referencing closure
+    closure(int) -> void countdown = (int n) => { return; };
+
+    countdown = &(int n) => {
+        if (n <= 0) {
+            println("Liftoff!");
+            return;
+        }
+        print(string(n) + "... ");
+        countdown(n - 1); // Re-entrant call
+    };
+
+    countdown(3);
+}
+
+test_reentrancy();
+// Expected: 3... 2... 1... Liftoff!
+println("--- [E2E] closure_semantic_edge_cases.mox ---")
+
+// 1. CLOSURE IDENTITY VS EQUALITY
+// Spec: Closures are compared by reference (Fat Pointer equality: same fn ptr + same env ptr).
+void test_closure_identity() {
+    int x = 10;
+    closure() -> int a = () => { return x; };
+    closure() -> int b = () => { return x; };
+    closure() -> int c = a;
+
+    println(a == c); // Expected: true
+    println(a == b); // Expected: false (Different environment allocations)
+}
+
+// 2. CLOSURE STORED INSIDE OBJECT (Heap-to-Heap Graph)
+class Holder {
+    public closure() -> int f;
+    // Dummy constructor
+    constructor() {}
+}
+
+void test_closure_in_object() {
+    int x = 7;
+    Holder h = new Holder();
+    h.f = () => { return x; }; // Escapes into an object field
+
+    // Extract to local variable to bypass method dispatcher
+    closure() -> int tempF = h.f;
+    println(tempF()); // Expected: 7
+}
+
+// 4. NESTED MUTATION ACROSS LAYERS
+void test_nested_mutation_layers() {
+    int x = 1;
+    // Outer mutates the state captured from the outermost scope
+    closure() -> closure() -> void outer = &mut () => {
+        return &mut () => { x = x * 2; };
+    };
+
+    closure() -> void f = outer();
+    f();
+    println(x); // Expected: 2
+}
+
+// 5. CLOSURE REASSIGNMENT (Env Swap)
+void test_closure_reassignment() {
+    int x = 5;
+    closure() -> int f = () => { return x; };
+    println(f()); // Expected: 5
+
+    x = 10;
+    // Rebinding 'f' creates a entirely new closure and environment
+    f = () => { return x + 1; };
+    println(f()); // Expected: 11
+}
+
+// 6. DEFAULT PARAMETER EVALUATION TIMING
+// Spec: Default arguments are LATE-BOUND (evaluated at the call site).
+// Since 'x' is captured by reference, the default uses the latest value of 'x'.
+void test_default_eval_time() {
+    int x = 10;
+
+    // Evaluate the outer factory closure first
+    closure() -> closure(int) -> int factory = &() => {
+        return (int a = x) => { return a; };
+    };
+
+    // Execute the factory to retrieve the inner closure
+    closure(int) -> int f = factory();
+
+    closure(int) -> int delayed = (int a = x) => { return a; };
+    x = 20;
+    println(delayed()); // Expected: 20
+}
+
+// 7. CLOSURE CAPTURING ANOTHER CLOSURE
+void test_capture_closure() {
+    closure(int) -> int add1 = (int x) => { return x + 1; };
+    // 'f' captures 'add1' inside its environment struct
+    closure(int) -> int f = (int x) => { return add1(x); };
+    println(f(5)); // Expected: 6
+}
+
+// 8. NON-CAPTURING CLOSURE TO FUNCTION POINTER (Optimization)
+// Spec: If a closure captures nothing, its environment pointer is NULL.
+void test_non_capturing_closure() {
+    closure(int) -> int f = (int x) => { return x + 1; };
+    println(f(5)); // Expected: 6
+}
+
+// 9. LARGE ENVIRONMENT PACKING STRESS
+// Spec: Tests the backend's struct generation for mixed primitive/reference types.
+void test_large_env() {
+    int a = 1;
+    int b = 2;
+    int c = 3;
+    string d = "env_str";
+
+    closure() -> int f = () => {
+        // Forces a struct { i32, i32, i32, ptr }
+        return a + b + c + 1;
+    };
+    println(f()); // Expected: 7
+}
+
+// 10. MUTATION + SNAPSHOT COEXISTENCE (Split Capture Mode)
+// Spec: If a closure is marked '&mut', ALL captures from that scope become reference/view
+// captures unless explicitly requested otherwise.
+void test_split_capture_modes() {
+    int a = 10;
+    int b = 20;
+
+    closure() -> int f = &mut () => {
+        b = b + 1;
+        return a + b;
+    };
+
+    a = 100; // 'a' is mutated outside
+    println(f()); // Expected: 121 (Because f holds a reference to 'a', not a snapshot)
+}
+
+// --- EXECUTION ---
+test_closure_identity();
+test_closure_in_object();
+test_nested_mutation_layers();
+test_closure_reassignment();
+test_default_eval_time();
+test_capture_closure();
+test_non_capturing_closure();
+test_large_env();
+test_split_capture_modes();
+println("--- [E2E] closure_shared_state.mox ---")
+
+void test_shared_env() {
+    int x = 0;
+
+    // Both closures capture the same 'x'
+    closure() -> void inc = &mut () => { x = x + 1; };
+    closure() -> int get = &() => { return x; };
+
+    inc();
+    inc();
+    println(get()); // Expected: 2
+}
+
+test_shared_env();
+println("--- [E2E] default_parameters.mox ---")
+
+string greet(string name, string greeting = "Hello") {
+    return greeting + ", " + name;
+}
+
+void configureWindow(int width = 800, int height = 600, string title = "Moksha App") {
+    println(`Window: ${title} (${width}x${height})`);
+}
+
+void testDefaults() {
+    string myName = "Alice";
+
+    println(greet(myName));              // Expected: Hello, Alice
+    println(greet(myName, "Welcome"));   // Expected: Welcome, Alice
+
+    configureWindow();                   // Expected: Window: Moksha App (800x600)
+    configureWindow(1024);               // Expected: Window: Moksha App (1024x600)
+}
+
+void testLambdaDefaults() {
+    closure(int) -> closure(int) -> int makeMultiplier = (int factor = 2) => {
+        return (int n) => {
+            return n * factor;
+        };
+    };
+
+    closure(int) -> int doubleFunc = makeMultiplier();
+    closure(int) -> int tripleFunc = makeMultiplier(3);
+
+    println(doubleFunc(5)); // Expected: 10
+    println(tripleFunc(5)); // Expected: 15
+}
+
+testDefaults();
+testLambdaDefaults();
+println("--- [E2E] functions_and_closures.mox ---")
+
+// Standard Function
+int add(int a, int b) {
+    return a + b;
+}
+
+// Lambda using the new closure type syntax
+closure(int, int) -> int addFunc = (int b, int c) => {
+    return b + c;
+}
+
+println(add(10, 20));       // Expected: 30
+println(addFunc(50, 50));   // Expected: 100
+println("--- [E2E] function_boundaries.mox ---")
+
+int read_data(*view int v) {
+    return *v;
+}
+
+int test_function_calls() {
+    int p = 50;
+
+    *mut int m = &p;
+    int a = read_data(m);
+
+    // Passing a *view directly is now safe.
+    *view int v = &p;
+    int b = read_data(v);
+
+    return a + b;
+}
+
+println(test_function_calls()); // Expected: 100
+println("--- [E2E] higher_order_and_recursion.mox ---")
+
+// 1. Passing a closure as an argument
+int apply(int x, closure(int) -> int f) {
+    return f(x);
+}
+
+// 2. Recursive closure
+void test_recursion() {
+    closure(int) -> int fact = (int n) => { return 0; };
+
+    // Late-binding self-reference
+    fact = &mut (int n) => {
+        if (n <= 1) return 1;
+        return n * fact(n - 1);
+    };
+
+    println(apply(5, fact)); // Expected: 120
+}
+
+test_recursion();
+println("--- [E2E] higher_order_composition.mox ---")
+
+// Multi-layer capture dependency
+void test_nested_capture_layers() {
+    int a = 10;
+    closure() -> closure() -> int outer = () => {
+        int b = 20;
+        return () => {
+            return a + b; // Captures 'a' from function, 'b' from outer lambda
+        };
+    };
+
+    closure() -> int f = outer();
+    println(f()); // Expected: 30
+}
+
+// Closure Composition [cite: 21]
+closure(int) -> int compose(closure(int) -> int f) {
+    return (int x) => {
+        return f(x) + 1;
+    };
+}
+
+void test_composition() {
+    closure(int) -> int add2 = (int x) => { return x + 2; };
+    closure(int) -> int result = compose(add2);
+    println(result(5)); // Expected: 8
+}
+
+test_nested_capture_layers();
+test_composition();
+println("--- [E2E] large_env_stress.mox ---")
+
+void test_large_env() {
+    // Capturing a wide variety of types to stress the struct layout [cite: 13]
+    int i1 = 1; double d1 = 1.1; bool b1 = true;
+    int i2 = 2; double d2 = 2.2; string s1 = "stress";
+
+    closure() -> void stress_f = move () => {
+        println(s1);
+        println(i1 + i2);
+        println(d1 + d2);
+    };
+
+    closure() -> void stress_f2 = () => {
+        println(s1);
+        println(i1 + i2);
+        println(d1 + d2);
+    };
+
+    closure() -> void stress_f3 = &() => {
+        println(s1);
+        println(i1 + i2);
+        println(d1 + d2);
+    };
+
+    closure() -> void stress_f4 = &mut() => {
+        println(s1);
+        println(i1 + i2);
+        println(d1 + d2);
+    };
+
+    stress_f();
+    stress_f2();
+    stress_f3();
+    stress_f4();
+}
+
+test_large_env();
+println("--- [E2E] method_overloading.mox ---")
+
+class Printer {
+    // Overload 1: Int
+    void printData(int i) {
+        println("Int: " + string(i));
+    }
+
+    // Overload 2: String
+    void printData(string s) {
+        println("String: " + s);
+    }
+
+    // Overload 3: Multiple Args (Arity overloading)
+    void printData(string label, int val) {
+        println(label + ": " + string(val));
+    }
+}
+
+class Calculator {
+    // Overload based on Return Type/Params implies different logic
+    int add(int a, int b) {
+        return a + b;
+    }
+
+    double add(double a, double b) {
+        return a + b;
+    }
+}
+
+// Execution
+Printer p = new Printer();
+p.printData(42);               // Expected: Int: 42
+p.printData("Hello");          // Expected: String: Hello
+p.printData("Score", 100);     // Expected: Score: 100
+
+Calculator c = new Calculator();
+int i = c.add(10, 20);
+double d = c.add(10.5, 20.5);
+
+println(i); // Expected: 30
+println(d); // Expected: 31
+println("--- [E2E] mutual_recursion.mox ---")
+
+ref class NodeA {
+    // Forward reference to NodeB
+    public NodeB? next;
+    public string name;
+    constructor() { this.next = null; this.name = "NodeA"; }
+}
+
+ref class NodeB {
+    // Backward reference to NodeA
+    public NodeA? prev;
+    public string name;
+    constructor() { this.prev = null; this.name = "NodeB"; }
+}
+
+NodeA a = new NodeA();
+NodeB b = new NodeB();
+
+// Linking mutually recursive types
+a.next = b;
+b.prev = a;
+
+println(a.next?.name ?? "null"); // Expected: NodeB
+println(b.prev?.name ?? "null"); // Expected: NodeA
+println("--- [E2E] operator_overloading.mox ---")
+
+class Vector2 {
+    public int x;
+    public int y;
+
+    constructor(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+
+    // Binary Operator (+)
+    Vector2 operator+(Vector2 other) {
+        return new Vector2(this.x + other.x, this.y + other.y);
+    }
+
+    // Binary Operator (-)
+    Vector2 operator-(Vector2 other) {
+        return new Vector2(this.x - other.x, this.y - other.y);
+    }
+
+    // Equality Operator (==)
+    bool operator==(Vector2 other) {
+        return this.x == other.x && this.y == other.y;
+    }
+
+    // Unary Operator (-)
+    Vector2 operator-() {
+        return new Vector2(-this.x, -this.y);
+    }
+}
+
+// Execution
+Vector2 v1 = new Vector2(10, 20);
+Vector2 v2 = new Vector2(5, 5);
+
+// Should invoke operator+
+Vector2 v3 = v1 + v2;
+println(v3.x); // Expected: 15
+println(v3.y); // Expected: 25
+
+// Should invoke operator==
+if (v3 == new Vector2(15, 25)) {
+    println("Vector Math Works"); // Expected: Vector Math Works
+}
+
+// Should invoke unary operator-
+Vector2 neg = -v1;
+println(neg.x); // Expected: -10
+println(neg.y); // Expected: -20
+println("--- [E2E] pipe_closure_combo.mox ---")
+
+void test_pipe_closure_capture() {
+    int base = 5;
+    // Closure syntax
+    closure(int) -> int addBase = (int x) => {
+        return x + base;
+    };
+
+    // Combinator: 10 passed to addBase(10)
+    int res = 10 |> addBase();
+    println(res); // Expected: 15
+}
+
+test_pipe_closure_capture();

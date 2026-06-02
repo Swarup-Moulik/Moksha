@@ -1,0 +1,877 @@
+﻿println("--- [E2E] advanced_valid_semantics.mox ---");
+
+// ---------------------------------------------------------
+// Arrays (Zero-Length & Overwrites)
+// ---------------------------------------------------------
+int[] empty_arr = [];
+println("Empty array length (Expected 0):");
+println(length(empty_arr));
+
+// ---------------------------------------------------------
+// Deep Nullability Chains
+// ---------------------------------------------------------
+ref class Node {
+    public Node? next;
+    public int val;
+    constructor(int v) { this.val = v; this.next = null; }
+}
+
+Node? root = null;
+println("Deep null chain (Expected -1):");
+println(root?.next?.next?.val ?? -1);
+
+// ---------------------------------------------------------
+// Spread Operator Order & Duplication
+// ---------------------------------------------------------
+int[] spread_base = [42];
+int[] spread_result = [...spread_base, 42];
+println("Spread duplication (Expected length 2):");
+println(length(spread_result));
+println("Spread value (Expected 42):");
+println(spread_result[1]);
+
+// ---------------------------------------------------------
+// Memory Model & Equality (Value vs Reference)
+// ---------------------------------------------------------
+class Vector2 {
+    public int x;
+    constructor(int x) { this.x = x; }
+}
+
+Vector2 v1 = new Vector2(10);
+Vector2 v2 = new Vector2(10);
+println("Value structural equality (Expected true):");
+println(v1 == v2);
+
+ref class Player {
+    public int id;
+    constructor(int id) { this.id = id; }
+}
+
+Player p1 = new Player(1);
+Player p2 = new Player(1);
+println("Ref pointer equality (Expected false):");
+println(p1 == p2);
+
+// ---------------------------------------------------------
+// Parsing Ambiguities
+// ---------------------------------------------------------
+table<string, int[]> nested_generics = {"test": [1, 2, 3]};
+println("Nested generic parse (Expected 2):");
+println(nested_generics["test"][1]);
+
+int a = 1;
+int b = 2;
+int c = 3;
+int d = 1;
+bool cmp = (a < b) && (c > d);
+println("Relational vs Generic parsing (Expected true):");
+println(cmp);
+
+// ---------------------------------------------------------
+// Low-Level Memory Layout & Ref Parameters
+// ---------------------------------------------------------
+println("Sizeof int:");
+println(sizeof(int));
+
+void modify_val(ref int val) {
+    val = 100;
+}
+
+int default_init = 0;
+modify_val(default_init);
+println("Ref mutation (Expected 100):");
+println(default_init);
+println("--- [E2E] any_dynamicity.mox ---");
+
+// ==========================================
+// The Absolute Dominance of the 'any' Type
+// ==========================================
+void test_any_dominance() {
+    println("--- Testing 'any' Type Reassignment ---");
+
+    // Declare a single dynamic variable
+    any dyn_var;
+
+    // 1. Null
+    dyn_var = null;
+    println("1. Null:      " + dyn_var);
+
+    // 2. Booleans
+    dyn_var = true;
+    println("2. Boolean:   " + dyn_var);
+
+    dyn_var = false;
+    println("   Boolean:   " + dyn_var);
+
+    // 3. Primitives (Ints & Floats)
+    dyn_var = 42;
+    println("3. Integer:   " + dyn_var);
+
+    dyn_var = 3.14159265;
+    println("4. Float:     " + dyn_var);
+
+    // 4. Strings
+    dyn_var = "Hello from dynamic memory!";
+    println("5. String:    " + dyn_var);
+
+    // 5. Fixed-Size Arrays
+    int[5] arr = [1, 2, 3, 4, 5];
+    dyn_var = arr;
+    println("6. Array:     " + dyn_var);
+
+    // 6. Dynamic Slices
+    int[] slc = [10, 20, 30, 40, 50];
+    dyn_var = slc;
+    println("7. Slice:     " + dyn_var);
+
+    // 7. Tables / Maps
+    table<string, any> dict = { "language": "Moksha", "is_awesome": true };
+    dyn_var = dict;
+    println("8. Table:     " + dyn_var);
+
+    println("--- Dynamicity Test Complete ---");
+}
+
+test_any_dominance();
+println("--- [E2E] arrays_and_tables.mox ---")
+
+// 1D Fixed Array (C-style)
+int[5] fixedArr = [1, 2, 3, 4, 5]
+println(fixedArr[2]) // Expected: 3
+
+// 1D Dynamic Array (Slice style)
+int[] dynArr = [10, 20, 30]
+println(dynArr[0]) // Expected: 10
+
+// 2D Array (Matrix)
+int[2][2] matrix = [
+    [1, 0],
+    [0, 1]
+]
+println(matrix[1][1]) // Expected: 1
+
+// Array of Strings
+string[] names = ["Alice", "Bob", "Charlie"]
+println(names[1]) // Expected: Bob
+
+// Table (Map) syntax
+table<string, int> scores = {
+    "Alice": 100,
+    "Bob": 95
+}
+println(scores["Alice"]) // Expected: 100
+println("--- [E2E] array_precedence_and_nullability.mox ---")
+
+// --- 0. Define the Base Object ---
+class Object {
+    // Empty base class to satisfy 'new Object()'
+}
+
+// --- 1. Fixed vs Dynamic Sizing (1D & 2D) ---
+void test_sizing() {
+    int[3] fixed1D = [1, 2, 3];
+    int[2][2] fixed2D = [[1, 2], [3, 4]];
+
+    int[] dynamic1D = [1, 2, 3, 4, 5];
+    int[][] dynamic2D = [[1, 2], [3]]; // Jagged arrays are allowed by dynamic sizing
+
+    println(fixed1D[2]);       // Expected: 3
+    println(fixed2D[1][1]);    // Expected: 4
+    println(dynamic1D[4]);     // Expected: 5
+    println(dynamic2D[1][0]);  // Expected: 3
+}
+
+// --- 2. Static vs Dynamic (Any) Typing ---
+void test_typing() {
+    int[] staticInts = [1, 2, 3];
+
+    // Dynamic typing using the 'any' keyword
+    any[] heterogenous = [1, "Moksha", true, new Object()];
+    any[][] mixedMatrix = [[1, 2], ["A", "B"]];
+
+    println(staticInts[0]);       // Expected: 1
+    println(heterogenous[1]);     // Expected: Moksha
+    println(mixedMatrix[1][0]);   // Expected: A
+}
+
+// --- 3. The Nullability Matrix (1D & 2D) ---
+void test_nullability_1D() {
+    int[] nonNull_nonNull = [1, 2];      // Non-nullable array, non-nullable elements
+    int?[] null_nonNull = null;          // Nullable array, non-nullable elements
+    int[]? nonNull_null = [1, null, 3];  // Non-nullable array, nullable elements
+    int?[]? null_null = null;            // Nullable array, nullable elements
+
+    println(nonNull_nonNull[1]); // Expected: 2
+
+    // Test unwrapping nullable elements using the null-coalescing operator
+    println(nonNull_null[0] ?? -1); // Expected: 1
+    println(nonNull_null[1] ?? -1); // Expected: -1 (because it was null)
+}
+
+void test_nullability_2D() {
+    // Non-nullable matrix of non-nullable ints
+    int[][] matrix1 = [[1, 2], [3, 4]];
+
+    // Nullable matrix (the container itself can be null)
+    int?[] [] matrix2 = null;
+
+    // Non-nullable matrix where elements (inner arrays) can be null
+    int[][]? matrix3 = [[1, 2], null, [5, 6]];
+
+    // Fully nullable 2D structure
+    int?[][]? matrix4 = null;
+    matrix4 = [null, [1, 2]];
+
+    println(matrix1[0][1]); // Expected: 2
+
+    // Testing optional chaining (?) combined with null-coalescing (??)
+    println(matrix3[2]?[0] ?? -1); // Expected: 5
+}
+
+// --- 4. Spread Operator (...) with Dynamic Arrays ---
+void test_spread() {
+    int[] listA = [1, 2, 3];
+    int[] listB = [4, 5, 6];
+
+    // Combining arrays using the spread operator
+    int[] combined = [...listA, ...listB, 7, 8, 9];
+
+    println(combined[0]); // Expected: 1 (from listA)
+    println(combined[3]); // Expected: 4 (from listB)
+    println(combined[8]); // Expected: 9 (from literal)
+
+    // Spreading into 2D structures
+    int[][] matrixA = [[1, 1], [2, 2]];
+    int[][] matrixB = [...matrixA, [3, 3]];
+
+    println(matrixB[2][1]); // Expected: 3
+}
+
+// --- Trigger Execution ---
+test_sizing();
+test_typing();
+test_nullability_1D();
+test_nullability_2D();
+test_spread();
+
+println("All tests passed!");
+println("--- [E2E] classes.mox ---")
+
+// Stack allocated value type
+class Vector2 {
+    public int x;
+    public int y;
+    constructor(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+// Heap allocated reference type
+ref class Player {
+    public string name;
+    constructor(string name) {
+        this.name = name;
+    }
+}
+
+Vector2 v = new Vector2(10, 20);
+println(v.x); // Expected: 10
+println(v.y); // Expected: 20
+
+Player p = new Player("Hero");
+println(p.name); // Expected: Hero
+
+shared Vector2 heapV = new Vector2(30, 40);
+println(heapV.x); // Expected: 30
+
+void operator_share() {
+    // 'shared' keyword forces heap allocation for value types (ARC managed)
+    shared Vector2 heapV = new Vector2(30, 40);
+    println(heapV.x); // Expected: 30
+}
+
+operator_share();
+println("--- [E2E] collection_equality.mox ---");
+
+void test_strings() {
+    println("--- 1. Heap String Equality ---");
+    // Standard heap-allocated dynamic string
+    string s1 = "hello moksha";
+    string s2 = "hello " + "moksha";
+
+    println("String Equality (Expected true):");
+    println(s1 == s2);
+}
+
+void test_char_arrays() {
+    println("--- 2. Char Array Equality (C-Style) ---");
+    // Fixed-size stack array auto-initialized from string literal (null-terminated = 6 bytes)
+    char[6] c1 = "hello";
+    char[6] c2 = "hello";
+    char[6] c3 = "world";
+
+    println("Char Array Equality (Expected true):");
+    println(c1 == c2);
+
+    println("Char Array Inequality (Expected false):");
+    println(c1 == c3);
+}
+
+void test_arrays() {
+    println("--- 3. Fixed Array Equality ---");
+    // Standard stack-allocated fixed arrays
+    int[3] arr1 = [1, 2, 3];
+    int[3] arr2 = [1, 2, 3];
+    int[3] arr3 = [1, 99, 3];
+
+    println("Fixed Array Equality (Expected true):");
+    println(arr1 == arr2);
+
+    println("Fixed Array Inequality (Expected false):");
+    println(arr1 == arr3);
+}
+
+void test_slices() {
+    println("--- 4. Slice Equality ---");
+    // Dynamic fat-pointers (ptr + len) initialized directly from array literals
+    int[] slice1 = [1, 2, 3];
+    int[] slice2 = [1, 2, 3];
+    int[] slice3 = [1, 99, 3];
+
+    println("Slice Equality (Expected true):");
+    println(slice1 == slice2);
+
+    println("Slice Inequality (Expected false):");
+    println(slice1 == slice3);
+}
+
+
+test_strings();
+test_char_arrays();
+test_arrays();
+test_slices();
+println("--- [E2E] core_semantics_and_dispatch.mox ---");
+
+// ---------------------------------------------------------
+// 1 & 2. Value vs Reference Copying & Mutation
+// ---------------------------------------------------------
+class Vector2 {
+    public int x;
+    constructor(int x) { this.x = x; }
+}
+ref class Player {
+    public string name;
+    constructor(string n) { this.name = n; }
+}
+
+// LAW: 'class' is passed/copied by value (deep copy).
+void mutate_val(Vector2 v) { v.x = 50; }
+Vector2 v1 = new Vector2(1);
+Vector2 v2 = v1;
+v2.x = 99;
+mutate_val(v1);
+println("Value Class v1.x (Expected 1 - No alias, no mutation):");
+println(v1.x);
+
+// LAW: 'ref class' is passed/copied by reference (pointer copy).
+void mutate_ref(Player p) { p.name = "B"; }
+Player p1 = new Player("A");
+Player p2 = p1;
+p2.name = "C";
+mutate_ref(p1);
+println("Ref Class p1.name (Expected B - Aliased and mutated):");
+println(p1.name);
+
+// LAW: Arrays and Tables are Value Types unless prefixed with 'ref'
+void mutate_arr(int[] arr) { arr[0] = 999; }
+int[3] a = [1, 2, 3];
+int[3] b = a;
+b[0] = 100;
+mutate_arr(a);
+println("Array a[0] (Expected 1 - Deep copy semantics):");
+println(a[0]);
+
+// ---------------------------------------------------------
+// 3. Dynamic Dispatch (VTable Resolution)
+// ---------------------------------------------------------
+ref class Base {
+    public virtual string f() { return "Base"; }
+}
+ref class Derived(Base) {
+    public override string f() { return "Derived"; }
+}
+
+Base obj = new Derived();
+println("VTable Dynamic Dispatch (Expected Derived):");
+println(obj.f());
+
+// ---------------------------------------------------------
+// 4. Equality Semantics (==)
+// ---------------------------------------------------------
+Vector2 vecA = new Vector2(5);
+Vector2 vecB = new Vector2(5);
+// LAW: Value types compare structurally.
+println("Value Equality (Expected true):");
+println(vecA == vecB);
+
+Player pA = new Player("X");
+Player pB = new Player("X");
+// LAW: Ref types compare pointers (memory address).
+println("Reference Equality (Expected false):");
+println(pA == pB);
+
+// ---------------------------------------------------------
+// 5 & 6. Evaluation Order & Aliasing
+// ---------------------------------------------------------
+// LAW: Expressions evaluate strictly Left-to-Right.
+int[] spread_src = [1];
+int[] spread_res = [...spread_src, spread_src[0] = 5];
+println("Spread LTR Eval (Expected 1):");
+println(spread_res[0]);
+println("Spread LTR Mutated (Expected 5):");
+println(spread_res[1]);
+
+int[] self_arr = [1, 2];
+self_arr = [...self_arr, 1, 2];
+println("Self-spread length (Expected 4):");
+println(length(self_arr));
+
+// ---------------------------------------------------------
+// 10. Unions (C-Style Unsafe Punning)
+// ---------------------------------------------------------
+union ValueOverlay {
+    int int_val;
+    float float_val;
+}
+ValueOverlay u;
+unsafe {
+    u.float_val = 1.5;
+    println("Union Bitwise Reinterpretation:");
+    println(u.int_val);
+}
+// Just the definition, no execution needed here.
+public generic Box<T> {
+    public T val;
+    constructor(T v) { this.val = v; }
+}
+println("--- [E2E] cross_module_generics_import.mox ---")
+
+from "cross_module_generics_export" import { Box }
+
+// The TypeChecker must be able to resolve `T` as `int`, verify the constructor,
+// and compute memory layout for a class defined in a completely different AST module.
+Box<int> intBox = new Box<int>(42);
+println(intBox.val); // Expected: 42
+
+Box<string> strBox = new Box<string>("Cross-module Success!");
+println(strBox.val); // Expected: Cross-module Success!
+println("--- [E2E] cyclic_module_a.mox (Cyclic Imports) ---")
+
+from "cyclic_module_b" import { ClassB }
+
+public class ClassA {
+    public ClassB? bRef;
+
+    constructor() {
+        this.bRef = null;
+    }
+
+    public string getName() {
+        return "I am ClassA";
+    }
+}
+
+// Instantiate both to prove the types were resolved
+ClassA a = new ClassA();
+ClassB b = new ClassB();
+
+// Create a cyclic memory graph!
+a.bRef = b;
+b.aRef = a;
+
+println(a.getName());                 // Expected: I am ClassA
+println(a.bRef?.getName() ?? "null"); // Expected: I am ClassB
+println(b.aRef?.getName() ?? "null"); // Expected: I am ClassA
+from "cyclic_module_a" import { ClassA }
+
+public class ClassB {
+    public ClassA? aRef;
+
+    constructor() {
+        this.aRef = null;
+    }
+
+    public string getName() {
+        return "I am ClassB";
+    }
+}
+println("--- [E2E] deep_generic_nesting.mox ---")
+
+generic Map<K, V> {
+    public K key;
+    public V val;
+    constructor(K k, V v) { this.key = k; this.val = v; }
+}
+
+generic List<T> {
+    public T item;
+    constructor(T i) { this.item = i; }
+}
+
+// 1. Parser and Typechecker must handle deep nesting
+Map<string, List<Map<int, string>>> deeplyNested =
+    new Map<string, List<Map<int, string>>>(
+        "root",
+        new List<Map<int, string>>(new Map<int, string>(16, "leaf"))
+    );
+
+println(deeplyNested.key);             // Expected: root
+println(deeplyNested.val.item.val);    // Expected: leaf
+
+// 2. Parser must differentiate right-shift `>>` from generic closures `>>`
+int targetValue = deeplyNested.val.item.key; // 16
+int shiftResult = targetValue >> 2;          // 16 >> 2 = 4
+
+println(shiftResult); // Expected: 4
+println("--- [E2E] generics.mox ---")
+
+generic Box<T> {
+    T value;
+    void update(T newValue) {
+        this.value = newValue;
+    }
+}
+
+Box<int> intBox = new Box<int>();
+intBox.update(100);
+println(intBox.value); // Expected: 100
+
+Box<string> strBox = new Box<string>();
+strBox.update("Generics Work!");
+println(strBox.value); // Expected: Generics Work!
+println("--- [E2E] generic_lifetime_constraints.mox ---")
+
+// A generic class that explicitly requires ARC-managed (shared) or owned types
+generic Container<shared T> {
+    T item;
+}
+
+class User {
+    string name;
+}
+
+void test_generics() {
+    Container<int> c1 = new Container<int>();
+    c1.item = 42;
+    println(c1.item); // Expected: 42
+
+    Container<string> c2 = new Container<string>();
+    c2.item = "Moksha ARC";
+    println(c2.item); // Expected: Moksha ARC
+
+    Container<User> c3 = new Container<User>();
+    c3.item = new User();
+    c3.item.name = "Alice";
+    println(c3.item.name); // Expected: Alice
+}
+
+test_generics();
+println("--- [E2E] generic_stress.mox ---")
+
+generic <T>
+T[] map(T[] arr, (T) => T func) { return arr; } // Stub for test
+
+generic Container<T> {
+    public T value;
+    constructor(T val) {
+        this.value = val;
+    }
+    public T getValue() {
+        return this.value;
+    }
+}
+
+int[] arr = [1, 2, 3];
+
+// Generic inference flowing through a pipe with lambdas
+int[] result = arr |> map((int x) => x + 1);
+println(result[0]); // Expected: 1
+
+// Deeply nested generic resolution and method chaining
+Container<Container<int>> nested = new Container<Container<int>>(new Container<int>(999));
+println(nested.getValue().getValue()); // Expected: 999
+println("--- [E2E] gradient_ownership.mox ---");
+
+class Metric {
+    public int value;
+
+    constructor(int v) {
+        this.value = v;
+    }
+
+    // Operates directly on the 'this' pointer (passed by reference automatically)
+    void read_metric() {
+        println("Inside read_metric (view). Value is: " + this.value);
+    }
+
+    // Mutates the 'this' pointer (mutates the original object)
+    void update_metric(int newVal) {
+        this.value = newVal;
+    }
+}
+
+Metric m = new Metric(50);
+m.read_metric();
+m.update_metric(100);
+println("After update_metric (mut). Value should be 100: " + m.value);
+println("--- [E2E] inheritance.mox ---")
+
+ref class Entity {
+    public string id;
+    constructor(string id) {
+        this.id = id;
+    }
+}
+
+ref class Player(Entity) {
+    public int health;
+    constructor(string name, int hp) {
+        super(name);
+        this.health = hp;
+    }
+    void takeDamage(int amount) {
+        this.health -= amount;
+    }
+}
+
+ref class BaseBox {
+    public int capacity;
+    constructor(int cap) {
+        this.capacity = cap;
+    }
+}
+
+generic <T>
+ref class Box(BaseBox) {
+    public T item;
+    constructor(int cap, T item) {
+        super(cap);
+        this.item = item;
+    }
+    T getItem() {
+        return this.item;
+    }
+}
+
+// 1. Test Standard Inheritance & VTable
+Player p = new Player("Player_1", 100);
+println(p.id);     // Expected: Player_1 (Inherited property)
+println(p.health); // Expected: 100
+p.takeDamage(15);
+println(p.health); // Expected: 85
+
+// 2. Test Generic Inheritance
+Box<string> stringBox = new Box<string>(5, "Secret Item");
+println(stringBox.capacity); // Expected: 5 (Inherited)
+println(stringBox.getItem()); // Expected: Secret Item
+println("--- [E2E] layout_and_bitfields.mox ---")
+
+packed struct EthernetHeader {
+    char[6] dest_mac;
+    char[6] src_mac;
+    unsigned short eth_type;
+}
+
+struct PageTableEntry {
+    unsigned long present    : 1;
+    unsigned long writable   : 1;
+    unsigned long user       : 1;
+    unsigned long pwt        : 1;
+    unsigned long reserved   : 8;
+    unsigned long address    : 52;
+}
+
+align(4096) char[4096] kernel_stack;
+EthernetHeader eth_packet;
+PageTableEntry pte;
+
+void process_hardware() {
+    pte.present = 1;
+    pte.writable = 0;
+    pte.address = 0xFFFFF;
+
+    println(pte.present);  // Expected: 1
+    println(pte.writable); // Expected: 0
+    println(pte.address);  // Expected: 1048575 (0xFFFFF)
+}
+
+process_hardware();
+println("--- [E2E] memory_layout.mox ---")
+
+// Linker placement for Multiboot/UEFI headers
+section(".multiboot") align(4) packed struct MultibootHeader {
+    unsigned int magic;
+    unsigned int flags;
+    unsigned int checksum;
+}
+
+MultibootHeader boot_header;
+
+// Page Table alignment requirement
+align(4096) unsigned long[512] kernel_pml4;
+
+void check_layout() {
+    usize header_size = sizeof(MultibootHeader);
+
+    // 3 unsigned ints * 4 bytes = 12 bytes
+    println(header_size); // Expected: 12
+}
+
+check_layout();
+println("--- [E2E] operator_sharing.mox ---")
+
+class Matrix {
+    public int scalar;
+    constructor(int s) { this.scalar = s; }
+}
+
+void test_explicit_share() {
+    // Standard stack allocation using 'new'
+    Matrix m1 = new Matrix(5);
+
+    // Standard assignment = Deep Copy
+    Matrix m2 = m1;
+    m2.scalar = 10;
+
+    println("Testing deep copy. m1 should remain 5:");
+    println(m1.scalar);
+
+    // To create an alias, the root object must be allocated on the heap!
+    shared Matrix heap_m1 = new Matrix(5);
+
+    // Sharing the pointer (increments ARC, creates perfect alias)
+    shared Matrix m3 = heap_m1;
+
+    // Mutating through the shared reference
+    m3.scalar = 50;
+
+    println("Testing shared handle. Both heap_m1 and m3 should be 50:");
+    println(heap_m1.scalar);
+    println(m3.scalar);
+}
+
+test_explicit_share()
+println("--- [E2E] pretty_print.mox ---");
+
+// ==========================================
+// 1. Built-in Collections (Auto Pretty-Print)
+// ==========================================
+void test_builtins() {
+    println("--- Built-in Collections ---");
+
+    // Arrays (Fixed size)
+    int[5] static_arr = [1, 2, 3, 4, 5];
+    println("Array: " + static_arr);
+
+    // Slices (Dynamic fat-pointers)
+    int[] dynamic_slice = [10, 20, 30, 40, 50];
+    println("Slice: " + dynamic_slice);
+
+    // Tables / Maps
+    table<int, string> dict = { 1: "Alice", 2: "Bob", 3: "Charlie" };
+    println("Table: " + dict);
+
+    // Tables / Maps (any, any implicitly)
+    table dict2 = { 1: "Alice", 2: "Bob", 3: "Charlie" };
+    println("Table2: " + dict2);
+}
+
+test_builtins()
+println("--- [E2E] struct_and_union_layout.mox ---")
+
+// --- 1. Standard Structs ---
+struct StandardHeader {
+    int version;       // 4 bytes
+    unsigned int id;   // 4 bytes
+}
+
+// --- 2. Requested Packed Metadata ---
+packed struct metadata {
+    unsigned int sensor_id; // 4 bytes
+    int timestamp;          // 4 bytes
+    unsigned char active;   // 1 byte
+}
+
+// --- 3. Unions (Memory Overlay) ---
+union ValueOverlay {
+    int int_val;
+    float float_val;
+}
+
+struct DevicePacket {
+    StandardHeader h;
+    metadata m;
+    ValueOverlay v;
+}
+
+void test_physical_layout() {
+    // 1. Initializing Standard Structs
+    StandardHeader header;
+    header.version = 1;
+    header.id = 100;
+    println(header.id); // Expected: 100
+
+    // 2. Accessing Packed Metadata members
+    metadata meta;
+    meta.sensor_id = 42;
+    meta.active = 1_u8;
+    println(meta.sensor_id); // Expected: 42
+
+    // 3. Union Field Overlay Logic
+    unsafe {
+        ValueOverlay data;
+        data.int_val = 0x3F800000; // Bit pattern for 1.0f
+        float check = data.float_val;
+        println(check); // Expected: 1.0
+    }
+}
+
+test_physical_layout();
+println("--- [E2E] systems_and_memory_edge_cases.mox ---");
+
+// ---------------------------------------------------------
+// 1. Struct/Class Member Zero-Initialization
+// ---------------------------------------------------------
+class Vector2 {
+    public int x;
+    public int y;
+    // No constructor provided.
+}
+
+// LAW: Heap/Stack allocations for objects zero-initialize members.
+Vector2 v = new Vector2();
+println("Zero-Init Member (Expected 0):");
+println(v.x);
+
+// ---------------------------------------------------------
+// 2. Numeric Overflow (Two's Complement Wraparound)
+// ---------------------------------------------------------
+int max_int = 2147483647;
+int wrapped = max_int + 1;
+// LAW: Standard arithmetic wraps natively to hardware behavior.
+println("Numeric Wraparound (Expected -2147483648):");
+println(wrapped);
+println("--- [E2E] types_and_scope.mox ---")
+
+// Explicit Type
+int x = 10;
+
+// Scoping & Shadowing
+{
+  int x = 20; // Allowed: shadows outer x
+  println(x); // Expected: 20
+}
+
+println(x); // Expected: 10

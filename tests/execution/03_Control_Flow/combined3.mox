@@ -1,0 +1,747 @@
+﻿println("--- [E2E] break_continue.mox ---")
+
+void test_loop(bool skip_two, bool break_at_four) {
+    int i = 0;
+    int counter = 0;
+
+    while (i < 5) {
+        i = i + 1;
+
+        if (skip_two && i == 2) {
+            continue; // Jumps to loop condition
+        }
+
+        if (break_at_four && i == 4) {
+            break;    // Escapes the loop
+        }
+
+        counter = counter + 1;
+    }
+
+    println(counter);
+}
+
+test_loop(true, false); // Skips i=2. Evaluates 1,3,4,5. Expected: 4
+test_loop(false, true); // Breaks at i=4. Evaluates 1,2,3. Expected: 3
+println("--- [E2E] cast_and_pipe_stress.mox ---")
+
+int processInt(int x) { return x * 2; }
+any processAny(any x) { return x; }
+
+any dynamicVal = 42;
+
+// 1. Functional Cast + Pipe
+int res1 = int(dynamicVal) |> processInt();
+println(res1); // Expected: 84
+
+// 2. Piping directly into a functional cast
+int res2 = 10 |> processAny() |> int();
+println(res2); // Expected: 10
+
+// 3. Precedence collision solved by grouping parentheses
+int res3 = (int(dynamicVal) + 5) |> processInt();
+println(res3); // Expected: 94
+println("--- [E2E] cf_edge_complete.mox ---")
+
+int side_effect(int val) {
+    print(val);
+    return val;
+}
+
+// 1. FOR-IN JUMP SEMANTICS
+// Verifies that 'continue' and 'break' correctly handle iterator advancement
+void test_for_jumps() {
+    int[] arr = [1, 2, 3];
+    int sum_cont = 0;
+    int sum_break = 0;
+
+    // Test Continue
+    for (x in arr) {
+        if (x == 2) continue;
+        sum_cont = sum_cont + x;
+    }
+
+    // Test Break
+    for (x in arr) {
+        if (x == 2) break;
+        sum_break = sum_break + x;
+    }
+
+    println(sum_cont);  // Expected: 4
+    println(sum_break); // Expected: 1
+}
+
+// 2. DEFER + CONTINUE INTERACTION
+void test_defer_continue() {
+    int i = 0;
+    while (i < 2) {
+        defer print(i);
+        i = i + 1;
+        continue; // Must NOT skip the defer registration
+    }
+}
+
+// 4. RETURN IN SWITCH (CFG Convergence)
+int test_return_switch(int val) {
+    switch (val) {
+        case 1:  return 10;
+        default: return 20;
+    }
+    // No trailing return needed; CFG knows this is exhaustive
+}
+
+// 5. BINDING & LIFETIME
+void test_binding() {
+    int x = 100;
+    for (x in [1, 2]) {
+        // Does this modify the outer 'x' or shadow it?
+        // Logic: For-loop variable should be block-scoped (shadowing).
+    }
+    println(x); // Expected: 100
+}
+
+// 6. TERNARY ASSOCIATIVITY (Right-Binding)
+void test_ternary_assoc() {
+    // false ? 1 : (false ? 2 : 3)
+    int res = false ? 1 : false ? 2 : 3;
+    println(res); // Expected: 3
+}
+
+// 7. NESTED DEFER PATHS
+void test_nested_defers(bool cond) {
+    defer print("A");
+    if (cond) {
+        defer print("B");
+        return;
+    }
+    defer print("C");
+}
+// cond=true  -> BA
+// cond=false -> CA
+
+// 8. PIPE GRAMMAR: IDENTIFIER VS CALL
+void test_pipe_grammar() {
+    int f(int n) { return n * 2; }
+
+    // Does |> allow bare identifiers or require call syntax?
+    // Decision: Require call syntax for clarity.
+    int res = 10 |> f();
+    println(res); // Expected: 20
+}
+
+// --- EXECUTION ---
+test_for_jumps();       // 4, 1
+test_defer_continue();  // 12
+println("");
+println(test_return_switch(1)); // 10
+test_binding();         // 100
+test_ternary_assoc();   // 3
+test_nested_defers(true);  // BA
+print("|");
+test_nested_defers(false); // CA
+println("");
+test_pipe_grammar();    // 20
+println("--- [E2E] cf_final_verification.mox ---")
+
+int track(int x) {
+    print(x);
+    return x;
+}
+
+// 1. STRICT DEFER SEMANTICS (Function-Scoped LIFO)
+// Logic: Defers are collected and run in reverse order at function exit.
+void test_defer_loop_return() {
+    int i = 0;
+    while (i < 2) {
+        defer print(i);
+        if (i == 1) return; // Return early on second iteration
+        i = i + 1;
+    }
+}
+// Expected Output: 11
+// Reasoning: Both defers are registered. They must execute in LIFO order upon 'return'.
+
+// 2. SYMMETRIC TERNARY LAZINESS
+void test_ternary_symmetry() {
+    print("True: ");
+    int a = true ? track(1) : track(2);
+    print(" | False: ");
+    int b = false ? track(3) : track(4);
+    println("");
+}
+// Expected Output: True: 1 | False: 4
+
+// 3. DEEP PIPE CHAINING (Associativity Stress)
+void test_deep_pipe() {
+    int add1(int x) { return x + 1; }
+    int res = 1 |> add1() |> add1() |> add1() |> add1() |> add1();
+    println(res);
+}
+// Expected Output: 6
+
+// 4. CONTINUE INSIDE SWITCH INSIDE LOOP
+// Logic: 'continue' skips the rest of the switch AND the rest of the loop iteration.
+void test_switch_continue() {
+    int i = 0;
+    int hits = 0;
+    while (i < 2) {
+        i = i + 1;
+        switch (i) {
+            case 1:
+                continue; // Should jump to loop condition
+        }
+        hits = hits + 1;
+    }
+    println(hits);
+}
+// Expected Output: 1 (Iteration i=1 was skipped by continue)
+
+// 5. DEEPLY NESTED JUMP TARGETS (Loop -> Switch -> Loop)
+void test_nested_jump_resolution() {
+    int outer = 0;
+    while (outer < 1) {
+        switch (1) {
+            case 1:
+                int inner = 0;
+                while (inner < 10) {
+                    inner = inner + 1;
+                    if (inner == 2) break; // MUST break 'inner' loop only
+                }
+                print("InnerBreak-");
+                break; // Breaks the switch
+        }
+        outer = outer + 1;
+        print("OuterEnd");
+    }
+    println("");
+}
+// Expected Output: InnerBreak-OuterEnd
+
+// 6. SHORT-CIRCUIT VALUE VALIDATION
+void test_logic_values() {
+    bool t = true;
+    bool f = false;
+
+    if ((f && track(1) == 1) == false) print("A");
+    if ((t || track(2) == 2) == true)  print("B");
+}
+// Expected Output: AB (No numbers 1 or 2 should be printed)
+
+// 7. SWITCH: DEFAULT-ONLY & NO-FALLTHROUGH
+void test_switch_strict() {
+    // Default-only
+    switch (99) {
+        default: print("Def-");
+    }
+
+    // No-fallthrough enforcement
+    int x = 1;
+    switch (x) {
+        case 1: print("One");
+        // If fallthrough exists, "Two" would print.
+        case 2: print("Two");
+    }
+    println("");
+}
+// Expected Output: Def-One
+
+// 8. EXHAUSTIVENESS (Visual/Manual Verification)
+enum Status { OK, PENDING, FAIL }
+void test_exhaustiveness(Status s) {
+    switch (s) {
+        case Status.OK:      println("OK"); break;
+        case Status.PENDING: println("P"); break;
+        case Status.FAIL:    println("F"); break;
+        // COMPILER CHECK: Comment out one case.
+        // If it still compiles without a 'default', exhaustiveness is failing.
+    }
+}
+
+// EXECUTION
+test_defer_loop_return();     // Output: 11
+println("");
+test_ternary_symmetry();      // Output: True: 1 | False: 4
+test_deep_pipe();             // Output: 6
+test_switch_continue();       // Output: 1
+test_nested_jump_resolution();// Output: InnerBreak-OuterEnd
+test_logic_values();          // Output: AB
+println("");
+test_switch_strict();         // Output: Def-One
+println("--- [E2E] cf_semantic_stress.mox ---")
+
+// 1. NESTED CONTINUE SCOPING
+// Ensures 'continue' targets the correct loop header
+void test_continue_nested() {
+    int i = 0;
+    int hits = 0;
+    while (i < 2) {
+        i = i + 1;
+        int j = 0;
+        while (j < 3) {
+            j = j + 1;
+            if (j == 2) continue; // Must skip j=2 but stay in inner loop
+            hits = hits + 1;
+        }
+    }
+    println(hits); // Expected: 4
+}
+
+// 2. DEFER IN LOOPS (Block-Scoped, Late Evaluation)
+// Logic: Defer runs per-iteration (at block exit). Because Moksha
+// evaluates the AST node at the time of execution (not at declaration),
+// 'i' has already been incremented when the print fires.
+void test_defer_in_loop() {
+    int i = 0;
+    while (i < 3) {
+        defer print(i);
+        i = i + 1;
+    }
+    println("");
+    // Expected Output: 123
+}
+
+// 3. MULTI-RETURN DEFER UNWINDING
+// Logic: Scopes unwind in LIFO order upon hitting a return.
+void test_multi_return_defer(bool branch) {
+    defer print("C");
+    if (branch) {
+        defer print("A");
+        return;
+    }
+    defer print("B");
+    return;
+}
+// Expected (branch=true): AC
+// Expected (branch=false): BC
+
+// 4. TERNARY LAZINESS (Side-Effect Guard)
+// Logic: Short-circuiting prevents the unchosen branch from evaluating.
+int track(int x) {
+    print(x);
+    return x;
+}
+
+void test_ternary_laziness() {
+    int res = true ? track(1) : track(2);
+    // Expected: 1 (Only the true branch evaluates)
+}
+
+// 5. PIPE ASSOCIATIVITY & ORDERING
+int add1(int x) { return x + 1; }
+int pipe_order(int lhs, int rhs) { return lhs + rhs; }
+
+void test_pipe_semantics() {
+    // Associativity: (((1 |> add1) |> add1) |> add1)...
+    int res = 1 |> add1() |> add1();
+    println(res); // Expected: 3
+
+    // Side-effect ordering: LHS must evaluate strictly before RHS arguments
+    track(10) |> pipe_order(track(20));
+    // Expected: 1020
+}
+
+// 6. SWITCH: CORNER CASES & FALLTHROUGH
+enum Color { RED, GREEN, BLUE }
+
+void test_switch_corners(Color c, int val) {
+    // A. Empty Switch (Compiles and runs as a safe NOP)
+    switch (val) {}
+
+    // C. Strict Fallthrough Check
+    switch (1) {
+        case 1: println("Hit 1"); break;
+        case 2: println("Hit 2"); break;
+    }
+}
+
+// 7. BREAK/CONTINUE IN SWITCH-LOOP COMBO
+// Logic: 'continue' inside a switch safely bubbles up to the nearest loop condition.
+void test_loop_switch_interop() {
+    int i = 0;
+    while (i < 1) {
+        i = i + 1;
+        switch (i) {
+            case 1:
+                // Valid in Moksha: Continues the surrounding while loop
+                continue;
+        }
+    }
+}
+
+test_continue_nested();
+test_defer_in_loop();
+test_multi_return_defer(true);
+println("");
+test_ternary_laziness();
+println("");
+test_pipe_semantics();
+println("");
+test_switch_corners(Color.RED, 15);
+println("--- [E2E] control_flow.mox ---")
+
+void test_switch(int val) {
+    switch (val) {
+        case 1: println("One"); break;
+        case 10:20: println("Range 10 to 20"); break;
+        default: println("Other"); break;
+    }
+}
+
+void test_loops_and_defer() {
+    int[] list = [1, 2, 3];
+
+    for (int x in list) {
+        println(x); // Expected: 1 \n 2 \n 3
+    }
+
+    // The defer block MUST execute last before the function returns
+    defer println("Deferred Execution");
+    println("Normal Execution");
+}
+
+test_switch(15); // Expected: Range 10 to 20
+test_switch(99); // Expected: Other
+test_loops_and_defer();
+println("--- [E2E] defer_stress.mox ---")
+
+void test_lifo() {
+    defer println("Third");
+    defer println("Second");
+    println("First");
+}
+// Expected: First, Second, Third
+
+void test_defer_return(bool early) {
+    defer println("Cleanup Done");
+    if (early) return;
+    println("Normal Path");
+}
+
+void test_block_scope() {
+    if (true) {
+        defer println("Block Exit");
+        println("Inside Block");
+    }
+    println("Outside Block");
+}
+// Does Mox run 'Block Exit' here or at function end?
+// Standard 'defer' usually waits for function end.
+
+test_lifo();
+test_defer_return(true);
+test_block_scope();
+println("--- [E2E] diamond.mox ---")
+
+int test_diamond(bool cond) {
+    int x = 0;
+
+    // Standard CFG Branching (If-Else)
+    if (cond) {
+        x = 10;
+    } else {
+        x = 20;
+    }
+
+    // CFG Convergence (Phi Node)
+    return x + 5;
+}
+
+println(test_diamond(true));  // Expected: 15
+println(test_diamond(false)); // Expected: 25
+println("--- [E2E] early_return_cfg.mox ---")
+
+int test_return(bool abort) {
+    int state = 0;
+
+    if (abort) {
+        state = 1;
+        return state; // Branch straight to function epilogue
+    }
+
+    state = 2;
+    return state;
+}
+
+println(test_return(true));  // Expected: 1
+println(test_return(false)); // Expected: 2
+println("--- [E2E] evaluation_order.mox ---")
+
+int track(int val) {
+    print(val + ", ");
+    return val;
+}
+
+void consume(int a, int b, int c) {}
+void consume_two(int a, int b) {}
+
+// Must print 1, then 2, then 3 strictly.
+// If it prints 3, 2, 1, the AST visitor is walking right-to-left.
+consume(track(1), track(2), track(3));
+println();
+
+// Pipe evaluation order
+// track(10) MUST evaluate before track(20) is evaluated
+track(10) |> consume_two(track(20));
+println("--- [E2E] for_in_edge.mox ---")
+
+void test_shadowing() {
+    int x = 100;
+    for (int x in [1, 2]) {
+        println(x); // Should be 1, 2
+    }
+    println(x); // Should still be 100? Or 2? (Scope check)
+}
+
+void test_mutation() {
+    int[] list = [1, 2, 3];
+    for (int val in list) {
+        if (val == 1) {
+            // Can we modify the collection we are iterating?
+            list = [9, 9, 9];
+        }
+        println(val);
+    }
+}
+
+test_shadowing();
+test_mutation();
+println("--- [E2E] for_in_loops.mox ---")
+
+void test_string_iteration() {
+    println("Iterating over String:");
+
+    // 1. String Literal
+    for (ch in "Mox") {
+        println(ch);
+    }
+    // Expected: M \n o \n x
+
+    // 2. String Variable
+    string tech = "AI";
+    for (char c in tech) {
+        println(c);
+    }
+    // Expected: A \n I
+}
+
+void test_array_iteration() {
+    println("Iterating over Array:");
+
+    // 1. Array Literal (Elements only)
+    for (int val in [10, 20]) {
+        println(val);
+    }
+    // Expected: 10 \n 20
+
+    // 2. Array Variable (Index and Elements)
+    int[] nums = [100, 200, 300];
+    for (int idx, int item in nums) {
+        print(idx);
+        print(": ");
+        println(item);
+    }
+    // Expected: 0: 100 \n 1: 200 \n 2: 300
+}
+
+void test_table_iteration() {
+    println("Iterating over Tables:");
+
+    // 1. Typed Table (Keys only)
+    table<string, int> scores = {"Alice": 90, "Bob": 85};
+    for (string name in scores) {
+        println(name);
+    }
+    // Expected (Order may vary): Alice \n Bob
+
+    // 2. Default Table (any, any) (Keys and Values)
+    table metadata = {"version": 1.2, "stable": true};
+    for (string key, any val in metadata) {
+        print(key);
+        print(" -> ");
+        println(val);
+    }
+    // Expected: version -> 1.2 \n stable -> true
+
+    // 3. Table Literal (Direct iteration)
+    for (string k, v in {"ID": 500}) {
+        println(v);
+    }
+    // Expected: 500
+}
+
+test_string_iteration();
+test_table_iteration();
+test_array_iteration();
+println("--- [E2E] loop_switch_complex.mox ---")
+
+void test_nested_break() {
+    int count = 0;
+    while (count < 2) {
+        int inner = 0;
+        while (inner < 10) {
+            if (inner == 1) break; // Must only exit inner loop
+            inner = inner + 1;
+        }
+        count = count + 1;
+    }
+    println(count); // Expected: 2
+}
+
+void test_break_in_switch_in_loop() {
+    int i = 0;
+    int hits = 0;
+    while (i < 2) {
+        i = i + 1;
+        switch (i) {
+            case 1:
+                break; // Should exit Switch, NOT the While loop
+            case 2:
+                hits = hits + 1;
+                break;
+        }
+        hits = hits + 1;
+    }
+    println(hits); // Expected: 3 (1 from case 1 fall-out, 2 from case 2)
+}
+
+void test_switch_fallthrough() {
+    int x = 1;
+    switch (x) {
+        case 1:
+            println("Caught 1");
+            // Should NOT fall through to case 2 automatically
+        case 2:
+            println("Caught 2");
+    }
+}
+
+test_nested_break();
+test_break_in_switch_in_loop();
+test_switch_fallthrough();
+println("--- [E2E] nested_loops.mox ---")
+
+void test_nested() {
+    int i = 0;
+    int total = 0;
+
+    while (i < 3) {
+        int j = 0;
+        while (j < 2) {
+            total = total + 1;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    println(total); // Expected: 6
+}
+
+test_nested();
+println("--- [E2E] pipe.mox ---")
+
+int processNumber(int n) { return n * 2; }
+int mock_length(string s) { return 5; }
+
+// Test pipe with both identifiers and calls
+"hello" |> mock_length() |> println(); // Expected: 5
+
+// Test ternary alongside pipe
+int res = (true ? 100 : 200) |> processNumber();
+println(res); // Expected: 200
+println("--- [E2E] short_circuit.mox ---")
+
+int side_effect(int val) {
+    print("Effect: ");
+    println(val);
+    return val;
+}
+
+void test_logic() {
+    // AND: Second half should NOT run
+    bool a = false && (side_effect(1) > 0);
+
+    // OR: Second half should NOT run
+    bool b = true || (side_effect(2) > 0);
+
+    // Order: Should print 10, then 20
+    bool c = (side_effect(10) > 0) && (side_effect(20) > 0);
+}
+
+test_logic();
+println("--- [E2E] switch_cfg.mox ---")
+
+int test_switch(int val) {
+    int result = 0;
+    switch (val) {
+        case 1:
+            result = 10;
+        case 2:
+            result = 20;
+        default:
+            result = 30;
+    }
+    return result;
+}
+
+println(test_switch(2)); // Expected: 20
+println(test_switch(5)); // Expected: 30
+println("--- [E2E] switch_patterns.mox ---")
+
+enum DeviceState { IDLE, BUSY, ERROR, DISCONNECTED }
+
+void handle_device(DeviceState state) {
+    // Verifies exhaustiveness checking and jump-tables
+    switch (state) {
+        case DeviceState.IDLE:
+            println("Device is ready");
+
+        case DeviceState.BUSY:
+        case DeviceState.ERROR:
+            // Verifies that empty cases fall through correctly
+            println("Action required");
+
+        case DeviceState.DISCONNECTED:
+            println("Disconnected");
+    }
+}
+
+handle_device(DeviceState.IDLE);  // Expected: Device is ready
+handle_device(DeviceState.ERROR); // Expected: Action required
+println("--- [E2E] ternary_and_cast.mox ---")
+
+void test_ternary() {
+    int x = 10;
+    int y = 20;
+
+    // Ternary Operator
+    int max = (x > y) ? x : y;
+    println(max); // Expected: 20
+
+    // Nested Ternary
+    string result = (x == y) ? "equal" : ((x > y) ? "greater" : "lesser");
+    println(result); // Expected: lesser
+}
+
+void test_casting() {
+    int x = 10;
+
+    // Functional Casting Style
+    double d = double(x);
+    println(d); // Expected: 10
+
+    // Template Casting Style
+    int rounded = cast<int>(3.14);
+    println(rounded); // Expected: 3
+}
+
+void test_null_coalescing() {
+    string? name = null;
+    string? validName = "Admin";
+
+    println(name ?? "Guest");        // Expected: Guest
+    println(validName ?? "Guest");   // Expected: Admin
+}
+
+test_ternary();
+test_casting();
+test_null_coalescing();

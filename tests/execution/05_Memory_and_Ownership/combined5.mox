@@ -1,0 +1,1090 @@
+﻿println("--- [E2E] all_pointers.mox ---");
+
+void test_active_pointers() {
+    // 1. Basic Mut Pointers
+    int data = 42;
+    *mut int ptr = &data;
+    *ptr = 100;
+    println(data); // Expected: 100
+
+    // 2. View Pointers
+    *view int v_ptr = &data;
+    println(*v_ptr); // Expected: 100
+
+    // 3. Multi-Level Pointers
+    int deep_data = 999;
+    *mut int l1 = &deep_data;
+    *mut *mut int l2 = &l1;
+    **l2 = 888;
+    println(deep_data); // Expected: 888
+
+    // 4. Function Pointers
+    // Using Moksha's closure syntax as function pointers
+    closure(int, int) -> int add = (int a, int b) => { return a + b; };
+    *view closure(int, int) -> int fn_ptr = &add;
+
+    // Deref and call
+    int res = (*fn_ptr)(10, 20);
+    println(res); // Expected: 30
+}
+
+void test_all_pointers() {
+    println("--- Testing Extensive Pointer Types ---");
+
+    // --- 1. Void and Boolean ---
+    *void void_ptr = null;
+    *bool bool_ptr = null;
+    println(void_ptr);
+    println(bool_ptr);
+
+    // --- 2. Character and Strings ---
+    *char char_ptr = null;
+    *unsigned char uchar_ptr = null;
+    *string str_ptr = null;
+    println(char_ptr);
+    println(uchar_ptr);
+    println(str_ptr);
+
+    // --- 3. Standard Signed Integers ---
+    *short short_ptr = null;
+    *int int_ptr = null;
+    *long long_ptr = null;
+    println(short_ptr);
+    println(int_ptr);
+    println(long_ptr);
+
+    // --- 4. Standard Unsigned Integers ---
+    *unsigned short ushort_ptr = null;
+    *unsigned int uint_ptr = null;
+    *unsigned long ulong_ptr = null;
+    println(ushort_ptr);
+    println(uint_ptr);
+    println(ulong_ptr);
+
+    // --- 5. Floating Point Numbers ---
+    *float float_ptr = null;
+    *double double_ptr = null;
+    println(float_ptr);
+    println(double_ptr);
+
+    // --- 6. Opaque / Dynamic Types ---
+    *any any_ptr = null;
+    println(any_ptr);
+
+    // --- 7. Multi-Level Pointers (Testing prefix capability nesting) ---
+    // Mutable pointer to a read-only pointer to an int
+    *mut *view int double_int_ptr = null;
+
+    // Deep raw pointer
+    * * *void triple_void_ptr = null;
+
+    // Synchronized pointer to a mutable string pointer
+    *lock *mut string thread_safe_str_ptr = null;
+    println(double_int_ptr);
+    println(triple_void_ptr);
+    println(thread_safe_str_ptr);
+
+    // --- 8. Arrays of Pointers (*T[]) ---
+    // Array of 10 read-only int pointers
+    *int[10] array_of_int_ptrs = null;
+
+    // Array of 5 mutable float pointers
+    *mut float[5] array_of_mut_float_ptrs = null;
+    println(array_of_int_ptrs);
+    println(array_of_mut_float_ptrs);
+
+    // --- 9. Pointers to Arrays (* (T[])) ---
+    // Read-only pointer to an array of 10 ints
+    *int[10] ptr_to_int_array = null;
+
+    // Mutable pointer to a 256-byte character buffer
+    *mut char[256] ptr_to_mut_char_buffer = null;
+    println(ptr_to_int_array);
+    println(ptr_to_mut_char_buffer);
+
+    println("All extensive pointer types compiled and printed directly!");
+}
+
+test_active_pointers();
+test_all_pointers();
+println("--- [E2E] arc_destructor_interaction.mox ---")
+
+ref class Mutex {
+    public int id;
+    constructor(int id) { this.id = id; }
+    destructor() { println(`Mutex ${this.id} released system lock`); }
+}
+
+void test_no_elision() {
+    Mutex m = new Mutex(42);
+    {
+        // Because Mutex has a custom destructor with side effects,
+        // ARCAnalyzer CANNOT elide the retain/release pair here.
+        // Copying it creates a second strong reference.
+        Mutex copy = m;
+    }
+    // Block ends -> 'copy' is released, but 'm' still has 1 retain count,
+    // so the destructor does NOT fire yet.
+    println("Scope exited, Mutex still alive");
+}
+
+test_no_elision();
+// Expected: Scope exited, Mutex still alive
+// Expected: Mutex 42 released system lock
+println("--- [E2E] arc_early_return.mox ---")
+
+ref class Resource {
+    public int id;
+    constructor(int id) { this.id = id; }
+    destructor() { println(`Freed Resource ${this.id}`); }
+}
+
+void testEarlyReturn(bool trigger) {
+    Resource r1 = new Resource(1);
+
+    if (trigger) {
+        Resource r2 = new Resource(2);
+        // ARC pass MUST insert a drop for `r2` AND `r1` here before returning.
+        return;
+    }
+
+    // ARC pass MUST insert a drop for `r1` here.
+}
+
+println("Testing true branch:");
+testEarlyReturn(true);
+// Expected: Freed Resource 2
+// Expected: Freed Resource 1
+
+println("Testing false branch:");
+testEarlyReturn(false);
+// Expected: Freed Resource 1
+println("--- [E2E] arc_exception_path.mox ---")
+
+ref class DbConnection {
+    destructor() { println("Database connection closed during unwind"); }
+}
+
+void risky_operation() {
+    println("Doing risky work...");
+    throw 99; // Mock throwing an exception
+}
+
+void test_unwind() {
+    DbConnection conn = new DbConnection();
+
+    try {
+        risky_operation(); // This will generate an 'invoke' instruction
+        println("This will not print");
+    } catch (int e) {
+        println(`Caught exception: ${e}`);
+    }
+
+    // The connection drops AFTER the catch block finishes
+}
+
+test_unwind();
+// Expected: Doing risky work...
+// Expected: Caught exception: 99
+// Expected: Database connection closed during unwind
+println("--- [E2E] arc_loop_elision.mox ---")
+
+ref class PureNode {
+    // No custom destructor, so ARCAnalyzer IS allowed to elide pure pairs!
+    public int data;
+    constructor() { this.data = 100; }
+}
+
+void test_loop_elision() {
+    PureNode s = new PureNode();
+    int i = 0;
+
+    while (i < 10) {
+        // The Inserter will naively put a Retain/Release here.
+        // The Analyzer MUST delete them because 'copy' never escapes the loop
+        // and PureNode has no custom drop() side-effects!
+        PureNode copy = s;
+        i = i + 1;
+    }
+
+    // If it survives the loop without double-freeing or leaking, elision works.
+    println(s.data); // Expected: 100
+}
+
+test_loop_elision();
+println("--- [E2E] arc_pair_elision.mox ---")
+
+ref class CycleState {
+    public int id;
+    constructor(int id) { this.id = id; }
+}
+
+void test_elision_and_phi(bool cond) {
+    CycleState c1 = new CycleState(1);
+    CycleState c2 = new CycleState(2);
+
+    {
+        // ARCInserter WILL add retain(copy) and release(copy) here
+        // ARCAnalyzer WILL delete them because no side-effects happen!
+        CycleState copy = c1;
+    }
+
+    // The naive inserter will retain the result of the Phi node.
+    // The analyzer must see it's never escaped and elide it.
+    CycleState result = cond ? c1 : c2;
+
+    println(result.id);
+}
+
+test_elision_and_phi(true);  // Expected: 1
+test_elision_and_phi(false); // Expected: 2
+println("--- [E2E] arc_weak_refs.mox ---")
+
+ref class Node {
+    public string name;
+    public weak Node? parent; // Weak reference to prevent cycle
+    public Node? child;
+
+    constructor(string n) {
+        this.name = n;
+        this.parent = null;
+        this.child = null;
+    }
+
+    destructor() {
+        println(`Node ${this.name} destroyed`);
+    }
+}
+
+void test_weak_arc() {
+    Node p = new Node("Parent");
+    Node c = new Node("Child");
+
+    // The MIR lowerer must correctly emit weak variants of the ARC instructions
+    c.parent = p;
+    p.child = c;
+
+    println(p.child?.name ?? "null");  // Expected: Child
+
+    // When test_weak_arc returns, 'p' and 'c' go out of scope.
+    // 'c' has 1 strong ref (from p). 'p' has 0 strong refs (only a weak ref from c).
+    // Therefore, 'p' drops, triggering 'c' to drop, successfully resolving the cycle!
+}
+
+test_weak_arc();
+// Expected: Node Parent destroyed
+// Expected: Node Child destroyed
+println("--- [E2E] borrow_of_reference.mox ---")
+
+void test_chain() {
+    int data = 10;
+    *mut int m1 = &data;
+
+    // Reborrow from the reference itself
+    *view int v = &*m1;
+
+    int read = *v;
+    println(read); // Expected: 10
+
+    // 'v' dies here, releasing the view borrow.
+
+    *m1 = 20; // Safe to use m1 again!
+    println(data); // Expected: 20
+}
+
+test_chain();
+println("--- [E2E] borrow_state_transitions.mox ---")
+
+void test_borrow_transitions() {
+    int x = 10;
+
+    // View borrows are established
+    *view int v1 = &x;
+    *view int v2 = &x;
+    int read_val = *v1 + *v2;
+    println(read_val); // Expected: 20
+
+    // Test: *mut is allowed because previous views are dead
+    // NLL Borrow Checker MUST kill v1 and v2 here!
+    *mut int m1 = &x;
+    *m1 = 20;
+
+    println(x); // Expected: 20
+}
+
+test_borrow_transitions();
+println("--- [E2E] conditional_borrows.mox ---")
+
+void test_cfg_borrows(bool cond) {
+    int p = 10;
+
+    if (cond) {
+        *view int v1 = &p;
+        int a = *v1;
+        println(a); // Expected: 10
+    } else {
+        *view int v2 = &p;
+        int b = *v2;
+        println(b); // Expected: 10
+    }
+
+    // Both v1 and v2 have exited their respective lexical blocks.
+    // It is now perfectly safe to mutate 'p'.
+    *mut int m = &p;
+    *m = 20;
+
+    println(p); // Expected: 20
+}
+
+test_cfg_borrows(true);
+test_cfg_borrows(false);
+println("--- [E2E] cross_feature_valid_paths.mox ---")
+
+// Global variable to test valid global escape origins
+int global_val = 100;
+
+*view int get_global_ptr() {
+    return &global_val; // Valid: origin is global, not local stack
+}
+
+class Vector2 {
+    public int x;
+    public int y;
+
+    constructor(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+void test_reborrow_chaining() {
+    println("Category 1: Reborrow Chaining");
+    int x = 10;
+    *mut int m1 = &x;           // Primary mutable borrow [cite: 30]
+    *view int v1 = &*m1;        // Reborrow mut as view
+    *view int v2 = &*v1;        // Transitive reborrow (depth 2)
+
+    println(*v2);               // Expected: 10
+}
+
+void test_mixed_alias() {
+    println("Category 2: Mixed Pointer and Reference Alias");
+    int x = 10;
+    *mut int p = &x;            // Pointer abstraction [cite: 30]
+    // Assuming 'ref' is a supported alias abstraction in Moksha
+    // ref int r = x;
+
+    *p = 20;                    // Mutation via pointer
+    println(x);                 // Expected: 20
+}
+
+void test_temporary_borrow() {
+    println("Category 3: Inline Temporary Borrows");
+    int x = 50;
+    // Borrowing directly inside an expression
+    println(*(&x));             // Expected: 50
+}
+
+void test_lock_borrow_interaction() {
+    println("Category 4: Lock + Borrow Interaction");
+    lock int x = 10;
+    *lock int p = &x;
+    lock (p) {
+        *view int v = &*p;
+        println(*v);            // Expected: 10
+    }
+}
+
+void test_valid_return_reuse() {
+    println("Category 5: Valid Function Return Reuse");
+    *view int p = get_global_ptr();
+    println(*p);                // Expected: 100
+}
+
+void test_definite_assignment_borrow() {
+    println("Category 6: Definite Assignment + Borrow");
+    int x;
+    x = 42;                     // Initialized after declaration
+    *view int v = &x;           // Valid: x is now definitely assigned [cite: 31]
+    println(*v);                // Expected: 42
+}
+
+void test_disjoint_borrows() {
+    println("Category 7: Disjoint Borrows (NLL Sensitivity)");
+    // Using Vector2 to test field-level disjointness [cite: 44, 45]
+    Vector2 p = new Vector2(0, 0);
+
+    {
+        *mut int mx = &p.x;
+        *mx = 1;                // Borrow of p.x ends at block exit
+    }
+
+    {
+        *mut int my = &p.y;
+        *my = 2;                // Valid reuse of p's origin for disjoint field
+    }
+    println(p.x + p.y);         // Expected: 3
+}
+
+void test_pointer_closure_capture() {
+    println("Category 8: Pointer Capture in Closure");
+    int x = 77;
+    *view int p = &x;           // [cite: 31]
+
+    // Capture the pointer itself by value into the closure [cite: 21, 27]
+    closure() -> int f = () => {
+        return *p;
+    };
+
+    println(f());               // Expected: 77
+}
+
+// --- Execution ---
+test_reborrow_chaining();
+test_mixed_alias();
+test_temporary_borrow();
+test_lock_borrow_interaction();
+test_valid_return_reuse();
+test_definite_assignment_borrow();
+test_disjoint_borrows();
+test_pointer_closure_capture();
+println("--- [E2E] definite_assignment.mox ---")
+
+void test_assignments() {
+    // Valid: Control flow guarantees assignment
+    int x;
+    if (true) {
+        x = 10;
+    } else {
+        x = 20;
+    }
+    println(x); // Expected: 10
+
+    // Valid: Loop assignment with guaranteed entry
+    int y;
+    do {
+        y = 5;
+        break;
+    } while (true);
+
+    println(y); // Expected: 5
+}
+
+test_assignments();
+println("--- [E2E] destructors.mox ---")
+
+// 1. Define global mock IO
+class IO {
+    public any open(string path, string mode) { return null; }
+}
+
+void mockClose(any handle) {
+    println("Closed hardware handle successfully");
+}
+
+// 2. This is now a true Global Variable
+IO io = new IO();
+
+ref class Resource {
+    public any handle;
+
+    constructor() {
+        // 3. This successfully looks up 'io' in the global scope!
+        this.handle = io.open("file.txt", "r");
+    }
+
+    destructor() {
+        mockClose(this.handle); // Call the renamed function safely
+    }
+}
+
+void test_global_io() {
+    Resource r = new Resource();
+}
+
+test_global_io();
+// Expected: Closed hardware handle successfully
+println("--- [E2E] destructors_lowering.mox ---")
+
+ref class File {
+    // Custom destructor hook
+    destructor() {
+        println("File closed via destructor");
+    }
+}
+
+void test_destructors() {
+    File f = new File();
+    println("File created");
+}
+
+test_destructors();
+// Expected: File created
+// Expected: File closed via destructor
+println("--- [E2E] destructor_stress.mox ---")
+
+generic <T>
+ref class Resource {
+    public T data;
+    constructor(T d) {
+        this.data = d;
+    }
+    destructor() {
+       println("Resource Destroyed");
+    }
+}
+
+ref class Base {
+    destructor() {
+        println("Base cleaned");
+    }
+}
+
+ref class Derived(Base) {
+    destructor() {
+        println("Derived cleaned");
+    }
+}
+
+void run_stress_test() {
+    Resource<int> res = new Resource<int>(10);
+
+    try {
+        Derived d = new Derived();
+        throw 1;
+        // AST must support unwinding `d` and `res` here
+    } catch (int e) {
+        println("Caught exception");
+    }
+}
+
+run_stress_test();
+// Expected: Derived cleaned
+// Expected: Base cleaned
+// Expected: Caught exception
+// Expected: Resource Destroyed
+println("--- [E2E] destructor_unwind_order.mox ---")
+
+ref class Tracer {
+    public int id;
+    constructor(int id) {
+        this.id = id;
+        println(`Created ${this.id}`);
+    }
+    destructor() {
+        println(`Destroyed ${this.id}`);
+    }
+}
+
+void test_unwind_order() {
+    try {
+        Tracer t1 = new Tracer(1);
+        Tracer t2 = new Tracer(2);
+        Tracer t3 = new Tracer(3);
+
+        // Exception thrown!
+        // The AST must generate cleanup blocks that print LIFO
+        throw 99;
+
+    } catch (int e) {
+        println("Caught exception");
+    }
+}
+
+test_unwind_order();
+// Expected: Created 1
+// Expected: Created 2
+// Expected: Created 3
+// Expected: Destroyed 3
+// Expected: Destroyed 2
+// Expected: Destroyed 1
+// Expected: Caught exception
+println("--- [E2E] lifetime_scope_release.mox ---")
+
+void test_lifetime_release() {
+    int p = 100;
+
+    // Scope 1: View borrow
+    // Lexically alive until end of function, but NLL kills it after 'x' is assigned.
+    *view int v = &p;
+    int x = *v;
+    println(x); // Expected: 100
+
+    // Scope 2: Mut borrow
+    // Perfectly safe because 'v' is dead.
+    *mut int m = &p;
+    *m = 200;
+    println(p); // Expected: 200
+
+    // Final: Mut borrow
+    // Perfectly safe because the previous 'm' was popped successfully.
+    *mut int m2 = &p;
+    *m2 = 300;
+    println(p); // Expected: 300
+}
+
+test_lifetime_release();
+println("--- [E2E] loop_borrow_release.mox ---")
+
+void test_loop_lifetimes() {
+    int p = 10;
+
+    while (p < 15) {
+        // Safe: 'm' dies at the end of the block, so the next iteration
+        // can safely take a new *mut borrow.
+        *mut int m = &p;
+        *m = *m + 1;
+    }
+
+    println(p); // Expected: 15
+
+    // Safe: The loop is completely over, the block is popped.
+    *mut int m2 = &p;
+    *m2 = 30;
+
+    println(p); // Expected: 30
+}
+
+test_loop_lifetimes();
+println("--- [E2E] memory_qualifiers.mox ---")
+
+void test_qualifiers() {
+    // 1. Storage Declarations
+    int base_val = 100;
+    int mut_val = 200;
+    lock int shared_data = 300;
+
+    // 2. Pointers & References
+    *mut int mut_ptr = &mut_val;
+    &mut int mut_ref = mut_val;
+
+    // Read-only views allow multiple aliases, so these are fine in the same scope!
+    *view int view_ptr = &base_val;
+    &view int view_ref = base_val;
+
+    *lock int shared_ptr = &shared_data;
+    int safely_copied_val;
+
+    // 3. Lock Statement blocks
+    lock (shared_ptr) {
+        *shared_ptr = *shared_ptr + 1;
+        safely_copied_val = *shared_ptr;
+    }
+
+    println(safely_copied_val); // Expected: 301
+}
+
+test_qualifiers();
+println("--- [E2E] nll_cfg_join.mox ---")
+
+void test_join(bool cond) {
+    int data = 100;
+
+    if (cond) {
+        *mut int m = &data;
+        *m = 200;
+        // NLL: 'm' dies here at the end of the true branch
+    }
+
+    // NLL: It is perfectly safe to borrow 'data' again because 'm'
+    // did not survive the CFG join point!
+    *mut int m2 = &data;
+    *m2 = 300;
+
+    println(data);
+}
+
+test_join(true);  // Expected: 300
+test_join(false); // Expected: 300
+println("--- [E2E] nll_drop_order.mox ---")
+
+class Resource {
+    public int id;
+    constructor(int id) { this.id = id; }
+    destructor() {
+        println(`Dropping Resource ${this.id}`);
+    }
+}
+
+void test_drop_order() {
+    // We declare 'a' first, then 'b'.
+    // The AST must drop them in strict LIFO order (b, then a).
+    Resource a = new Resource(1);
+    Resource b = new Resource(2);
+
+    // Take an immutable borrow of 'a'
+    *view Resource v = &a;
+    println(`Borrowed Resource ${(*v).id}`);
+}
+
+test_drop_order();
+// Expected: Borrowed Resource 1
+// Expected: Dropping Resource 2
+// Expected: Dropping Resource 1
+println("--- [E2E] nll_exception_paths.mox ---")
+
+void test_exception() {
+    int data = 42;
+    try {
+        *mut int m = &data;
+        throw 1;
+        // NLL MUST kill 'm' on the unwind edge!
+    } catch (int e) {
+        // SUCCESS: previous borrow was cleanly destroyed by the throw.
+        *mut int m2 = &data;
+        *m2 = 99;
+    }
+
+    println(data); // Expected: 99
+}
+
+test_exception();
+println("--- [E2E] nll_match_branches.mox ---")
+
+void test_switch_borrow(int state) {
+    int shared_data = 100;
+
+    switch (state) {
+        case 1: {
+            *mut int m1 = &shared_data;
+            *m1 = 1;
+            break;
+        }
+        case 2: {
+            // Perfectly safe! NLL proves m1 cannot exist in this branch.
+            *mut int m2 = &shared_data;
+            *m2 = 2;
+            break;
+        }
+    }
+
+    println(shared_data);
+}
+
+test_switch_borrow(1); // Expected: 1
+test_switch_borrow(2); // Expected: 2
+println("--- [E2E] nll_reassignment_kill.mox ---")
+
+void test_reassignment() {
+    int x = 10;
+    int y = 20;
+
+    *view int ptr = &x; // Borrow x
+    ptr = &y;           // Reassign pointer to y. Borrow on x is now DEAD!
+
+    // This MUST succeed because 'x' is no longer borrowed by 'ptr'
+    *mut int mut_x = &x;
+    *mut_x = 99;
+
+    println(x);     // Expected: 99
+    println(*ptr);  // Expected: 20
+}
+
+test_reassignment();
+println("--- [E2E] nll_struct_field_borrows.mox ---")
+
+struct Point {
+    int x;
+    int y;
+}
+
+void test_fields() {
+    Point p;
+    p.x = 0;
+    p.y = 0;
+
+    // NLL must allow simultaneous mutable borrows of DIFFERENT struct fields
+    *mut int mx = &p.x;
+    *mut int my = &p.y;
+
+    *mx = 10;
+    *my = 20;
+
+    println(p.x); // Expected: 10
+    println(p.y); // Expected: 20
+}
+
+test_fields();
+println("--- [E2E] null_safety.mox ---")
+
+void test_nullability() {
+    // Non-nullable by default
+    string name = "Moksha";
+
+    // Nullable type
+    string? nick = null;
+    string? valid_nick = "Compiler";
+
+    // Null Coalescing
+    string display1 = nick ?? "Guest";
+    string display2 = valid_nick ?? "Guest";
+
+    println(name);     // Expected: Moksha
+    println(display1); // Expected: Guest
+    println(display2); // Expected: Compiler
+}
+
+test_nullability();
+println("--- [E2E] ownership_types.mox ---")
+
+void test_memory_types() {
+    int ref_count = 0;
+
+    // Proves the frontend parses '&int?' correctly and evaluates it to null.
+    // (A nullable view borrow).
+    *view int? borrowed = null;
+
+    int val = 42;
+    borrowed = &val;
+
+    println(*borrowed ?? -1); // Expected: 42
+}
+
+test_memory_types();
+println("--- [E2E] pass_by_reference.mox ---")
+
+// Pass by Value (Default)
+void modifyValue(int val) {
+    val = 100;
+}
+
+// Pass by Reference
+void modifyRef(ref int ptr) {
+    ptr = 100;
+}
+
+// Multiple Reference Parameters
+void swap(ref int a, ref int b) {
+    int temp = a;
+    a = b;
+    b = temp;
+}
+
+void test_references() {
+    int x = 10;
+    int y = 20;
+
+    modifyValue(x);
+    println(x); // Expected: 10 (unchanged)
+
+    modifyRef(x);
+    println(x); // Expected: 100 (changed)
+
+    swap(x, y);
+    println(x); // Expected: 20
+    println(y); // Expected: 100
+}
+
+test_references();
+println("--- [E2E] pointers.mox ---")
+
+void test_pointers() {
+    int val = 42;
+
+    // 1. Address-Of Operator (&)
+    // Yields a mutable pointer because the storage is mutable
+    *mut int ptr = &val;
+
+    // 2. Dereference Operator (*)
+    // Safe to write because we hold the *mut capability
+    unsafe {
+        *ptr = 100;
+        int read_val = *ptr;
+        println(read_val); // Expected: 100
+    }
+
+    // 3. Pointer Arithmetic
+    // Math on a *mut pointer yields another *mut pointer
+    unsafe {
+        *mut int next_ptr = ptr + 1;
+        *mut int prev_ptr = next_ptr - 1;
+
+        // 4. Pointer Difference
+        isize diff = next_ptr - ptr;
+        println(diff); // Expected: 1
+
+        // Verify pointer math perfectly round-trips back to the original value
+        println(*prev_ptr); // Expected: 100
+    }
+}
+
+test_pointers();
+println("--- [E2E] pointer_provenance.mox ---")
+
+void test_pointer_math() {
+    // 1. Allocate some legitimate memory to test with
+    int target = 42;
+    *mut int legitimate_ptr = &target;
+
+    // 2. Cast pointer to an integer address (provenance stripping)
+    usize phys_addr = cast<usize>(legitimate_ptr);
+
+    // 3. Cast back to a pointer
+    *view int ptr = cast<*view int>(phys_addr);
+
+    // 4. Dereference the round-tripped pointer
+    println(*ptr); // Expected: 42
+
+    unsafe {
+        // Unaligned Load/Store verification
+        // Create an arbitrary address offset (simulating hardware memory-mapping)
+        // We won't actually dereference it to avoid segfaulting on your OS,
+        // but we verify the math works correctly.
+        *mut unsigned int unaligned = cast<*mut unsigned int>(phys_addr + 1);
+
+        usize new_addr = cast<usize>(unaligned);
+        println(new_addr == phys_addr + 1); // Expected: true
+    }
+}
+
+test_pointer_math();
+println("--- [E2E] safety_and_types.mox ---")
+
+// --- 1. Type Aliasing ---
+// Verifies 'using' alias registration in the Symbol Table
+using addr_t = usize;
+using status_t = int;
+
+// To make this safe for E2E execution without segfaulting,
+// we will mock the VGA buffer address using a local variable's memory address.
+unsigned int dummy_vga_buffer = 0_u32;
+*mut unsigned int mock_ptr = &dummy_vga_buffer;
+addr_t vga_buffer_addr = cast<usize>(mock_ptr);
+
+void kernel_init() {
+    // --- 2. Raw Pointers & Unsafe Blocks ---
+    *mut unsigned int ptr = cast<*mut unsigned int>(vga_buffer_addr);
+
+    unsafe {
+        *ptr = 0x0F41_u32; // Legal inside unsafe block because ptr is *mut
+    }
+
+    println(dummy_vga_buffer); // Expected: 3905 (which is 0x0F41 in decimal)
+
+    // --- 3. Mutability Model ---
+    // Verifies aliasing rules for lock, mut, and view
+    int counter = 0;
+
+    // Correctly apply view to a reference/pointer, not a value
+    *view int v = &counter;
+    println(*v); // Expected: 0
+
+    lock int static_val = 100;
+
+    // Proves lock variables can only be mutated inside a synchronized block
+    lock (&static_val) {
+        static_val = 200;
+    }
+    println(static_val); // Expected: 200
+}
+
+kernel_init();
+println("--- [E2E] scope_stress.mox ---")
+
+int x = 100; // Global/Module scope
+
+void run_scope_stress() {
+    println(x); // Expected: 100
+
+    // Testing top-level block scope shadowing
+    {
+        int x = 50; // Shadows global
+        println(x); // Expected: 50
+
+        {
+            int x = 25; // Shadows local block
+            println(x); // Expected: 25
+
+            for (int x in [1, 2, 3]) { // Shadows outer block
+                println(x);
+                // Expected: 1
+                // Expected: 2
+                // Expected: 3
+
+                closure(int) -> int clos = (int x) => { // Shadows loop variable
+                    int x = 5; // Shadows lambda param
+                    return x;
+                };
+
+                // Should completely ignore the passed 99 and the loop variable
+                println(clos(99)); // Expected: 5
+            }
+
+            // Verifying the loop didn't permanently overwrite the block variable
+            println(x); // Expected: 25
+        }
+        println(x); // Expected: 50
+    }
+    println(x); // Expected: 100
+}
+
+run_scope_stress();
+println("--- [E2E] shadowing_borrows.mox ---")
+
+void test_shadowing() {
+    int p = 42;
+    *view int v = &p;
+
+    // Shadowing the variable name 'v' with another *view is perfectly fine
+    // because multiple shared reads are allowed by the mutability matrix.
+    // The previous 'v' becomes inaccessible lexically, but the borrow checker
+    // safely tracks both until they naturally die.
+    *view int v = &p;
+
+    int x = *v;
+
+    println(x); // Expected: 42
+}
+
+test_shadowing();
+// ==========================================
+// File: Valid\valid_aliasing_and_cycles.mox
+// ==========================================
+
+println("--- [E2E] valid_aliasing_and_cycles.mox ---")
+
+// 1. SELF-REFERENTIAL STRUCTURE (Leak / Cycle Test)
+// PASS (Runtime Check): Ensures the ARC system does not crash or infinite loop when a strong cycle exists.
+// Note: This WILL leak memory unless explicitly broken, but it should compile and run without segfaulting.
+ref class Node {
+    public Node? self_ref;
+    constructor() {}
+}
+
+void test_self_reference_cycle() {
+    Node n = new Node();
+    n.self_ref = n; // Strong reference cycle
+    println("Cycle Created");
+}
+
+// 2. MUTATION THROUGH ALIAS CHAIN (Valid Deep Aliasing)
+// PASS: Tracking multiple mutable pointers derived from the same source is valid
+// as long as their usage doesn't violate active borrows.
+void test_alias_chain_mutation() {
+    int x = 10;
+    *mut int p1 = &x;
+    *mut int p2 = p1; // Aliasing
+
+    *p1 = 20;
+    *p2 = 30; // Valid: Reassigning via alias
+    println(x); // Expected: 30
+}
+
+// 3. PARTIAL MOVES / SPLITTING
+// PASS: Validates field-level disjointness analysis.
+class SplitStruct { public int a; public int b; }
+
+void test_partial_splitting() {
+    SplitStruct s = new SplitStruct();
+    s.a = 1;
+    s.b = 2;
+
+    int x = s.a; // Read from field A
+    s.b = 3;     // Mutate field B
+    println(x + s.b); // Expected: 4 (No conflict, fields are disjoint)
+}
+
+// --- Execution ---
+test_self_reference_cycle();
+test_alias_chain_mutation();
+test_partial_splitting();

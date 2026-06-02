@@ -1,0 +1,466 @@
+﻿println("--- [E2E] exceptions.mox ---")
+
+void riskyOperation() {
+    println("Attempting risky operation...");
+    if (true) throw "Something went wrong";
+}
+
+void test_top_level_defer() {
+    // Defer at the top of the function
+    defer println("Cleaning up scope...");
+
+    try {
+        riskyOperation();
+    } catch (string e) {
+        println(`Caught string exception: ${e}`);
+    } finally {
+        println("Finally block executed.");
+    }
+}
+
+test_top_level_defer();
+// Expected: Attempting risky operation...
+// Expected: Caught string exception: Something went wrong
+// Expected: Finally block executed.
+// Expected: Cleaning up scope...
+println("--- [E2E] exception_async_and_pipelines.mox ---")
+
+async void yield() {}
+
+// 1. ASYNC + FINALLY
+async void async_thrower() {
+    await yield();
+    throw "Async Boom";
+}
+
+async void test_async_finally() {
+    try {
+        await async_thrower();
+    } finally {
+        // MUST run even though the throw happened across a cooperative suspension point
+        println("Async finally executed");
+    }
+}
+
+// 2. PIPELINE SHORT-CIRCUITING
+int safe_call(int x) { return x + 1; }
+int risky_call(int x) { throw "Pipeline Break"; }
+int unreachable_call(int x) { println("SHOULD NOT RUN"); return x; }
+
+void test_pipeline_eval() {
+    try {
+        // Strict Left-to-Right evaluation.
+        // risky_call throws, so unreachable_call is never evaluated.
+        10 |> safe_call() |> risky_call() |> unreachable_call();
+    } catch (string e) {
+        println("Pipeline safely halted");
+    }
+}
+
+test_pipeline_eval();
+test_async_finally()
+println("--- [E2E] exception_async_panic_interop.mox ---")
+
+async void yield() {}
+
+// 1. ASYNC EXCEPTION PROPAGATION
+async void failing_task() {
+    await yield();
+    throw "Async Failure";
+}
+
+async void test_async_throw() {
+    try {
+        await failing_task(); // Awaiting a failed task unboxes the exception and throws it here
+    } catch (string e) {
+        println("Caught async: " + e); // Expected: Caught async: Async Failure
+    }
+}
+
+// 2. THE PANIC BRIDGE
+void test_panic_vs_throw() {
+    try {
+        // Spec Decision: panics are FATAL unrecoverable errors (like OOM or OutOfBounds).
+        // They CANNOT be caught by a standard catch block.
+        // panic("Fatal Memory Corruption");
+        println("Panic bypassed");
+    } catch (any e) {
+        println("Should never reach here if panic() is called");
+    }
+}
+
+// Execution requires an async runner, but tests the syntax/semantics
+test_async_throw();
+test_panic_vs_throw();
+println("--- [E2E] exception_borrow_release.mox ---")
+
+void test_exception_unwind() {
+    int p = 100;
+
+    try {
+        *view int v = &p;
+        if (p == 100) {
+            throw 1;
+        }
+        // NLL 'v' is destroyed during the unwind
+    } catch (int e) {
+        // Safe! The 'try' scope was popped, so 'p' is Unborrowed.
+        // If the compiler fails to release the borrow on the unwind edge,
+        // the borrow checker will fail compilation here.
+        *mut int m = &p;
+        *m = 200;
+        println("Borrow released, mutated successfully.");
+    }
+
+    println(p); // Expected: 200
+}
+
+test_exception_unwind();
+println("--- [E2E] exception_control_flow_overrides.mox ---")
+
+// 1. CONTROL FLOW INTERRUPTION INSIDE TRY
+int test_return_triggers_finally() {
+    int x = 0;
+    try {
+        return 10; // Breaks control flow
+    } finally {
+        x = 5;     // MUST execute before the return propagates
+        println("Finally ran: " + string(x));
+    }
+}
+
+// 2. FINALLY OVERRIDING AN EXCEPTION
+int test_finally_override() {
+    try {
+        throw "Initial Error";
+    } finally {
+        // Spec Decision: A return inside a finally block SUPPRESSES the unwinding exception.
+        return 42;
+    }
+}
+
+// 3. DOUBLE FAULT (EXCEPTION DURING DEFER)
+void test_double_fault() {
+    try {
+        defer {
+            throw "Defer Error"; // Throwing while already unwinding
+        }
+        throw "Original Error";
+    } catch (string e) {
+        // Spec Decision: The most recent exception (Defer Error) overwrites the previous one.
+        println("Caught: " + e); // Expected: Caught: Defer Error
+    }
+}
+
+println(test_return_triggers_finally()); // Expected: Finally ran: 5 \n 10
+println(test_finally_override());        // Expected: 42
+test_double_fault();
+println("--- [E2E] exception_cross_frame_cleanup.mox ---")
+
+// 1. CROSS-FUNCTION BOUNDARY UNWINDING
+void inner_throw() {
+    throw 42;
+}
+
+void outer_resource_holder(*mut int state) {
+    // This defer represents ARC decrements or lock releases
+    defer {
+        *state = 2; // Marks that cleanup ran
+    }
+    *state = 1; // Marks that resource is held
+    inner_throw();
+}
+
+void test_cross_frame_unwind() {
+    int state = 0;
+    try {
+        outer_resource_holder(&state);
+    } catch (int e) {
+        // If cleanup failed, state would still be 1.
+        println("State after catch: " + string(state)); // Expected: 2
+    }
+}
+
+// 2. EXCEPTION EQUALITY AND IDENTITY
+void test_exception_equality() {
+    int original = 999;
+    try {
+        throw original;
+    } catch (int caught) {
+        // Ensures the caught value preserves value-equality
+        println(original == caught); // Expected: true
+    }
+}
+
+test_cross_frame_unwind();
+test_exception_equality();
+println("--- [E2E] exception_dispatch_and_rethrow.mox ---")
+
+// 1. TYPE MISMATCH & MULTI-CATCH DISPATCH
+void test_multi_catch() {
+    int result = 0;
+    try {
+        throw "StringError"; // Throwing a string
+    } catch (int e) {
+        result = 1; // Should skip
+    } catch (string e) {
+        result = 2; // Should match here!
+    } catch (any e) {
+        result = 3; // Fallback
+    }
+    println(result); // Expected: 2
+}
+
+// 2. EXCEPTION IN CATCH & RETHROW
+void test_rethrow_semantics() {
+    try {
+        try {
+            throw 404;
+        } catch (int e) {
+            // Rethrow the exact same exception.
+            // BACKEND NOTE: Must preserve original stack trace if supported.
+            throw e;
+        }
+    } catch (int e) {
+        println("Caught rethrow: " + string(e)); // Expected: Caught rethrow: 404
+    }
+}
+
+// 3. THROWING A NEW EXCEPTION FROM CATCH
+void test_chain_throw() {
+    try {
+        try {
+            throw 1;
+        } catch (int e) {
+            throw "Escalated"; // Throwing a COMPLETELY different type
+        }
+    } catch (string e) {
+        println(e); // Expected: Escalated
+    }
+}
+
+test_multi_catch();
+test_rethrow_semantics();
+test_chain_throw();
+println("--- [E2E] exception_edges.mox ---")
+
+void risky_function(bool fail) {
+    if (fail) {
+        throw 404; // Throw an integer error code
+    }
+    println("Function completed successfully");
+}
+
+void test_exceptions() {
+    try {
+        risky_function(true);
+        println("This should not print");
+    } catch (int e) {
+        println(`Caught error code: ${e}`);
+    }
+
+    try {
+        risky_function(false);
+    } catch (int e) {
+        println("This should not print");
+    }
+}
+
+test_exceptions();
+// Expected: Caught error code: 404
+// Expected: Function completed successfully
+println("--- [E2E] exception_execution_ordering.mox ---")
+
+// 1. LIFO DEFER ORDERING
+int test_stacked_defers() {
+    int state = 0;
+    try {
+        defer { state = state * 2; } // Runs SECOND (LIFO)
+        defer { state = state + 5; } // Runs FIRST (LIFO)
+        throw "Trigger Unwind";
+    } catch (string e) {
+        // Expected math: (0 + 5) * 2 = 10
+        return state;
+    }
+}
+
+// 2. DEFER INSIDE FINALLY
+void test_defer_in_finally() {
+    int x = 0;
+    try {
+        throw "Error";
+    } finally {
+        defer {
+            x = 2;
+            println("Inner defer ran: " + string(x));
+        }
+        x = 1;
+        println("Finally block executing: " + string(x));
+        // The defer inside here MUST run when the finally block exits,
+        // BEFORE the exception resumes unwinding to the outer scope.
+    }
+}
+
+println(test_stacked_defers()); // Expected: 10
+test_defer_in_finally();
+// Expected Output:
+// Finally block executing: 1
+// Inner defer ran: 2
+println("--- [E2E] exception_flow.mox ---")
+
+int riskyCall(int x) {
+    println(`riskyCall(${x})`);
+    throw 1;
+}
+
+int safeCall(int x) {
+    println(`safeCall(${x})`);
+    return x;
+}
+
+void run_flow() {
+    try {
+        defer println("Deferred 1");
+
+        // Pipe syntax passing 'int' into 'safeCall' then 'riskyCall'
+        10 |> safeCall() |> riskyCall();
+
+    } catch (int e) {
+        try {
+            defer println("Deferred 2");
+            riskyCall(0);
+        } catch (int inner) {
+            println("Recovered");
+        }
+    } finally {
+        safeCall(1);
+    }
+}
+
+run_flow();
+// Expected: safeCall(10)
+// Expected: riskyCall(10)
+// Expected: Deferred 1
+// Expected: riskyCall(0)
+// Expected: Deferred 2
+// Expected: Recovered
+// Expected: safeCall(1)
+println("--- [E2E] exception_loops_and_overrides.mox ---")
+
+// 1. EXCEPTION + LOOPS (Break/Continue)
+int test_loop_break() {
+    int cleanup_count = 0;
+    while (true) {
+        try {
+            break; // Exiting the loop
+        } finally {
+            cleanup_count = cleanup_count + 1; // MUST execute before break resolves
+        }
+    }
+    return cleanup_count;
+}
+
+// 2. EXCEPTION DURING FINALLY
+void test_throw_inside_finally() {
+    try {
+        try {
+            throw "Original Error";
+        } finally {
+            throw "Finally Override Error"; // Thrown while unwinding
+        }
+    } catch (string e) {
+        // The newest exception wins and replaces the original.
+        println("Caught: " + e); // Expected: Caught: Finally Override Error
+    }
+}
+
+println(test_loop_break()); // Expected: 1
+test_throw_inside_finally();
+println("--- [E2E] exception_memory_stack_stress.mox ---")
+
+// 1. STRUCT PAYLOADS (Value vs Reference Semantics)
+struct HttpError {
+    int code;
+    string message;
+}
+
+void test_struct_throw() {
+    try {
+        HttpError err;
+        err.code = 500;
+        err.message = "Server Down";
+
+        throw err;
+    } catch (HttpError e) {
+        println(string(e.code) + ": " + e.message); // Expected: 500: Server Down
+    }
+}
+
+// 2. DEEP STACK UNWINDING
+void deep_recursion(int depth) {
+    defer { /* Dummy defer to force LLVM landingpad generation */ }
+
+    if (depth == 0) {
+        throw "Bottom of the stack";
+    }
+    deep_recursion(depth - 1);
+}
+
+void test_deep_unwind() {
+    try {
+        // Unwind 1,000 frames. If zero-cost exceptions are implemented correctly,
+        // this is slow but will not blow the C-stack or segfault.
+        deep_recursion(1000);
+    } catch (string e) {
+        println("Safely caught: " + e);
+    }
+}
+
+test_struct_throw();
+test_deep_unwind();
+println("--- [E2E] exception_value_semantics.mox ---")
+
+struct StatefulError {
+    int code;
+}
+
+void test_exception_identity() {
+    StatefulError e;
+    e.code = 404;
+
+    try {
+        throw e; // Creates a copy/move into the LLVM unwind payload
+    } catch (StatefulError caught) {
+        // Mutating the local variable 'e' should NOT mutate the caught payload
+        e.code = 500;
+
+        println("Caught code: " + string(caught.code)); // Expected: 404
+        println("Local code: " + string(e.code));       // Expected: 500
+    }
+}
+
+test_exception_identity();
+println("--- [E2E] zero_cost_exceptions.mox ---")
+
+void dangerous_func(bool boom) {
+    if (boom) throw 99;
+    println("Safe execution");
+}
+
+void test_lowering() {
+    try {
+        // Because this is inside a try block, the backend MUST lower
+        // this to an LLVM 'invoke' instruction with a normal/unwind destination.
+        dangerous_func(true);
+    } catch (int e) {
+        println(`Caught in invoke landing pad: ${e}`);
+    }
+
+    // Because this is outside a try block, the backend MUST lower
+    // this to a standard LLVM 'call' instruction.
+    dangerous_func(false);
+}
+
+test_lowering();
+// Expected: Caught in invoke landing pad: 99
+// Expected: Safe execution

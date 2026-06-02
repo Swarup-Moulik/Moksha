@@ -1,0 +1,929 @@
+﻿println("--- [E2E] complex_literals.mox ---")
+
+// Hexadecimal, Octal, and Binary
+int hex_val = 0x1A4F;
+int oct_val = 0o755;
+int bin_val = 0b101010;
+
+println(hex_val); // Expected: 6735
+println(oct_val); // Expected: 493
+println(bin_val); // Expected: 42
+
+// Floating Point Edge Cases
+float standard_float = 3.14159;
+float scientific_pos = 1.23e10;
+float scientific_neg = 4.56E-8;
+float trailing_dot = 10.;
+float leading_dot = .5;
+
+println(standard_float);
+println(scientific_pos);
+println(scientific_neg);
+println(trailing_dot);
+println(leading_dot);
+
+// Underscore separators
+int big_num = 1_000_000;
+float complex_float = 1_000.50_5;
+
+println(big_num);
+println(complex_float);
+println("--- [E2E] decimal_lossless.mox ---")
+
+void test() {
+    decimal<29, 26> x = 123.45678901234567890123456789d
+    println(x)
+}
+
+// Trigger the function at the top level
+test()
+println("--- [E2E] evaluation_and_control_flow.mox ---");
+
+// ---------------------------------------------------------
+// 1. Evaluation Order & Side Effects
+// ---------------------------------------------------------
+int global_state = 0;
+
+int track(int val) {
+    global_state += val;
+    println(`Evaluated: ${val}`);
+    return val;
+}
+
+// Tests left-to-right evaluation vs precedence binding
+int eval_result = track(1) + track(2) * track(3);
+println(`State after eval: ${global_state}`); // Expected: 6
+
+// ---------------------------------------------------------
+// 2. Short-Circuit Semantics
+// ---------------------------------------------------------
+bool panic_if_called() {
+    println("FAIL: Short-circuit did not work!");
+    return true;
+}
+
+bool sc1 = false && panic_if_called(); // MUST NOT print
+bool sc2 = true || panic_if_called();  // MUST NOT print
+println("Short-circuit tests passed if no FAIL printed above.");
+
+// ---------------------------------------------------------
+// 3. Associativity Edge Cases
+// ---------------------------------------------------------
+int assoc_div = 100 / 10 / 2; // Expected: 5 (Left-associative)
+int assoc_pow = 2 ** 3 ** 2;  // Usually 512 (Right) or 64 (Left) - verifies your compiler's choice
+
+// Nested Ternary (Right-associative check)
+int nested_ternary = true ? false ? 1 : 2 : 3;
+println(nested_ternary); // Expected: 2
+
+// ---------------------------------------------------------
+// 4. Deep Nullable & Pipeline Chaining
+// ---------------------------------------------------------
+ref class Node {
+    public int[] values;
+    public Node? next;
+    constructor() {
+        this.values = [10, 20];
+        this.next = null;
+    }
+}
+
+Node? root = null;
+// Must safely abort the chain and fallback to 42 without panicking
+int safe_extract = root?.next?.values?[0] ?? 42;
+println(safe_extract); // Expected: 42
+
+// Pipeline chaining depth
+int add_one(int x) { return x + 1; }
+println(10 |> add_one |> add_one |> add_one); // Expected: 13
+
+// ---------------------------------------------------------
+// 5. Nested Function Recursion
+// ---------------------------------------------------------
+int add(int a, int b) { return a + b; }
+println(add(add(1, 2), add(3, 4))); // Expected: 10
+println("--- [E2E] f16_f8_operators.mox ---")
+
+// =========================================================
+// 1. Half Precision (f16) Operators
+// =========================================================
+println("=== f16 Arithmetic ===")
+half h1 = 15.5
+half h2 = 2.0
+
+println("h1 + h2:")
+println(h1 + h2)  // Expected: 17.5
+
+println("h1 - h2:")
+println(h1 - h2)  // Expected: 13.5
+
+println("h1 * h2:")
+println(h1 * h2)  // Expected: 31
+
+println("h1 / h2:")
+println(h1 / h2)  // Expected: 7.75
+
+println("Unary -h1:")
+println(-h1)      // Expected: -15.5
+
+println("=== f16 Comparisons ===")
+println(h1 == h2) // Expected: false
+println(h1 != h2) // Expected: true
+println(h1 > h2)  // Expected: true
+println(h1 >= h2) // Expected: true
+println(h1 < h2)  // Expected: false
+println(h1 <= h2) // Expected: false
+
+// =========================================================
+// 2. Quarter Precision (f8 E5M2) Operators
+// =========================================================
+println("=== f8 Arithmetic ===")
+// E5M2 can precisely represent small whole numbers
+quarter q1 = 12.0
+quarter q2 = 3.0
+
+println("q1 + q2:")
+println(q1 + q2)  // Expected: 15
+
+println("q1 - q2:")
+println(q1 - q2)  // Expected: 9
+
+println("q1 * q2:")
+println(q1 * q2)  // Expected: 36
+
+println("q1 / q2:")
+println(q1 / q2)  // Expected: 4
+
+println("Unary -q1:")
+println(-q1)      // Expected: -12
+
+println("=== f8 Comparisons ===")
+println(q1 == q2) // Expected: false
+println(q1 != q2) // Expected: true
+println(q1 > q2)  // Expected: true
+println(q1 >= q2) // Expected: true
+println(q1 < q2)  // Expected: false
+println(q1 <= q2) // Expected: false
+
+// =========================================================
+// 3. Edge Cases & Div By Zero
+// =========================================================
+println("=== Edge Cases ===")
+half h_zero = 0.0
+quarter q_zero = 0.0
+
+println("f16 Infinity (15.5 / 0.0):")
+println(h1 / h_zero) // Expected: inf
+
+println("f8 Infinity (12.0 / 0.0):")
+println(q1 / q_zero) // Expected: inf
+
+println("f16 NaN (0.0 / 0.0):")
+println(h_zero / h_zero) // Expected: nan
+
+println("f8 NaN (0.0 / 0.0):")
+println(q_zero / q_zero) // Expected: nan
+println("--- [E2E] float_cast_torture.mox ---");
+
+void run_float_conversions() {
+    // ==========================================
+    // 0. Base Variable Initializations
+    // ==========================================
+    // Using values that can be safely represented across precisions
+    // Quarter (f8) is highly restricted, so we use a small clean fraction.
+    double dbl_base = 42.25;
+    float flt_base = 10.5;
+    half hlf_base = cast<half>(3.125);
+    quarter qrt_base = quarter(2.0);
+    decimal<6, 2> dec_base = 100.50d;
+
+    println(`Base Double:  ${dbl_base}`);
+    println(`Base Float:   ${flt_base}`);
+    println(`Base Half:    ${hlf_base}`);
+    println(`Base Quarter: ${qrt_base}`);
+    println(`Base Decimal: ${dec_base}`);
+    println("------------------------------------");
+
+    // ==========================================
+    // 1. Double (f64) Downcasting
+    // ==========================================
+    float d2f = float(dbl_base);                  // Functional
+    half d2h = cast<half>(dbl_base);              // Angle-bracket
+    quarter d2q = quarter(dbl_base);              // Functional
+    decimal<6, 2> d2dec = cast<decimal<6, 2>>(dbl_base);
+
+    println(`Double -> Float:   ${d2f}`);
+    println(`Double -> Half:    ${d2h}`);
+    println(`Double -> Quarter: ${d2q}`);
+    println(`Double -> Decimal: ${d2dec}`);
+    println("------------------------------------");
+
+    // ==========================================
+    // 2. Float (f32) Upcasting & Downcasting
+    // ==========================================
+    double f2d = cast<double>(flt_base);          // Angle-bracket
+    half f2h = half(flt_base);                    // Functional
+    quarter f2q = cast<quarter>(flt_base);        // Angle-bracket
+    decimal<5, 2> f2dec = cast<decimal<5, 2>>(flt_base);
+
+    println(`Float -> Double:   ${f2d}`);
+    println(`Float -> Half:     ${f2h}`);
+    println(`Float -> Quarter:  ${f2q}`);
+    println(`Float -> Decimal:  ${f2dec}`);
+    println("------------------------------------");
+
+    // ==========================================
+    // 3. Half (f16) Upcasting & Downcasting
+    // ==========================================
+    double h2d = double(hlf_base);                // Functional
+    float h2f = cast<float>(hlf_base);            // Angle-bracket
+    quarter h2q = quarter(hlf_base);              // Functional
+    decimal<4, 3> h2dec = cast<decimal<4, 3>>(hlf_base);
+
+    println(`Half -> Double:    ${h2d}`);
+    println(`Half -> Float:     ${h2f}`);
+    println(`Half -> Quarter:   ${h2q}`);
+    println(`Half -> Decimal:   ${h2dec}`);
+    println("------------------------------------");
+
+    // ==========================================
+    // 4. Quarter (f8) Upcasting
+    // ==========================================
+    double q2d = cast<double>(qrt_base);          // Angle-bracket
+    float q2f = float(qrt_base);                  // Functional
+    half q2h = cast<half>(qrt_base);              // Angle-bracket
+    decimal<4, 1> q2dec = cast<decimal<4, 1>>(qrt_base);
+
+    println(`Quarter -> Double: ${q2d}`);
+    println(`Quarter -> Float:  ${q2f}`);
+    println(`Quarter -> Half:   ${q2h}`);
+    println(`Quarter -> Decimal:${q2dec}`);
+    println("------------------------------------");
+
+    // ==========================================
+    // 5. Decimal<p,s> to Standard IEEE Floats
+    // ==========================================
+    double dec2d = double(dec_base);              // Functional
+    float dec2f = cast<float>(dec_base);          // Angle-bracket
+    half dec2h = half(dec_base);                  // Functional
+    quarter dec2q = cast<quarter>(dec_base);      // Angle-bracket
+
+    println(`Decimal -> Double: ${dec2d}`);
+    println(`Decimal -> Float:  ${dec2f}`);
+    println(`Decimal -> Half:   ${dec2h}`);
+    println(`Decimal -> Quarter:${dec2q}`);
+    println("------------------------------------");
+
+    // ==========================================
+    // 6. Chain Casting (Stress Test)
+    // ==========================================
+    // Parses functional cast inside an angle-bracket cast, inside a functional cast.
+    quarter chain_val = quarter(cast<half>(float(cast<double>(dec_base))));
+    println(`Chain Cast (Dec -> f64 -> f32 -> f16 -> f8) [Expected 96]: ${chain_val}`);
+}
+
+
+run_float_conversions();
+println("--- [E2E] language_spec_final.mox ---");
+
+// ---------------------------------------------------------
+// 1. Discriminative Pipeline Precedence
+// ---------------------------------------------------------
+// Separates (1+2)|>f [yields 30] from 1+(2|>f) [yields 21]
+int multiply_ten(int x) { return x * 10; }
+int pipe_test = 1 + 2 |> multiply_ten();
+println(`Pipeline Strict (Expected 30): ${pipe_test}`);
+
+// ---------------------------------------------------------
+// 2. Increment Decomposition (Strict LTR Guarantee)
+// ---------------------------------------------------------
+int x = 5;
+int a = x++; // a gets 5, x becomes 6
+int b = ++x; // x becomes 7, b gets 7
+println(`Increment a (Expected 5): ${a}`);
+println(`Increment b (Expected 7): ${b}`);
+
+// ---------------------------------------------------------
+// 3 & 4. Decimal vs Float Spec Laws
+// ---------------------------------------------------------
+decimal<5,2> d = 1.23d;
+float f = 1.23;
+// Law: Float promotes to Decimal for math, but direct equality is strictly false due to base-2 vs base-10 exactness limits.
+// println(`Decimal == Float (Expected false): ${d == f}`);
+println(`Decimal + Float (Expected 2.46): ${d + f}`);
+
+// ---------------------------------------------------------
+// 5 & 9. Lazy Evaluation Contracts (?? and Ternary)
+// ---------------------------------------------------------
+int panic_side_effect() {
+    println("FATAL: Lazy evaluation failed!");
+    return 999;
+}
+
+int? safe_null = 10;
+// These MUST short-circuit. If "FATAL" prints, the IR lowering is broken.
+int coalesce_val = safe_null ?? panic_side_effect();
+int ternary_val = true ? 42 : panic_side_effect();
+println("Lazy evaluation passed if no FATAL prints above.");
+
+// ---------------------------------------------------------
+// 6. Array Aliasing Semantics
+// ---------------------------------------------------------
+int[] arr1 = [1, 2, 3];
+int[] arr2 = arr1;
+arr2[0] = 99;
+println(`Array Aliasing (Expected 99): ${arr1[0]}`);
+
+// ---------------------------------------------------------
+// 7. Function Argument Evaluation Order
+// ---------------------------------------------------------
+int global_state = 0;
+int step(int val) {
+    global_state = global_state * 10 + val;
+    return val;
+}
+int dummy_add(int x, int y) { return x + y; }
+
+dummy_add(step(1), step(2));
+// Law: Arguments evaluate strictly Left-to-Right.
+println(`Arg Eval Order (Expected 12): ${global_state}`);
+
+// ---------------------------------------------------------
+// 8 & 10. Logical Types & Machine-Level Shifts
+// ---------------------------------------------------------
+// Moksha requires strict bools, no truthy/falsy integers allowed in logical ops.
+bool strict_logic = true && false;
+println(`Strict Logic Return (Expected false): ${strict_logic}`);
+
+// Shift bounds mapping to hardware
+int shift_base = 1;
+println(`Shift 31 (Expected -2147483648): ${shift_base << 31}`);
+// println(`Shift 32 (Expected 0 OR Unchanged): ${shift_base << 32}`);
+println("--- [E2E] literals.mox ---")
+
+// Integer Literals & Suffixes
+char a = 123i8;
+unsigned short b = 0xFFu16;
+unsigned int c = 0b1010_1010u32;
+long d = 1_000_000i64;
+
+println(a);
+println(b);
+println(c);
+println(d);
+
+// Floats
+float f = 123.45;
+double g = 1.0;
+
+println(f);
+println(g);
+
+// Strings
+string s1 = "Hello World";
+println(s1);
+
+// Template Strings
+int val = 20;
+string s2 = `Value: ${val}`;
+string s3 = `Calculation: ${10 + 20}`;
+
+println(s2);
+println(s3);
+println("--- [E2E] math_and_memory_semantics.mox ---");
+
+// ---------------------------------------------------------
+// 1. Mixed-Type Arithmetic (Implicit Promotions)
+// ---------------------------------------------------------
+int a = 10;
+float b = 2.5;
+float mixed_res = a + b; // Implicit promotion int -> float
+println(mixed_res); // Expected: 12.5
+
+decimal<5,2> d = 1.23d;
+decimal<6,2> mixed_dec = d + 10; // Int -> decimal promotion
+println(mixed_dec); // Expected: 11.23
+
+// ---------------------------------------------------------
+// 2. IEEE 754 Subtleties (-0.0 and NaN)
+// ---------------------------------------------------------
+float neg_zero = -0.0;
+float pos_zero = 0.0;
+println("-0.0 == 0.0:");
+println(neg_zero == pos_zero); // Expected: true
+
+println("1.0 / -0.0:");
+println(1.0 / neg_zero);       // Expected: -inf
+
+println("1.0 / 0.0:");
+println(1.0 / pos_zero);       // Expected: inf
+
+// ---------------------------------------------------------
+// 3. Precision Loss & Modulo Semantics
+// ---------------------------------------------------------
+float big_float = 1e20;
+float next_float = big_float + 1.0;
+println("Precision Loss Equality:");
+println(big_float == next_float); // Expected: true (Loss absorbed the +1)
+
+println("Negative Modulo:");
+println(-5 % 2); // Expected: -1 (Matches sign of dividend)
+println(5 % -2); // Expected: 1
+
+// ---------------------------------------------------------
+// 4. Signed Bitwise Shifts
+// ---------------------------------------------------------
+int neg_one = -1;
+println("Signed Bitwise Right-Shift:");
+println(neg_one >> 1); // Expected: -1 (Arithmetic shift preserves sign bit)
+
+// ---------------------------------------------------------
+// 5. Value vs. Reference Aliasing
+// ---------------------------------------------------------
+class ValueState {
+    public int val;
+    constructor(int v) { this.val = v; }
+}
+
+ref class RefState {
+    public int val;
+    constructor(int v) { this.val = v; }
+}
+
+// Stack-allocated value types copy memory
+ValueState v1 = new ValueState(1);
+ValueState v2 = v1;
+v2.val = 999;
+println("Value Type Aliasing:");
+println(v1.val); // Expected: 1 (Original untouched)
+
+// Heap-allocated reference types copy the pointer
+RefState r1 = new RefState(1);
+RefState r2 = r1;
+r2.val = 999;
+println("Ref Type Aliasing:");
+println(r1.val); // Expected: 999 (Original mutated)
+println("--- [E2E] mixed_operator_extreme.mox ---")
+
+ref class Node {
+    public int[] values;
+    public Node? next;
+    constructor() {
+        this.values = [1, 2, 3];
+        this.next = null;
+    }
+}
+
+Node? processNode(int val) { return new Node(); }
+
+Node root = new Node();
+bool flag = true;
+
+// Stress test: Nullable member access, pipeline, null coalescing, ternary
+// 1. root?.values?[0]      -> Extracts 1 (int?)
+// 2. ?? 0                  -> Safely unwraps it to 1 (int)
+// 3. |> processNode()      -> Pipes the int into the function, returning Node?
+// 4. ?.next != null        -> Safely checks if the next node exists
+int complexResult = (((root?.values?[0] ?? 0) |> processNode())?.next != null) ? 100 : 200;
+
+println(complexResult); // Expected: 200
+println("--- [E2E] operators.mox ---")
+
+int a = 10
+int b = 20
+
+// Arithmetic
+println(a + b)
+println(a - b)
+println(a * b)
+println(a / b)
+println(a % b)
+println(a ** 2)
+
+// Bitwise
+println(a & b)
+println(a | b)
+println(a ^ b)
+println(a << 2)
+println(a >> 1)
+println(~a)
+
+// Comparison
+println(a == b)
+println(a != b)
+println(a < b)
+println(a >= b)
+
+// Logical
+bool logic = (a < b) && (b > 0) || !(a == 0)
+println(logic)
+
+// Assignments
+a += 5
+b *= 2
+a++
+b--
+
+println(a) // Expected: 16
+println(b) // Expected: 39
+
+// --- Floating Point Division by Zero ---
+float f1 = 10.0;
+float f2 = 0.0;
+println("Float div by zero:")
+println(f1 / f2); // Expected: inf (IEEE 754 standard)
+
+// --- Integer Division by Zero ---
+println("Integer div by zero (Warning: May trap hardware!):")
+int zero = 0;
+println(a / zero); // Will likely crash with SIGFPE unless caught by Moksha
+println("--- [E2E] operator_torture.mox ---")
+
+int add(int a, int b) { return a + b; }
+int multiply(int a, int b) { return a * b; }
+int process(int x) { return x; }
+int transform(int v) { return v * 2; }
+bool check(int v) { return v > 0; }
+
+int a = 10;
+int b = 20;
+int c = 2;
+int d = 5;
+int dynamicVal = 42;
+int? nullableVal = null;
+bool x = true;
+bool y = false;
+bool z = true;
+
+int test1 = (a + b |> process()) * c;
+println(test1); // Expected: 60
+
+int test2 = true ? b : (c |> process()) + d;
+println(test2); // Expected: 20
+
+a = b |> process();
+println(a); // Expected: 20
+
+int test3 = nullableVal ?? 100 |> process();
+println(test3); // Expected: 100
+
+bool result1 = ((a + b * c |> transform()) > 0) ? x : y && z;
+println(result1);
+
+bool result2 = (int(dynamicVal) |> transform()) ?? 100 >= 50;
+println(result2);
+println("--- [E2E] overflow_torture.mox ---")
+
+// ---------------------------------------------------------
+// 1. 8-bit Signed Integer (char / i8)
+// ---------------------------------------------------------
+char i8_max = 127
+char i8_min = -128
+
+println("i8 Initial Values (Max, Min):")
+println(i8_max)
+println(i8_min)
+
+println("i8 Overflow (127 + 1):")
+char i8_ovf = i8_max + 1
+println(i8_ovf)  // Expected: -128
+
+println("i8 Underflow (-128 - 1):")
+char i8_udf = i8_min - 1
+println(i8_udf)  // Expected: 127
+println("------------------------------------")
+
+// ---------------------------------------------------------
+// 2. 8-bit Unsigned Integer (unsigned char / u8)
+// ---------------------------------------------------------
+unsigned char u8_max = 255
+unsigned char u8_min = 0
+
+println("u8 Initial Values (Max, Min):")
+println(u8_max)
+println(u8_min)
+
+println("u8 Overflow (255 + 1):")
+unsigned char u8_ovf = u8_max + 1
+println(u8_ovf)  // Expected: 0
+
+println("u8 Underflow (0 - 1):")
+unsigned char u8_udf = u8_min - 1
+println(u8_udf)  // Expected: 255
+println("------------------------------------")
+
+// ---------------------------------------------------------
+// 3. 16-bit Signed Integer (short / i16)
+// ---------------------------------------------------------
+short i16_max = 32767
+short i16_min = -32768
+
+println("i16 Initial Values (Max, Min):")
+println(i16_max)
+println(i16_min)
+
+println("i16 Overflow (32767 + 1):")
+short i16_ovf = i16_max + 1
+println(i16_ovf) // Expected: -32768
+
+println("i16 Underflow (-32768 - 1):")
+short i16_udf = i16_min - 1
+println(i16_udf) // Expected: 32767
+println("------------------------------------")
+
+// ---------------------------------------------------------
+// 4. 16-bit Unsigned Integer (unsigned short / u16)
+// ---------------------------------------------------------
+unsigned short u16_max = 65535
+unsigned short u16_min = 0
+
+println("u16 Initial Values (Max, Min):")
+println(u16_max)
+println(u16_min)
+
+println("u16 Overflow (65535 + 1):")
+unsigned short u16_ovf = u16_max + 1
+println(u16_ovf) // Expected: 0
+
+println("u16 Underflow (0 - 1):")
+unsigned short u16_udf = u16_min - 1
+println(u16_udf) // Expected: 65535
+println("------------------------------------")
+
+// ---------------------------------------------------------
+// 5. 16-bit Float (half / f16)
+// ---------------------------------------------------------
+half f16_max = 65504.0
+half f16_min = -65504.0
+half f16_zero = 0.0
+
+println("f16 Initial Values (Max, Min):")
+println(f16_max)
+println(f16_min)
+
+println("f16 Overflow to Infinity:")
+half f16_ovf = f16_max * 2.0
+println(f16_ovf)
+
+println("f16 Underflow to -Infinity:")
+half f16_udf = f16_min * 2.0
+println(f16_udf)
+
+println("f16 Div By Zero:")
+half f16_div = f16_max / f16_zero
+println(f16_div)
+println("------------------------------------")
+
+// ---------------------------------------------------------
+// 6. 8-bit Float (quarter / f8)
+// ---------------------------------------------------------
+quarter f8_max = 57344.0
+quarter f8_min = -57344.0
+quarter f8_zero = 0.0
+
+println("f8 Initial Values (Max, Min):")
+println(f8_max)
+println(f8_min)
+
+println("f8 Overflow to Infinity:")
+quarter f8_ovf = f8_max * 2.0
+println(f8_ovf)
+
+println("f8 Underflow to -Infinity:")
+quarter f8_udf = f8_min * 2.0
+println(f8_udf)
+
+println("f8 Div By Zero:")
+quarter f8_div = f8_max / f8_zero
+println(f8_div)
+println("--- [E2E] semantic_closure_torture.mox ---");
+
+int id(int x) { return x; }
+
+ref class RefState {
+    public int val;
+    constructor(int v) { this.val = v; }
+}
+
+void run_law_definitions() {
+    // 1. Pipeline vs Arithmetic vs Coalescing Precedence
+    // Assumes |> binds looser than +, but tighter than ??
+    int pipe_test = 1 + 2 |> id();
+    int? null_val = null;
+    int coalescing_pipe = null_val ?? 20 |> id();
+
+    println(`Pipeline 1 (Expected 3): ${pipe_test}`);
+    println(`Pipeline 2 (Expected 20): ${coalescing_pipe}`);
+
+    // 2. Pre/Post Increment Evaluation Order & Temporaries
+    int x = 5;
+    int y = x++ + ++x; // Strict LTR should yield 5 + 7 = 12
+    println(`Increment Eval (Expected 12): ${y}`);
+
+    // 3. Cross-Type Comparisons (Promotion Hierarchy)
+    println(`Int == Float (Expected true): ${10 == 10.0}`);
+    // println(`Decimal == Float (Precision vs Exactness): ${1.23d == 1.23}`);
+    println(`Int < Float (Expected true): ${10 < 10.5}`);
+
+    // 4. Null-Coalescing Chaining Associativity (Right-associative check)
+    int? a = null;
+    int? b = null;
+    println(`Deep Coalescing (Expected 42): ${a ?? b ?? 42}`);
+
+    // 5. Bitwise vs Arithmetic Precedence Boundary
+    // If arithmetic binds tighter: (1+2)<<2 = 12. If bitwise: 1+(2<<2) = 9
+    println(`Bitwise Boundary (Expected 12): ${1 + 2 << 2}`);
+
+    // 6. Unary Operator Stacking (AST normalization)
+    int un = 5;
+    println(`Unary Stacking (Expected -4): ${- --un}`);
+
+    // 7. Array Mutation & Function-Based Length API
+    int[3] arr = [1, 2, 3];
+    arr[1] = 99; // Indexing write path
+    println(`Array Mutation (Expected 99): ${arr[1]}`);
+    println(`Array Length (Expected 3): ${length(arr)}`);
+
+    // 8. Chained Field Mutation (Read-Modify-Write)
+    RefState r = new RefState(5);
+    r.val = r.val + 10;
+    println(`Chained Mutation (Expected 15): ${r.val}`);
+
+    // 9. Decimal <-> Float Interaction (Which type wins?)
+    decimal<5,2> d = 1.23d;
+    float f = 1.23;
+    println(`Decimal + Float Interaction: ${d + f}`);
+
+    // 10. Boolean Precedence (&& binds tighter than ||)
+    // If LTR: (true || false) && false = false. If && tighter: true || (false && false) = true
+    println(`Boolean Precedence (Expected true): ${true || false && false}`);
+
+    // 11. Large Expression Depth (IR Builder / Recursive Descent Stress)
+    println(`Depth Stress (Expected 15): ${1+1+1+1+1+1+1+1+1+1+1+1+1+1+1}`);
+}
+
+run_law_definitions();
+println("--- [E2E] strings_and_comments.mox ---")
+
+// Standard escapes
+string basic = "Hello\nWorld\t\r\\\"";
+println(basic);
+
+// Native UTF-8 and Emojis (Direct inclusion)
+string direct_utf8 = "Hello, ä¸–ç•Œ! ðŸŒðŸš€";
+string mixed_content = "Value: ðŸ’¯ \t Status: OK";
+println(direct_utf8);
+println(mixed_content);
+
+// Hex and Unicode escapes
+string hex_esc = "\x41\x42\x43";
+string uni_esc = "\u{1F600}"; // Grinning face emoji via escape
+println(hex_esc);
+println(uni_esc);
+
+// Raw strings (ignoring escapes)
+string raw_path = "C:\\dev\\moksha\\tests";
+string raw_mixed = "Raw path with ðŸ¦€ \n \t";
+println(raw_path);
+println(raw_mixed);
+
+/* Block comment
+   spanning multiple lines */
+
+/* Nested block comments
+  /* This tests that the lexer counts comment depth */
+  If depth isn't tracked, the first closing tag ends the comment prematurely.
+*/
+int after_comment = 1;
+println(after_comment);
+println("--- [E2E] string_interpolation.mox ---")
+
+string name = "Moksha"
+int ver = 1
+
+// Basic Interpolation
+string msg = `Welcome to ${name} version ${ver}`
+println(msg)
+
+// Expression Interpolation
+string calc = `Result: ${10 + 20}`
+println(calc)
+println("--- [E2E] unicode_and_whitespace.mox ---")
+
+// 1. Unicode Identifiers
+int Ã¼ber_var = 100;
+string æ¼¢å­— = "Hanzi";
+float âˆ†_delta = 3.14;
+
+println(Ã¼ber_var);
+println(æ¼¢å­—);
+println(âˆ†_delta);
+
+// 2. Weird Whitespace
+int	a =10; // Contains tab, vertical tab, and form feed
+println(a);
+
+// 3. Extremely Long Identifier (Stress Test)
+int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = 1;
+println(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);
+
+// 4. EOF without trailing newline
+int b = 2
+println(b) // No newline after this
+println("--- [E2E] valid_decimals.mox ---")
+
+// 1. Basic Widening (Assignment)
+void test_safe_assignments(decimal<5, 2> small_amount) {
+    decimal<9, 2> account_balance = small_amount;
+    decimal<10, 4> highly_precise = small_amount;
+
+    println(account_balance);
+    println(highly_precise);
+}
+
+// 2. Mathematical Scaling
+void test_safe_math(decimal<5, 2> a, decimal<4, 1> b) {
+    decimal<6, 2> sum = a + b;
+    decimal<6, 2> diff = a - b;
+    decimal<9, 3> product = a * b;
+
+    println(sum);
+    println(diff);
+    println(product);
+}
+
+// 3. Advanced Math (Division and Modulo)
+void test_advanced_math(decimal<6, 2> a, decimal<4, 1> b) {
+    decimal<7, 2> quotient = a / b;
+    decimal<6, 2> remainder = a % b;
+
+    println(quotient);
+    println(remainder);
+}
+
+// 4. Unary Negation
+void test_unary(decimal<5, 2> a) {
+    decimal<5, 2> negated = -a;
+    println(negated);
+
+    // Double negation should return to original
+    println(-negated);
+}
+
+// 5. Comparisons (Testing different scales: <5, 2> vs <4, 1>)
+void test_comparisons(decimal<5, 2> a, decimal<4, 1> b) {
+    println(a == b); // false
+    println(a != b); // true
+    println(a > b);  // true
+    println(a >= b); // true
+    println(a < b);  // false
+    println(a <= b); // false
+
+    // Test equality with different compile-time scales but same mathematical value
+    decimal<4, 1> c = 123.4d; // Truncated for testing
+    decimal<6, 3> d = 123.400d;
+    println(c == d); // true
+}
+
+// 6. Decimal Division by Zero
+void test_div_by_zero(decimal<5, 2> a) {
+    decimal<4, 1> zero = 0.0d;
+
+    // Testing the safe fallback implemented in math.c
+    decimal<7, 2> div_zero = a / zero;
+    decimal<6, 2> mod_zero = a % zero;
+
+    println("Decimal Div by zero:");
+    println(div_zero); // Expected: 0 (Graceful fallback)
+    println("Decimal Mod by zero:");
+    println(mod_zero); // Expected: 0 (Graceful fallback)
+}
+
+// Drive the tests with actual data
+decimal<5, 2> val1 = 123.45d;
+decimal<4, 1> val2 = 12.3d;
+
+println("--- Assignments ---");
+test_safe_assignments(val1);
+
+println("--- Basic Math ---");
+test_safe_math(val1, val2);
+
+println("--- Div & Mod ---");
+test_advanced_math(val1, val2);
+
+println("--- Unary ---");
+test_unary(val1);
+
+println("--- Comparisons ---");
+test_comparisons(val1, val2);
+
+println("--- Precision Test ---");
+if(0.1d + 0.2d == 0.3d) {
+    println("0.1 + 0.2 is 0.3 mannnn");
+} else {
+    println("0.1 + 0.2 is NOT 0.3 mannnn");
+}
+
+println("--- Div By Zero ---");
+test_div_by_zero(val1);
