@@ -1,5 +1,5 @@
 <p align="left">
-  <img src="logo.svg" alt="Moksha Language Logo" width="150" />
+  <img src="assets/logo.svg" alt="Moksha Language Logo" width="150" />
 </p>
 
 # Moksha
@@ -16,8 +16,7 @@
   </a>
 </p>
 
-Moksha is a statically typed systems programming language with a custom multi-stage compilation pipeline, aimed to
-bridge the performance with flexibility and safety.
+Moksha is a statically typed systems programming language with a custom multi-stage compilation pipeline, aimed to bridge performance with flexibility and safety.
 
 <p align="left">
   <a href="https://github.com/Swarup-Moulik/Moksha/stargazers">
@@ -33,6 +32,18 @@ bridge the performance with flexibility and safety.
 </p>
 
 ---
+
+> **⚠️ Disclaimer: Active Development**
+> Moksha is currently in an early, active stage of development. While the core compilation pipeline is functional, features are subject to change, and you may encounter bugs or incomplete implementations.
+
+## Core Features
+
+- **Deterministic Memory Management:** Zero-cost abstractions with no Garbage Collector. Moksha utilizes Automatic Reference Counting (ARC) paired with strict Non-Lexical Lifetime (NLL) borrow checking to ensure memory safety at compile time.
+- **Modern Multi-Stage Backend:** Powered by a custom MLIR dialect and the LLVM 22 infrastructure, delivering aggressive optimization passes and highly efficient machine code.
+- **Built-in Fixed-Point Decimals:** First-class support for fixed-point arithmetic, guaranteeing exact precision for financial calculations and avoiding standard floating-point rounding errors.
+- **Seamless C-FFI:** Native, overhead-free interoperability with existing C/C++ libraries. You can link and call external functions directly using `unsafe` blocks.
+- **Write Once, Compile Anywhere:** First-class cross-compilation support for Linux, Windows, macOS, Android, iOS, and WebAssembly (WASI & Browser) straight out of the box.
+- **Bare-Metal Ready:** Features a modular, lightweight runtime library (`libmoksha_rt`) designed to run in freestanding environments without OS dependencies.
 
 ## Code Example
 
@@ -59,7 +70,7 @@ Here is a quick look at Moksha's safe borrowing and reference mechanisms:
 # Architecture
 
 ```mermaid
-graph TD
+flowchart TD
     Source[(Source Code)] --> Frontend
 
     subgraph Frontend [1. Frontend]
@@ -110,6 +121,13 @@ To build and run Moksha, you need the MSYS2 MinGW64 environment.
 ---
 
 ## 1. Prerequisites
+
+**For Linux (Debian/Ubuntu):**
+Run the included setup script:
+`sudo ./install_linux.sh`
+
+**For Windows (MSYS2):**
+Run the included `install_windows.sh` script, or install manually:
 
 Open your MSYS2 MinGW 64-bit terminal and install the necessary toolchain:
 
@@ -247,3 +265,7 @@ mokshac cross_compile.mox -target wasm32-wasi -o cross_compile_wasm.wasm
 # Browser WebAssembly
 mokshac cross_compile.mox -target wasm32-unknown-unknown -o index.html
 ```
+
+## License
+
+Moksha is distributed under the MIT License. See `LICENSE` for more information.
