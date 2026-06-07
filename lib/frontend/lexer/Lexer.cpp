@@ -1,3 +1,12 @@
+/**
+ * @file Lexer.cpp
+ * @brief Implementation of the Moksha Lexical Analyzer.
+ * * This module manages the conversion of source buffers into Token streams.
+ * * It utilizes an internal state machine to handle template string
+ * interpolation, recursive block comments, and complex numeric literal
+ * suffixes.
+ */
+
 #include "moksha/Lexer/Lexer.h"
 #include "moksha/Support/Diagnostics.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -11,23 +20,32 @@ namespace moksha {
 
 // --- Helper Functions ---
 
+/// @brief Checks if a character is a valid hexadecimal digit (0-9, a-f, A-F).
 static bool isHexDigit(char c) {
   return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
          (c >= 'A' && c <= 'F');
 }
 
+/// @brief Checks if a character is a valid binary digit (0 or 1).
 static bool isBinDigit(char c) { return c == '0' || c == '1'; }
 
 // --- Lexer Implementation ---
 
+/** * @brief Checks if a character can start an identifier.
+ * @note Uses unsigned cast to prevent undefined behavior with non-ASCII chars.
+ */
 static bool isAsciiIdentStart(char c) {
   return std::isalpha(static_cast<unsigned char>(c)) || c == '_';
 }
 
+/** * @brief Checks if a character can be part of an identifier body.
+ */
 static bool isAsciiIdentBody(char c) {
   return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
 }
 
+/** * @brief Checks if a character is the start of a multi-byte UTF-8 sequence.
+ */
 static bool isUTF8Start(char c) {
   return static_cast<unsigned char>(c) >= 0x80;
 }
@@ -48,6 +66,10 @@ char Lexer::peek(int n) const {
   return *(curPtr + n);
 }
 
+/**
+ * @brief Main entry point for token scanning.
+ * * Handles whitespace skipping and comment skipping before identifying tokens.
+ */
 Token Lexer::next() {
   if (inTemplateString() && interpolationStack.empty()) {
     if (curPtr >= bufferEnd)
@@ -73,7 +95,6 @@ Token Lexer::next() {
     break;
   }
 
-  // const char *start = curPtr;
   char c = *curPtr;
 
   if (isAsciiIdentStart(c) || isUTF8Start(c))
@@ -93,6 +114,10 @@ Token Lexer::next() {
   return scanOperator();
 }
 
+/**
+ * @brief Scans numeric literals, including prefixes (0x, 0b, 0o) and type
+ * suffixes.
+ */
 Token Lexer::scanNumber() {
   const char *start = curPtr;
   bool isFloat = false;
@@ -112,7 +137,7 @@ Token Lexer::scanNumber() {
     if (next == 'x' || next == 'X') {
       isHex = true;
       curPtr += 2;
-      // [FIX] Consume all alphanumeric characters to prevent token splitting
+      // Consume all alphanumeric characters to prevent token splitting
       while (curPtr < bufferEnd) {
         if (isHexDigit(*curPtr) || *curPtr == '_') {
           curPtr++;
@@ -137,7 +162,7 @@ Token Lexer::scanNumber() {
           break;
         }
       }
-    } else if (next == 'o' || next == 'O') { // [FIX 1] Handle Octal Prefix
+    } else if (next == 'o' || next == 'O') {
       isOct = true;
       curPtr += 2;
       while (curPtr < bufferEnd) {
@@ -164,7 +189,7 @@ Token Lexer::scanNumber() {
         while (curPtr < bufferEnd && (isdigit(*curPtr) || *curPtr == '_'))
           curPtr++;
 
-        // [FIX] Catch multiple decimal points: 1.2.3
+        // Catch multiple decimal points: 1.2.3
         if (peek() == '.') {
           Diags.report(getLoc(), DiagID::err_unexpected_char)
               << "multiple decimal points in float literal";
@@ -174,7 +199,7 @@ Token Lexer::scanNumber() {
             curPtr++;
         }
       } else if (!isAsciiIdentStart(peek(1))) {
-        // [FIX 2] Handle trailing dot (e.g. `10.;`)
+        // Handle trailing dot (e.g. `10.;`)
         isFloat = true;
         curPtr++;
       }
@@ -187,7 +212,7 @@ Token Lexer::scanNumber() {
       if (peek() == '+' || peek() == '-')
         curPtr++;
       if (!isdigit(peek())) {
-        // [FIX] Explicitly report missing exponent digits
+        // Explicitly report missing exponent digits
         Diags.report(getLoc(), DiagID::err_unexpected_char)
             << "missing digits after exponent";
         hadLexicalError = true;
@@ -266,17 +291,27 @@ Token Lexer::scanNumber() {
     tok.flags |= TF_IsHex;
   if (isBin)
     tok.flags |= TF_IsBin;
+  if (isOct)
+    tok.flags |= TF_IsOctal;
   return tok;
 }
 
+/**
+ * @brief Scans operators and structural punctuation.
+ * * This method handles both single-character and multi-character operators
+ * by peeking at the next character in the buffer. It also maintains
+ * state for template string interpolation (brace balancing).
+ */
 Token Lexer::scanOperator() {
   const char *start = curPtr;
   char c = *curPtr++;
   TokenKind kind = TokenKind::Error;
 
   switch (c) {
+  // --- Interpolation & Structural Blocks ---
   case '{':
     kind = TokenKind::LBrace;
+    // Track nesting level for template string interpolation
     if (!interpolationStack.empty()) {
       interpolationStack.back().braceBalance++;
     }
@@ -286,6 +321,7 @@ Token Lexer::scanOperator() {
     kind = TokenKind::RBrace;
     if (!interpolationStack.empty()) {
       if (interpolationStack.back().braceBalance == 0) {
+        // Exited the interpolation expression, return to template string mode
         interpolationStack.pop_back();
         state = LexerState::TemplateString;
         fragmentStart = curPtr;
@@ -297,6 +333,7 @@ Token Lexer::scanOperator() {
     }
     break;
 
+  // --- Arithmetic Operators ---
   case '+':
     if (peek() == '+') {
       curPtr++;
@@ -307,6 +344,7 @@ Token Lexer::scanOperator() {
     } else
       kind = TokenKind::Plus;
     break;
+
   case '-':
     if (peek() == '-') {
       curPtr++;
@@ -320,6 +358,7 @@ Token Lexer::scanOperator() {
     } else
       kind = TokenKind::Minus;
     break;
+
   case '*':
     if (peek() == '*') {
       curPtr++;
@@ -330,6 +369,7 @@ Token Lexer::scanOperator() {
     } else
       kind = TokenKind::Star;
     break;
+
   case '/':
     if (peek() == '=') {
       curPtr++;
@@ -337,6 +377,7 @@ Token Lexer::scanOperator() {
     } else
       kind = TokenKind::Slash;
     break;
+
   case '%':
     if (peek() == '=') {
       curPtr++;
@@ -344,6 +385,8 @@ Token Lexer::scanOperator() {
     } else
       kind = TokenKind::Percent;
     break;
+
+  // --- Bitwise & Comparison Operators ---
   case '<':
     if (peek() == '<') {
       curPtr++;
@@ -358,6 +401,7 @@ Token Lexer::scanOperator() {
     } else
       kind = TokenKind::Less;
     break;
+
   case '>':
     if (peek() == '>') {
       curPtr++;
@@ -372,16 +416,18 @@ Token Lexer::scanOperator() {
     } else
       kind = TokenKind::Greater;
     break;
+
   case '=':
     if (peek() == '=') {
       curPtr++;
       kind = TokenKind::EqualEqual;
-    } else if (peek() == '>') { // [KEPT] Fat Arrow =>
+    } else if (peek() == '>') {
       curPtr++;
       kind = TokenKind::FatArrow;
     } else
       kind = TokenKind::Equal;
     break;
+
   case '!':
     if (peek() == '=') {
       curPtr++;
@@ -389,6 +435,7 @@ Token Lexer::scanOperator() {
     } else
       kind = TokenKind::Bang;
     break;
+
   case '&':
     if (peek() == '&') {
       curPtr++;
@@ -399,6 +446,7 @@ Token Lexer::scanOperator() {
     } else
       kind = TokenKind::Amp;
     break;
+
   case '|':
     if (peek() == '>') {
       curPtr++;
@@ -412,6 +460,7 @@ Token Lexer::scanOperator() {
     } else
       kind = TokenKind::Pipe;
     break;
+
   case '^':
     if (peek() == '=') {
       curPtr++;
@@ -419,9 +468,12 @@ Token Lexer::scanOperator() {
     } else
       kind = TokenKind::Caret;
     break;
+
   case '~':
     kind = TokenKind::Tilde;
     break;
+
+  // --- Syntax & Nullability ---
   case '?':
     if (peek() == '?') {
       curPtr++;
@@ -432,14 +484,16 @@ Token Lexer::scanOperator() {
     } else
       kind = TokenKind::Question;
     break;
+
   case '.':
     if (peek() == '.' && peek(1) == '.') {
-      curPtr += 2; // Consume the extra two dots
+      curPtr += 2;
       kind = TokenKind::DotDotDot;
     } else {
       kind = TokenKind::Dot;
     }
     break;
+
   case ',':
     kind = TokenKind::Comma;
     break;
@@ -449,6 +503,8 @@ Token Lexer::scanOperator() {
   case ':':
     kind = TokenKind::Colon;
     break;
+
+  // --- Grouping ---
   case '(':
     kind = TokenKind::LParen;
     break;
@@ -469,7 +525,18 @@ Token Lexer::scanOperator() {
   return Token(kind, SourceLocation::getFromPointer(start), curPtr - start);
 }
 
+/**
+ * @brief Skips over line (//) and block (/* ... */) comments.
+ * * @details
+ * - For line comments, consumes characters until the next newline or EOF.
+ * - For block comments, implements nested comment support by maintaining a
+ * 'depth' counter. This allows comments like '/* outer /* inner */ */'
+ * to be handled correctly without terminating early.
+ * * @return true if the comment was successfully terminated, false if an
+ * unterminated block comment error was encountered.
+ */
 bool Lexer::skipComment() {
+  // Handle line comments: // ...
   if (peek(1) == '/') {
     curPtr += 2;
     while (curPtr < bufferEnd && *curPtr != '\n' && *curPtr != '\r')
@@ -477,25 +544,31 @@ bool Lexer::skipComment() {
     return true;
   }
 
+  // Handle block comments: /* ... */
   if (peek(1) == '*') {
     const char *commentStart = curPtr;
     curPtr += 2;
     int depth = 1;
 
     while (curPtr < bufferEnd) {
-      // Support nested comments: /* /* ... */ */
+      // Check for start of a nested block comment
       if (*curPtr == '/' && peek(1) == '*') {
         depth++;
         curPtr += 2;
-      } else if (*curPtr == '*' && peek(1) == '/') {
+      }
+      // Check for termination of the current block comment level
+      else if (*curPtr == '*' && peek(1) == '/') {
         depth--;
         curPtr += 2;
+        // If depth returns to 0, we have closed the outermost block
         if (depth == 0)
-          return true; // Successfully skipped
+          return true;
       } else {
         curPtr++;
       }
     }
+
+    // If loop terminates via EOF, the comment is unterminated
     Diags.report(SourceLocation::getFromPointer(commentStart),
                  DiagID::err_unexpected_char)
         << "unterminated block comment";
@@ -505,16 +578,31 @@ bool Lexer::skipComment() {
   return false;
 }
 
+/**
+ * @brief Scans string literals and template string fragments.
+ *
+ * This function acts as a state machine for string parsing:
+ * 1. For standard strings ("..."), it consumes until the closing quote.
+ * 2. For template strings (`...`), it performs incremental scanning:
+ * - Returns a `StringFragment` token when it hits an interpolation start `${`.
+ * - Returns an `InterpolationStart` token to signal the parser to switch
+ * contexts.
+ * - Returns an `InterpolationEnd` token when the corresponding `}` is found.
+ * * @note This lexer supports nested brace balancing within interpolation
+ * blocks via the `interpolationStack`.
+ */
 Token Lexer::scanString() {
   const char *start = nullptr;
   bool isTemplate = inTemplateString();
   bool hasEscape = false;
   bool hadError = false;
 
+  // Initialize fragment tracking if entering a template string
   if (isTemplate && fragmentStart == nullptr) {
     fragmentStart = curPtr;
   }
 
+  // Handle start of a new string literal
   if (!isTemplate) {
     start = curPtr;
     char quote = *curPtr++;
@@ -531,12 +619,14 @@ Token Lexer::scanString() {
   while (curPtr < bufferEnd) {
     char c = *curPtr;
 
+    // Disallow multiline in standard strings, but allow in template strings
     if (!isTemplate && (c == '\n' || c == '\r')) {
       Diags.report(getLoc(), DiagID::err_unexpected_char)
           << "unterminated string literal";
       return errorAt(start);
     }
 
+    // Handle character escapes (e.g., \n, \x41)
     if (c == '\\') {
       hasEscape = true;
       if (!consumeEscape()) {
@@ -545,6 +635,7 @@ Token Lexer::scanString() {
       continue;
     }
 
+    // Handle end of the string/template quote
     if (c == quote) {
       const char *tokenStart = isTemplate ? fragmentStart : start;
       curPtr++;
@@ -554,9 +645,8 @@ Token Lexer::scanString() {
         fragmentStart = nullptr;
       }
 
-      if (hadError) {
+      if (hadError)
         return errorAt(tokenStart);
-      }
 
       Token t(isTemplate ? TokenKind::TemplateString : TokenKind::StringLiteral,
               SourceLocation::getFromPointer(tokenStart), curPtr - tokenStart);
@@ -565,8 +655,10 @@ Token Lexer::scanString() {
       return t;
     }
 
+    // Handle string interpolation: ${...}
     if (isTemplate && c == '$' && peek(1) == '{') {
       if (curPtr == fragmentStart) {
+        // We are at the start of the fragment, return InterpolationStart
         const char *interpStart = curPtr;
         curPtr += 2;
         state = LexerState::Normal;
@@ -574,6 +666,7 @@ Token Lexer::scanString() {
         return Token(TokenKind::InterpolationStart,
                      SourceLocation::getFromPointer(interpStart), 2);
       } else {
+        // We have consumed a fragment of the string, return it first
         Token t(TokenKind::StringFragment,
                 SourceLocation::getFromPointer(fragmentStart),
                 curPtr - fragmentStart);
@@ -586,6 +679,8 @@ Token Lexer::scanString() {
 
     curPtr++;
   }
+
+  // Handle unterminated strings
   const char *errStart = isTemplate ? fragmentStart : start;
   if (isTemplate) {
     state = LexerState::Normal;
@@ -598,10 +693,17 @@ Token Lexer::scanString() {
   return errorAt(errStart);
 }
 
+/**
+ * @brief Scans a character literal (e.g., 'a', '\n', '\u{1F600}').
+ * * @details A character literal must start and end with a single quote.
+ * It supports both raw UTF-8 characters and escaped sequences via
+ * consumeEscape().
+ */
 Token Lexer::scanChar() {
   const char *start = curPtr;
-  curPtr++;
+  curPtr++; // Consume opening quote
 
+  // Handle either an escaped character or a raw UTF-8 sequence
   if (peek() == '\\') {
     if (!consumeEscape())
       return errorAt(start);
@@ -610,31 +712,46 @@ Token Lexer::scanChar() {
       return errorAt(start);
   }
 
+  // Ensure the character is terminated by a single quote
   if (peek() != '\'')
     return errorAt(start);
 
-  curPtr++;
+  curPtr++; // Consume closing quote
   return Token(TokenKind::CharLiteral, SourceLocation::getFromPointer(start),
                curPtr - start);
 }
 
+/**
+ * @brief Advances the cursor past all whitespace characters.
+ * * @note This handles spaces, tabs, vertical tabs, form feeds, carriage
+ * returns, and newlines.
+ */
 void Lexer::skipWhitespace() {
   while (curPtr < bufferEnd) {
     char c = *curPtr;
+    // Standard whitespace characters
     if (c == ' ' || c == '\t' || c == '\v' || c == '\f' || c == '\r') {
       curPtr++;
     } else if (c == '\n') {
-      curPtr++; // Handle newlines
+      curPtr++; // Advance and potentially update line tracking
     } else {
       break;
     }
   }
 }
 
+/**
+ * @brief Advances the cursor by one valid UTF-8 code point.
+ * * @details Leverages LLVM's UTF-8 validation utilities to ensure
+ * that multi-byte characters are consumed as a single logical unit.
+ * * @return true if the sequence is a valid UTF-8 character, false otherwise.
+ */
 bool Lexer::advanceUTF8() {
   const unsigned char *uPtr = reinterpret_cast<const unsigned char *>(curPtr);
   unsigned len = llvm::getNumBytesForUTF8(*uPtr);
 
+  // Validate that the sequence length is within buffer bounds and is legally
+  // encoded
   if (len > 0 && (curPtr + len <= bufferEnd) &&
       llvm::isLegalUTF8Sequence(uPtr, uPtr + len)) {
     curPtr += len;
@@ -643,14 +760,28 @@ bool Lexer::advanceUTF8() {
   return false;
 }
 
+/**
+ * @brief Parses and validates escape sequences within strings and character
+ * literals.
+ * * @details This function processes backslash-prefixed sequences:
+ * - Simple escapes: `\n`, `\r`, `\t`, `\0`, `\\`, `\'`, `\"`, `` \` ``, `\$`
+ * - Hexadecimal escapes: `\xHH` (2 hex digits)
+ * - Unicode escapes (Fixed): `\uXXXX` (4 hex digits) and `\UXXXXXXXX` (8 hex
+ * digits)
+ * - Unicode escapes (Variable): `\u{...}` (Rust-style hex sequence of arbitrary
+ * length)
+ * * @return true if the escape sequence is valid and the cursor was advanced;
+ * false otherwise (and reports a diagnostic error).
+ */
 bool Lexer::consumeEscape() {
   const char *escapeStart = curPtr;
-  curPtr++;
+  curPtr++; // Skip the backslash
   if (curPtr >= bufferEnd)
     return false;
 
   char c = *curPtr;
   switch (c) {
+  // --- Simple Single-Char Escapes ---
   case 'n':
   case 'r':
   case 't':
@@ -662,6 +793,8 @@ bool Lexer::consumeEscape() {
   case '$':
     curPtr++;
     return true;
+
+  // --- Hexadecimal Escape: \xHH ---
   case 'x': {
     curPtr++;
     if (curPtr + 2 > bufferEnd)
@@ -676,10 +809,11 @@ bool Lexer::consumeEscape() {
     curPtr += 2;
     return true;
   }
+
+  // --- Unicode Escape: \u{...} or \uXXXX ---
   case 'u': {
     curPtr++;
-
-    // [FIX 3] Handle Rust-style \u{...}
+    // Handle variable-length Rust-style \u{...}
     if (curPtr < bufferEnd && *curPtr == '{') {
       curPtr++; // skip '{'
       while (curPtr < bufferEnd && *curPtr != '}') {
@@ -699,7 +833,7 @@ bool Lexer::consumeEscape() {
       return true;
     }
 
-    // Fallback to standard 4-digit \uXXXX
+    // Fallback to standard fixed 4-digit \uXXXX
     if (curPtr + 4 > bufferEnd)
       return false;
     for (int i = 0; i < 4; ++i) {
@@ -712,6 +846,8 @@ bool Lexer::consumeEscape() {
     curPtr += 4;
     return true;
   }
+
+  // --- Long Unicode Escape: \UXXXXXXXX ---
   case 'U': {
     curPtr++;
     if (curPtr + 8 > bufferEnd)
@@ -726,6 +862,8 @@ bool Lexer::consumeEscape() {
     curPtr += 8;
     return true;
   }
+
+  // --- Invalid Escape Handling ---
   default:
     Diags.report(SourceLocation::getFromPointer(escapeStart),
                  DiagID::err_unexpected_char)
@@ -734,10 +872,20 @@ bool Lexer::consumeEscape() {
   }
 }
 
+/**
+ * @brief Scans an identifier or keyword.
+ * * @details
+ * - Supports ASCII identifiers (a-z, A-Z, _) and multi-byte UTF-8 identifiers.
+ * - Once an identifier sequence is consumed, uses a StringSwitch to perform
+ * O(1) (or near O(1)) keyword lookup.
+ * - Any sequence not matching a reserved keyword is treated as a generic
+ * Identifier.
+ */
 Token Lexer::scanIdentifier() {
   const char *start = curPtr;
 
   // --- Identifier start ---
+  // Identifiers may start with ASCII or valid UTF-8 multi-byte sequences
   if (isAsciiIdentStart(*curPtr)) {
     ++curPtr;
   } else if (isUTF8Start(*curPtr)) {
@@ -748,6 +896,7 @@ Token Lexer::scanIdentifier() {
   }
 
   // --- Identifier body ---
+  // Continue consuming until we hit a character invalid for an identifier
   while (curPtr < bufferEnd) {
     char c = *curPtr;
 
@@ -761,8 +910,13 @@ Token Lexer::scanIdentifier() {
     }
   }
 
+  // Create a StringRef view of the identifier
   llvm::StringRef spelling(start, curPtr - start);
 
+  // --- Keyword Resolution ---
+  // StringSwitch provides efficient dispatching based on the identifier
+  // spelling. Keywords are prioritized; if no match is found, it defaults to
+  // TokenKind::Identifier.
   TokenKind kind = llvm::StringSwitch<TokenKind>(spelling)
                        .Case("class", TokenKind::KwClass)
                        .Case("operator", TokenKind::KwOperator)

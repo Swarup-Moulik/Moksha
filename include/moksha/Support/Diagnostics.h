@@ -1,3 +1,11 @@
+/**
+ * @file Diagnostics.h
+ * @brief Defines the diagnostic reporting engine for the Moksha compiler.
+ * * This module provides the infrastructure for emitting errors, warnings,
+ * and notes. It uses a builder pattern with overloaded stream operators
+ * to easily format complex error messages.
+ */
+
 #ifndef MOKSHA_SUPPORT_DIAGNOSTICS_H
 #define MOKSHA_SUPPORT_DIAGNOSTICS_H
 
@@ -8,21 +16,23 @@
 
 namespace moksha {
 
-/// Defines all unique diagnostic IDs for the compiler.
+/// @brief Defines all unique diagnostic IDs for the compiler.
+/// @note These IDs map to format strings and severity levels in the
+/// DiagnosticEngine implementation.
 enum class DiagID {
-  // Lexer / Parser Errors
+  // --- Lexer / Parser Errors ---
   err_unexpected_char,
   err_unexpected_token,
   err_expected_expression,
   err_expected_token,
 
-  // Sema / Symbol Table Errors
+  // --- Sema / Symbol Table Errors ---
   err_symbol_redefinition,
   err_undeclared_identifier,
   err_variable_redeclaration,
   err_function_redeclaration,
 
-  // Type Checking Errors
+  // --- Type Checking Errors ---
   err_type_mismatch,
   err_type_incompatible_assignment,
   err_type_incompatible_return,
@@ -48,12 +58,12 @@ enum class DiagID {
   err_generic_arity,
   err_uninitialized_var,
 
-  // MIR / Lowering Errors (Added these to fix the build error)
+  // --- MIR / Lowering Errors ---
   err_unexpanded_macro,
   err_invalid_type,
   err_not_implemented,
 
-  // Borrow Checker Errors
+  // --- Borrow Checker Errors ---
   err_borrow_violation,
   err_mutation_while_borrowed,
   err_borrow_escape,
@@ -61,17 +71,18 @@ enum class DiagID {
   err_partial_move,
   note_borrow_occurred_here,
 
-  // Warnings
+  // --- Warnings ---
   warn_switch_not_exhaustive,
   warn_not_implemented,
   warn_unused_variable,
+  warn_implicit_bool_conv,
 
-  // Concurrency & Async Errors
+  // --- Concurrency & Async Errors ---
   err_await_in_sync_lock,
   err_thread_in_async_lock,
   err_async_lock_target,
 
-  // General / Notes
+  // --- General / Notes ---
   note_previous_definition,
   err_no_member,
   err_unknown_type,
@@ -79,24 +90,31 @@ enum class DiagID {
   err_continue_outside_loop,
   err_invalid_this,
   err_invalid_super,
-  warn_implicit_bool_conv,
   err_internal,
   err_missing_builtin,
 };
 
-/// Forward declaration
 class DiagnosticEngine;
 
-/// A temporary object that collects arguments (<< "str") and emits
-/// the diagnostic when it is destroyed.
+/**
+ * @brief A temporary object that collects format arguments via the `<<`
+ * operator.
+ * * @note This class uses the RAII pattern. The diagnostic is not emitted to
+ * the engine when report() is called, but rather when this builder object is
+ * destroyed at the end of the C++ statement.
+ * @example Diags.report(Loc, DiagID::err_foo) << "argument"; // Emitted at the
+ * semicolon
+ */
 class DiagnosticBuilder {
 public:
-  // CHANGE: Remove the body { ... } and end with a semicolon.
   DiagnosticBuilder(DiagnosticEngine &Engine, SourceLocation Loc, DiagID ID,
                     llvm::SourceMgr::DiagKind Kind);
 
+  /// @brief Destructor triggers the actual emission of the formatted
+  /// diagnostic.
   ~DiagnosticBuilder();
 
+  /// @brief Streams dynamic arguments into the diagnostic message.
   template <typename T> DiagnosticBuilder &operator<<(const T &Val) {
     llvm::raw_string_ostream(Message) << Val;
     return *this;
@@ -110,26 +128,37 @@ private:
   std::string Message;
 };
 
-/// The main entry point for reporting errors.
+/**
+ * @brief The main entry point for tracking and reporting compiler diagnostics.
+ * * This engine wraps `llvm::SourceMgr` and tracks the total number of errors
+ * encountered to determine if compilation should halt before the next phase.
+ */
 class DiagnosticEngine {
 public:
   explicit DiagnosticEngine(llvm::SourceMgr &SrcMgr) : SrcMgr(SrcMgr) {}
 
-  /// Reports an error/warning at the given location.
-  /// Usage: Diags.report(Loc, DiagID::err_foo) << "arg";
+  /**
+   * @brief Initiates a diagnostic report at the specified location.
+   * @param Loc The source location where the diagnostic points.
+   * @param ID The specific diagnostic identifier.
+   * @return A DiagnosticBuilder to accept streaming arguments.
+   */
   DiagnosticBuilder report(SourceLocation Loc, DiagID ID);
 
-  /// Low-level emitter called by the Builder's destructor.
+  /// @brief Low-level emitter called by the DiagnosticBuilder's destructor.
   void emit(SourceLocation Loc, DiagID ID, llvm::SourceMgr::DiagKind Kind,
             const std::string &ExtraMsg);
 
+  /// @brief Returns true if any errors (excluding warnings) have been emitted.
   bool hasErrors() const { return NumErrors > 0; }
+
+  /// @brief Returns the total count of emitted errors.
   unsigned getNumErrors() const { return NumErrors; }
 
-  /// Helper to get the format string for an ID (e.g. "expected '{}'")
+  /// @brief Retrieves the base format string for a specific diagnostic ID.
   static const char *getDiagnosticText(DiagID ID);
 
-  /// Helper to get the severity (Error/Warning/Note) for an ID
+  /// @brief Maps a diagnostic ID to its severity level (Error, Warning, Note).
   static llvm::SourceMgr::DiagKind getDiagnosticKind(DiagID ID);
 
 private:

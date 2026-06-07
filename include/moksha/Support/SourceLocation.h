@@ -1,3 +1,11 @@
+/**
+ * @file SourceLocation.h
+ * @brief Defines wrappers for LLVM source tracking primitives.
+ * * By wrapping LLVM's SourceMgr types, the Moksha compiler isolates its AST
+ * and Lexer from direct LLVM API dependencies where possible, making it easier
+ * to maintain or swap out the underlying source management in the future.
+ */
+
 #ifndef MOKSHA_SUPPORT_SOURCELOCATION_H
 #define MOKSHA_SUPPORT_SOURCELOCATION_H
 
@@ -6,11 +14,12 @@
 
 namespace moksha {
 
-/// Wrapper around LLVM's Source Location (pointer to buffer).
-/// We use this instead of raw pointers to abstract the underlying source manager.
+/// @brief Wrapper around LLVM's Source Location (pointer to a specific byte in
+/// the buffer).
 using SourceLocation = llvm::SMLoc;
 
-/// Represents a range of characters in the source code (Start -> End).
+/// @brief Represents a continuous range of characters in the source code (Start
+/// -> End).
 using SourceRange = llvm::SMRange;
 
 } // namespace moksha
