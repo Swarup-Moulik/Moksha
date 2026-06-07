@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -29,6 +30,8 @@ extern char *__moksha_any_to_string(MokshaAny *any_val);
 extern void *moksha_rt_map_new();
 extern void moksha_rt_map_insert(void *map, MokshaAny *key, MokshaAny *val);
 extern const AnyVTable vtable_map;
+extern const AnyVTable vtable_string;
+extern const AnyVTable vtable_array;
 
 // ============================================================================
 // Internal Utilities
@@ -44,21 +47,33 @@ static char *make_mstring(const char *cstr, size_t len) {
 static inline int unbox_fd(MokshaAny *file_any) {
   if (!file_any || !file_any->data)
     return -1;
-  return (int)*(intptr_t *)(file_any->data);
+  return (int)*(intptr_t *)file_any->data;
 }
 
 int32_t length(void *arr_ptr) {
   if (!arr_ptr)
     return 0;
-
-  // 1. The compiler passes 'any' objects by pointer
   MokshaAny *any_val = (MokshaAny *)arr_ptr;
   if (!any_val->data)
     return 0;
-
-  // 2. Unbox the actual slice data from the any container
   MokshaSlice *slice = (MokshaSlice *)any_val->data;
   return (int32_t)slice->length;
+}
+
+int32_t moksha_rt_any_len(MokshaAny *any_val) {
+  if (!any_val || !any_val->vtable || !any_val->data)
+    return 0;
+
+  // Check vtable type id to dynamically dispatch the correct length
+  if (any_val->vtable->type_id == MOKSHA_TYPE_STRING) {
+    return strlen((char *)any_val->data);
+  } else if (any_val->vtable->type_id == MOKSHA_TYPE_ARRAY) {
+    MokshaSlice *slice = (MokshaSlice *)any_val->data;
+    return (int32_t)slice->length;
+  } else if (any_val->vtable->type_id == MOKSHA_TYPE_TABLE) {
+    return moksha_rt_map_len(any_val->data);
+  }
+  return 0;
 }
 
 // ============================================================================
@@ -73,27 +88,23 @@ static MokshaAny *parse_and_box_literal(const char *val_start, int val_len,
     return moksha_box_string(val_str);
   }
 
-  // Trim trailing whitespace (common in naive YAML loops)
   while (val_len > 0 &&
          (val_start[val_len - 1] == ' ' || val_start[val_len - 1] == '\r')) {
     val_len--;
   }
 
-  // Create a null-terminated stack buffer for safe C standard library parsing
   char tmp[128];
   int copy_len = val_len < 127 ? val_len : 127;
   memcpy(tmp, val_start, copy_len);
   tmp[copy_len] = '\0';
 
-  // Parse Booleans
   if (strncmp(tmp, "true", 4) == 0)
     return moksha_box_bool(true);
   if (strncmp(tmp, "false", 5) == 0)
     return moksha_box_bool(false);
   if (strncmp(tmp, "null", 4) == 0)
-    return moksha_box_string(""); // Naive null fallback
+    return moksha_box_string(make_mstring("", 0));
 
-  // Parse Numbers (Detect Floats vs Ints)
   bool is_float = false;
   for (int i = 0; i < copy_len; i++) {
     if (tmp[i] == '.') {
@@ -105,21 +116,15 @@ static MokshaAny *parse_and_box_literal(const char *val_start, int val_len,
   if (is_float) {
     char *endptr;
     double val = strtod(tmp, &endptr);
-    // If strtod consumed characters, it's a valid float
-    if (endptr != tmp) {
+    if (endptr != tmp)
       return moksha_box_f64(val);
-    }
   } else {
     char *endptr;
     long val = strtol(tmp, &endptr, 10);
-    // If strtol consumed characters, it's a valid integer
-    if (endptr != tmp) {
+    if (endptr != tmp)
       return moksha_box_i32((int32_t)val);
-    }
   }
 
-  // Fallback: If it's an unquoted string in YAML that isn't a number
-  // Recursively treat it as a string
   return parse_and_box_literal(val_start, val_len, true);
 }
 
@@ -168,9 +173,8 @@ void moksha_file_write(MokshaAny *file_any, MokshaAny *data_any) {
   int fd = unbox_fd(file_any);
   if (fd < 0 || !data_any || !data_any->data)
     return;
-
-  char *str = (char *)data_any->data;
-  write(fd, str, strlen(str));
+  char *data = (char *)data_any->data;
+  write(fd, data, strlen(data));
 }
 
 MokshaAnyRet moksha_file_read(MokshaAny *file_any) {
@@ -190,14 +194,14 @@ MokshaAnyRet moksha_file_read(MokshaAny *file_any) {
     bytes_read = 0;
   buf[bytes_read] = '\0';
 
-  return moksha_pack_any(buf, NULL);
+  // Attach string vtable so structural equality works
+  return moksha_pack_any(buf, &vtable_string);
 }
 
 int64_t moksha_file_size(MokshaAny *file_any) {
   int fd = unbox_fd(file_any);
   if (fd < 0)
     return 0;
-
   struct stat st;
   if (fstat(fd, &st) == 0)
     return (int64_t)st.st_size;
@@ -233,6 +237,18 @@ bool moksha_file_eof(MokshaAny *file_any) {
   return current >= st.st_size;
 }
 
+bool moksha_file_exists(char *path) {
+  if (!path)
+    return false;
+#ifdef _WIN32
+  // Windows _access: 0 means it exists
+  return _access(path, 0) == 0;
+#else
+  // POSIX access: F_OK means file exists
+  return access(path, F_OK) == 0;
+#endif
+}
+
 void moksha_file_truncate(MokshaAny *file_any, int64_t size) {
   int fd = unbox_fd(file_any);
   if (fd >= 0)
@@ -262,8 +278,6 @@ char *moksha_file_readLine(MokshaAny *file_any) {
   char c;
   bool read_any = false;
 
-  // FIX: Track if any characters were actually read to avoid stack garbage bugs
-  // at EOF
   while (read(fd, &c, 1) == 1) {
     read_any = true;
     if (c == '\n')
@@ -282,41 +296,40 @@ char *moksha_file_readLine(MokshaAny *file_any) {
 
   if (!read_any)
     return NULL;
-
   buf[len] = '\0';
   return buf;
 }
 
-MokshaAnyRet moksha_file_readLines(MokshaAny *file_any) {
-  if (!file_any)
+MokshaAnyRet moksha_file_readLines(MokshaAny *file_or_path_any) {
+  if (!file_or_path_any)
     return moksha_pack_any(NULL, NULL);
 
-  MokshaAny target_file = *file_any;
+  int fd = -1;
   bool should_close = false;
 
-  // FIX: Polymorphic detection. If type_id == 16 (MOKSHA_TYPE_STRING),
-  // treat the input as a high-level string path and manage the file handle
-  // internally.
-  if (file_any->vtable && file_any->vtable->type_id == 16) {
-    char *path = (char *)file_any->data;
-    MokshaAnyRet open_ret =
-        moksha_file_open(path, 0); // Open in READ mode (O_RDONLY)
-
-    target_file.data = (void *)(uintptr_t)open_ret;
-    target_file.vtable = (void *)(uintptr_t)(open_ret >> 64);
-
-    if (!target_file.data)
-      return moksha_pack_any(NULL, NULL);
-
+  if (file_or_path_any->vtable && file_or_path_any->vtable->type_id == 16) {
+    char *path = (char *)file_or_path_any->data;
+    MokshaAnyRet open_ret = moksha_file_open(path, 0);
+    MokshaAny temp = {(void *)(uintptr_t)open_ret,
+                      (AnyVTable *)(uintptr_t)(open_ret >> 64)};
+    fd = unbox_fd(&temp);
     should_close = true;
+  } else {
+    fd = unbox_fd(file_or_path_any);
   }
+
+  if (fd < 0)
+    return moksha_pack_any(NULL, NULL);
+
+  intptr_t fd_box = fd;
+  MokshaAny temp_any = {&fd_box, NULL};
 
   size_t cap = 16;
   size_t count = 0;
   char **arr = (char **)moksha_rt_alloc(cap * sizeof(char *), 2);
 
   while (true) {
-    char *line = moksha_file_readLine(&target_file);
+    char *line = moksha_file_readLine(&temp_any);
     if (!line)
       break;
 
@@ -329,25 +342,30 @@ MokshaAnyRet moksha_file_readLines(MokshaAny *file_any) {
     arr[count++] = line;
   }
 
-  // Clean up handle if opened dynamically
-  if (should_close) {
-    moksha_file_close(&target_file);
-  }
+  if (should_close)
+    close(fd);
 
-  MokshaSlice *slice = (MokshaSlice *)moksha_rt_alloc(sizeof(MokshaSlice), 2);
+  MokshaSlice *slice = (MokshaSlice *)moksha_rt_alloc(sizeof(MokshaSlice), 18);
   slice->data = arr;
   slice->length = count;
-  return moksha_pack_any(slice, NULL);
+  return moksha_pack_any(slice, &vtable_array);
 }
 
-// ============================================================================
-// High-Level File Path Methods
-// ============================================================================
-
-bool moksha_file_exists(char *path) {
+char *moksha_file_readText(char *path) {
   if (!path)
-    return false;
-  return access(path, F_OK) == 0;
+    return NULL;
+
+  MokshaAnyRet ret = moksha_file_open(path, 0);
+  MokshaAny file_any = {(void *)(uintptr_t)ret,
+                        (const AnyVTable *)(uintptr_t)(ret >> 64)};
+
+  if (unbox_fd(&file_any) < 0)
+    return NULL;
+
+  MokshaAnyRet result_ret = moksha_file_read(&file_any);
+  moksha_file_close(&file_any);
+
+  return (char *)(uintptr_t)result_ret;
 }
 
 void moksha_file_writeText(char *path, char *text) {
@@ -370,52 +388,42 @@ void moksha_file_appendText(char *path, char *text) {
   }
 }
 
-char *moksha_file_readText(char *path) {
-  if (!path)
-    return NULL;
+// ============================================================================
+// High-Level Binary IO
+// ============================================================================
 
-  MokshaAnyRet ret = moksha_file_open(path, 0);
-  MokshaAny file_any = {(void *)(uintptr_t)ret, (void *)(uintptr_t)(ret >> 64)};
-  if (!file_any.data)
-    return NULL;
-
-  MokshaAnyRet result_ret = moksha_file_read(&file_any);
-  moksha_file_close(&file_any);
-
-  return (char *)(uintptr_t)result_ret; // Low 64 bits = data
-}
-
-void moksha_file_writeBytes(char *path, void *bytes_any_ptr) {
-  if (!path || !bytes_any_ptr)
+void moksha_file_writeBytes(char *path, MokshaAny *data_any) {
+  if (!path || !data_any || !data_any->data)
     return;
+  MokshaSlice *slice = (MokshaSlice *)data_any->data;
 
-  MokshaAny *any_val = (MokshaAny *)bytes_any_ptr;
-  if (!any_val->data)
-    return;
-
-  MokshaSlice *slice = (MokshaSlice *)any_val->data;
-
-  // Use O_BINARY to prevent Windows from corrupting CRLF bytes
   int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
   if (fd >= 0) {
-    write(fd, slice->data, slice->length);
+    uint8_t *bytes = malloc(slice->length);
+    int32_t *ints = (int32_t *)slice->data;
+    for (uint64_t i = 0; i < slice->length; i++) {
+      bytes[i] = (uint8_t)ints[i];
+    }
+    write(fd, bytes, slice->length);
+    free(bytes);
     close(fd);
   }
 }
 
-void moksha_file_appendBytes(char *path, void *bytes_any_ptr) {
-  if (!path || !bytes_any_ptr)
+void moksha_file_appendBytes(char *path, MokshaAny *data_any) {
+  if (!path || !data_any || !data_any->data)
     return;
-
-  MokshaAny *any_val = (MokshaAny *)bytes_any_ptr;
-  if (!any_val->data)
-    return;
-
-  MokshaSlice *slice = (MokshaSlice *)any_val->data;
+  MokshaSlice *slice = (MokshaSlice *)data_any->data;
 
   int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_BINARY, 0666);
   if (fd >= 0) {
-    write(fd, slice->data, slice->length);
+    uint8_t *bytes = malloc(slice->length);
+    int32_t *ints = (int32_t *)slice->data;
+    for (uint64_t i = 0; i < slice->length; i++) {
+      bytes[i] = (uint8_t)ints[i];
+    }
+    write(fd, bytes, slice->length);
+    free(bytes);
     close(fd);
   }
 }
@@ -446,19 +454,18 @@ MokshaAnyRet moksha_file_readBytes(char *path) {
   slice->data = buf;
   slice->length = bytes_read;
 
-  return moksha_pack_any(slice, NULL);
+  return moksha_pack_any(slice, &vtable_array);
 }
 
 // ============================================================================
 // Structured Data (JSON / YAML / PDF File Streamers)
 // ============================================================================
 
-void moksha_file_writeJson(char *path, void *data_any_ptr) {
-  MokshaAny *any_val = (MokshaAny *)data_any_ptr;
-  if (!any_val || !any_val->data)
+void moksha_file_writeJson(char *path, MokshaAny *data_any) {
+  void *map_ptr = data_any ? data_any->data : NULL;
+  if (!map_ptr)
     return;
 
-  void *map_ptr = any_val->data;
   int len = moksha_rt_map_len(map_ptr);
 
   int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
@@ -470,10 +477,7 @@ void moksha_file_writeJson(char *path, void *data_any_ptr) {
     MokshaAny *k = moksha_rt_map_get_key_at(map_ptr, i);
     MokshaAny *v = moksha_rt_map_get_val_at(map_ptr, i);
 
-    char *k_str = (k && k->data) ? (char *)k->data : "";
-
-    // FIX: Bypass __moksha_any_to_string for strings to prevent memory address
-    // leaks
+    char *k_str = (k && k->data) ? (char *)k->data : (char *)"";
     bool is_str = (v && v->vtable && v->vtable->type_id == 16);
     char *v_str = is_str ? (char *)v->data : __moksha_any_to_string(v);
 
@@ -513,7 +517,6 @@ MokshaAnyRet moksha_file_readJson(char *path) {
     if (*p == '}')
       break;
 
-    // Read Key
     if (*p == '"')
       p++;
     char *key_start = p;
@@ -530,7 +533,6 @@ MokshaAnyRet moksha_file_readJson(char *path) {
     while (*p == ' ' || *p == '\n' || *p == '\r')
       p++;
 
-    // Read Value
     bool is_string = (*p == '"');
     if (is_string)
       p++;
@@ -548,26 +550,22 @@ MokshaAnyRet moksha_file_readJson(char *path) {
     if (is_string && *p == '"')
       p++;
 
-    // 1. Box Key
     char *key_str = moksha_rt_alloc(key_len + 1, MOKSHA_TYPE_STRING);
     memcpy(key_str, key_start, key_len);
     key_str[key_len] = '\0';
     MokshaAny *kp = moksha_box_string(key_str);
 
-    // 2. Box Value using universal literal parser
     MokshaAny *vp = parse_and_box_literal(val_start, val_len, is_string);
-
     moksha_rt_map_insert(map, kp, vp);
   }
   return moksha_pack_any(map, &vtable_map);
 }
 
-void moksha_file_writeYaml(char *path, void *data_any_ptr) {
-  MokshaAny *any_val = (MokshaAny *)data_any_ptr;
-  if (!any_val || !any_val->data)
+void moksha_file_writeYaml(char *path, MokshaAny *data_any) {
+  void *map_ptr = data_any ? data_any->data : NULL;
+  if (!map_ptr)
     return;
 
-  void *map_ptr = any_val->data;
   int len = moksha_rt_map_len(map_ptr);
 
   int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
@@ -578,10 +576,7 @@ void moksha_file_writeYaml(char *path, void *data_any_ptr) {
     MokshaAny *k = moksha_rt_map_get_key_at(map_ptr, i);
     MokshaAny *v = moksha_rt_map_get_val_at(map_ptr, i);
 
-    char *k_str = (k && k->data) ? (char *)k->data : "";
-
-    // FIX: Bypass __moksha_any_to_string for strings to prevent memory address
-    // leaks
+    char *k_str = (k && k->data) ? (char *)k->data : (char *)"";
     bool is_str = (v && v->vtable && v->vtable->type_id == 16);
     char *v_str = is_str ? (char *)v->data : __moksha_any_to_string(v);
 
@@ -620,33 +615,33 @@ MokshaAnyRet moksha_file_readYaml(char *path) {
       p++;
     int val_len = p - val_start;
 
-    // Detect if YAML value is explicitly quoted (otherwise parsed dynamically)
     bool is_string = false;
     if (val_len >= 2 && val_start[0] == '"' && val_start[val_len - 1] == '"') {
       is_string = true;
-      val_start++;  // Skip leading quote
-      val_len -= 2; // Remove trailing quote from length
+      val_start++;
+      val_len -= 2;
     }
 
-    // 1. Box Key
     char *key_str = moksha_rt_alloc(key_len + 1, MOKSHA_TYPE_STRING);
     memcpy(key_str, key_start, key_len);
     key_str[key_len] = '\0';
     MokshaAny *kp = moksha_box_string(key_str);
 
-    // 2. Box Value using universal literal parser
     MokshaAny *vp = parse_and_box_literal(val_start, val_len, is_string);
-
     moksha_rt_map_insert(map, kp, vp);
   }
   return moksha_pack_any(map, &vtable_map);
 }
 
-// PDF endpoints (Leaving identical structure, passing pointers)
+// ============================================================================
+// PDF endpoints
+// ============================================================================
+
 MokshaAnyRet moksha_file_createPdf(char *path) {
   MokshaAnyRet ret = moksha_file_open(path, 2 | 16 | 32);
-  MokshaAny file_any = {(void *)(uintptr_t)ret, (void *)(uintptr_t)(ret >> 64)};
-  int fd = unbox_fd(&file_any);
+  MokshaAny temp = {(void *)(uintptr_t)ret,
+                    (const AnyVTable *)(uintptr_t)(ret >> 64)};
+  int fd = unbox_fd(&temp);
 
   if (fd >= 0) {
     const char *magic = "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
@@ -658,7 +653,9 @@ MokshaAnyRet moksha_file_createPdf(char *path) {
 void moksha_file_writePdfText(MokshaAny *pdf_any, char *text) {
   moksha_file_writeLine(pdf_any, text);
 }
+
 void moksha_file_savePdf(MokshaAny *pdf_any) { moksha_file_close(pdf_any); }
+
 MokshaAnyRet moksha_file_openPdf(char *path) {
   return moksha_file_open(path, 1);
 }
@@ -670,8 +667,6 @@ char *moksha_file_extractText(MokshaAny *pdf_any) {
   if (!raw_buffer)
     return NULL;
 
-  // Find where the actual text begins by skipping the PDF magic header.
-  // The header we write is exactly 16 bytes: "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n"
   const char *magic = "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
   size_t magic_len = strlen(magic);
 
@@ -679,26 +674,22 @@ char *moksha_file_extractText(MokshaAny *pdf_any) {
     char *text_start = raw_buffer + magic_len;
     size_t text_len = strlen(text_start);
 
-    // moksha_file_writeLine adds a trailing newline, trim it for exact matches
     if (text_len > 0 && text_start[text_len - 1] == '\n') {
       text_len--;
     }
 
-    char *extracted =
-        (char *)moksha_rt_alloc(text_len + 1, 16); // 16 = String type
+    char *extracted = (char *)moksha_rt_alloc(text_len + 1, 16);
     memcpy(extracted, text_start, text_len);
     extracted[text_len] = '\0';
     return extracted;
   }
 
-  // Fallback: If it's not our mocked PDF, just return the raw buffer
   return raw_buffer;
 }
 
 // ============================================================================
 // Directory Operations
 // ============================================================================
-
 bool moksha_file_createDir(char *path) {
   if (!path)
     return false;
@@ -801,5 +792,5 @@ MokshaAnyRet moksha_file_listDir(char *path) {
   MokshaSlice *slice = (MokshaSlice *)moksha_rt_alloc(sizeof(MokshaSlice), 2);
   slice->data = arr;
   slice->length = len;
-  return moksha_pack_any(slice, NULL);
+  return moksha_pack_any(slice, &vtable_array);
 }

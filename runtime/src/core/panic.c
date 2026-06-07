@@ -1,5 +1,6 @@
 #include "../abi/sys_caps.h"
 #include "../abi/sys_io.h"
+#include "../abi/sys_process.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -35,6 +36,7 @@ static void internal_itoa64(int64_t val, char *buf) {
   buf[j] = '\0';
 }
 
+// Standard user-facing panic (clean exit)
 void moksha_rt_panic(const char *message) {
   const sys_caps_t *caps = sys_get_caps();
 
@@ -44,7 +46,20 @@ void moksha_rt_panic(const char *message) {
     sys_io_write(SYS_IO_FD_STDERR, message, internal_strlen(message), &written);
     sys_io_write(SYS_IO_FD_STDERR, "\n", 1, &written);
   }
-  __builtin_trap();
+  sys_process_exit(1);
+}
+
+// Internal compiler/runtime bug (core dump)
+void moksha_rt_bug(const char *message) {
+  const sys_caps_t *caps = sys_get_caps();
+
+  if (caps->has_stdout) {
+    size_t written;
+    sys_io_write(SYS_IO_FD_STDERR, "FATAL RUNTIME BUG: ", 19, &written);
+    sys_io_write(SYS_IO_FD_STDERR, message, internal_strlen(message), &written);
+    sys_io_write(SYS_IO_FD_STDERR, "\n", 1, &written);
+  }
+  sys_process_abort();
 }
 
 void moksha_rt_panic_out_of_bounds(int64_t index, int64_t length) {

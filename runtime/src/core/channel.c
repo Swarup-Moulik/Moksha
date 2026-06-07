@@ -29,17 +29,19 @@ extern void moksha_rt_resolve_promise(void *promise_handle, void *result_data);
 extern void moksha_rt_reject_promise(void *promise_handle, void *ex_payload);
 extern void cpu_relax(void);
 
-void moksha_builtin_Channel_constructor(void *this_ptr, int capacity) {
-  MokshaChannel *chan = (MokshaChannel *)this_ptr;
+void *moksha_builtin_Channel_new(int capacity) {
+  void *ptr = moksha_rt_alloc(sizeof(MokshaChannel), MOKSHA_TYPE_CHANNEL);
+  MokshaChannel *chan = (MokshaChannel *)ptr;
   chan->spin_lock = 0;
   chan->is_closed = false;
-  chan->capacity = capacity > 0 ? capacity : 1;
-  chan->buffer = (void **)moksha_mem_alloc(sizeof(void *) * chan->capacity);
+  chan->capacity = capacity;
   chan->head = 0;
   chan->tail = 0;
   chan->count = 0;
+  chan->buffer = (void **)moksha_mem_alloc(capacity * sizeof(void *));
   chan->waiting_receivers = NULL;
   chan->waiting_senders = NULL;
+  return ptr;
 }
 
 // [FIX] Prefixed recv() -> promise<T>

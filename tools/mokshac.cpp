@@ -45,6 +45,7 @@
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/Program.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
@@ -162,6 +163,13 @@ static cl::opt<std::string>
                    cl::init(""), cl::cat(MokshaCategory));
 static cl::opt<bool> DisableOpt("O0", cl::desc("Disable backend optimizations"),
                                 cl::init(false), cl::cat(MokshaCategory));
+static cl::list<std::string>
+    Libraries("l",
+              cl::desc("Libraries to link against (e.g., curl for -lcurl)"),
+              cl::ZeroOrMore, cl::Prefix, cl::cat(MokshaCategory));
+static cl::list<std::string>
+    LibraryPaths("L", cl::desc("Library search paths (e.g., /usr/local/lib)"),
+                 cl::ZeroOrMore, cl::Prefix, cl::cat(MokshaCategory));
 
 // Allows pointing to the built runtime lib
 static cl::opt<std::string>
@@ -220,6 +228,33 @@ std::string resolveRuntimeLibrary(const std::string &explicitPath,
   llvm::SmallString<256> fallback = binDir;
   llvm::sys::path::append(fallback, "..", "runtime", libFilename);
   return std::string(fallback.str());
+}
+
+std::string findLLVMTool(const std::string &baseName) {
+  // 1. Try to find the version we compiled against first (LLVM 22)
+  std::string versionedName = baseName + "-22";
+  if (auto path = llvm::sys::findProgramByName(versionedName)) {
+    return *path;
+  }
+
+  // 2. If targeting WASM, check for emcc
+  if (baseName == "emcc") {
+    if (auto path = llvm::sys::findProgramByName("emcc")) {
+      return *path;
+    }
+    if (auto path =
+            llvm::sys::findProgramByName("emcc.bat")) { // Windows fallback
+      return *path;
+    }
+  }
+
+  // 3. Fallback to the standard un-versioned base name
+  if (auto path = llvm::sys::findProgramByName(baseName)) {
+    return *path;
+  }
+
+  // 4. If all else fails, just return the base name and let the shell try
+  return baseName;
 }
 
 int main(int argc, char **argv) {
@@ -528,11 +563,16 @@ int main(int argc, char **argv) {
         }
 
         llvm::outs() << "Running LLVM middle-end optimizers...\n";
-        std::string optCmd = "opt -O2 " + llFilename + " -S -o " + llFilename;
+
+        // Dynamically find the correct optimizer binary
+        std::string optBinary = findLLVMTool("opt");
+        std::string optCmd =
+            optBinary + " -O2 " + llFilename + " -S -o " + llFilename;
         int optResult = std::system(optCmd.c_str());
 
         if (optResult != 0) {
-          llvm::errs() << "Fatal: 'opt' failed to optimize the LLVM IR.\n";
+          llvm::errs() << "Fatal: '" << optBinary
+                       << "' failed to optimize the LLVM IR.\n";
           return 1;
         }
 
@@ -543,21 +583,32 @@ int main(int argc, char **argv) {
         }
 
         // 1. Determine the correct compiler driver
-        std::string compiler = "clang++";
+        std::string compilerBase = "clang++";
         if (actualTriple.isWasm() &&
             actualTriple.getOS() != llvm::Triple::WASI) {
-          // If targeting WebAssembly for the browser, clang++ alone cannot
-          // generate the JS glue code. We must use Emscripten.
-          compiler = "emcc";
+          compilerBase = "emcc";
         }
 
+        // Dynamically find the correct compiler binary
+        std::string compilerBinary = findLLVMTool(compilerBase);
+
         // 2. Build the base command
-        std::string cmd = compiler + " -O2 -Wno-override-module " + llFilename +
-                          extraFilesStr + " " + resolvedRtLib;
+        std::string cmd = compilerBinary + " -O2 -Wno-override-module " +
+                          llFilename + extraFilesStr + " " + resolvedRtLib;
+
+        // Inject custom library paths (-L)
+        for (const auto &path : LibraryPaths) {
+          cmd += " -L" + path;
+        }
+
+        // Inject custom libraries (-l)
+        for (const auto &lib : Libraries) {
+          cmd += " -l" + lib;
+        }
 
         // 3. Pass the target triple explicitly so Clang cross-compiles
         // correctly
-        if (!TargetTriple.empty() && compiler == "clang++") {
+        if (!TargetTriple.empty() && compilerBase == "clang++") {
           cmd += " --target=" + TargetTriple;
         }
 

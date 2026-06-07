@@ -7694,6 +7694,51 @@ private:
       pointeeTy = const_cast<hir::HIRModule *>(hirModule)->getVoidType();
     }
 
+    if (className == "AsyncMutex") {
+      std::string factoryName = "AsyncMutex_new";
+      ensureBuiltinMIR(factoryName);
+      MIRFunction *factoryFunc = mirModule->getFunction(factoryName);
+      if (!factoryFunc) {
+        auto fn = std::make_unique<MIRFunction>(objTy, factoryName,
+                                                Linkage::External);
+        factoryFunc = fn.get();
+        mirModule->addFunction(std::move(fn));
+      }
+
+      // Bypass constructor and standard alloc entirely
+      lastExprValue = builder->createCall(factoryFunc, {}, objTy, "mtx.new",
+                                          false, expr.getLoc());
+      return;
+    }
+
+    if (className == "Channel" || className.find("Channel_") == 0 ||
+        className.find("Channel<") == 0) {
+      std::string factoryName = "moksha_builtin_Channel_new";
+      ensureBuiltinMIR(factoryName);
+      MIRFunction *factoryFunc = mirModule->getFunction(factoryName);
+      if (!factoryFunc) {
+        auto fn = std::make_unique<MIRFunction>(objTy, factoryName,
+                                                Linkage::External);
+        // Arg 0: capacity (i32)
+        fn->addArgument(std::make_unique<MIRArgument>(fn.get(), i32Ty, 0));
+        factoryFunc = fn.get();
+        mirModule->addFunction(std::move(fn));
+      }
+
+      // Evaluate the capacity argument from the AST
+      visit(expr.getArgs()[0].get());
+      MIRValue *capacityVal = lastExprValue;
+      if (capacityVal->getType() != i32Ty) {
+        capacityVal = builder->createBitCast(capacityVal, i32Ty, "cap.cast",
+                                             expr.getLoc());
+      }
+
+      // Bypass constructor and standard alloc entirely
+      lastExprValue = builder->createCall(factoryFunc, {capacityVal}, objTy,
+                                          "chan.new", false, expr.getLoc());
+      return;
+    }
+
     // --- [CRITICAL FIX 1]: Detect Extern Constructor BEFORE Allocation ---
     const hir::HIRClass *targetCls = nullptr;
     for (const auto *cls : hirModule->getClasses()) {
@@ -11317,7 +11362,7 @@ private:
           retTy = boolTy; // Returns bool
         } else if (rtName == "moksha_rt_array_slice" ||
                    rtName == "moksha_rt_array_clone") {
-          retTy = voidPtrTy; // Returns *void (pointer to the new slice)
+          retTy = voidPtrTy;
         }
 
         MIRFunction *rtFunc = mirModule->getFunction(rtName);
@@ -11623,9 +11668,27 @@ private:
           rtStringName = "moksha_string_is_alpha";
         else if (cName.find("is_whitespace") == 0)
           rtStringName = "moksha_string_is_whitespace";
-        else if (cName == "length" || cName.find("length_") == 0)
-          rtStringName = "moksha_rt_string_len";
-        else if (cName == "at" || cName.find("at_") == 0)
+        else if (cName == "length" || cName.find("length_") == 0) {
+          // [FIX]: Check if the argument is dynamically typed (Any)
+          bool isAnyArg = false;
+          if (!expr.getArgs().empty()) {
+            const hir::HIRType *argTy = expr.getArgs()[0]->getType();
+            // Peel off pointers
+            if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(argTy)) {
+              argTy = ptrTy->getPointee();
+            }
+            if (argTy && argTy->getKind() == hir::TypeKind::Any) {
+              isAnyArg = true;
+            }
+          }
+
+          if (isAnyArg) {
+            rtStringName =
+                "moksha_rt_any_len"; // Route to dynamic runtime dispatcher
+          } else {
+            rtStringName = "moksha_rt_string_len"; // Standard string fallback
+          }
+        } else if (cName == "at" || cName.find("at_") == 0)
           rtStringName = "moksha_rt_string_char_at";
       }
 
@@ -11651,19 +11714,44 @@ private:
 
       // Re-map the callee if it was a string builtin
       if (!rtStringName.empty()) {
+        auto *voidTy = const_cast<hir::HIRModule *>(hirModule)->getVoidType();
+        auto *voidPtrTy =
+            const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                voidTy, hir::Ownership::None);
+
+        // ====================================================================
+        // [CRITICAL FIX]: Ensure moksha_string_join passes the slice by
+        // pointer!
+        // ====================================================================
+        if (rtStringName == "moksha_string_join" && !args.empty()) {
+          MIRValue *arrArg = args[0];
+          // 1. If it's a raw struct (by value), spill it to the stack!
+          if (arrArg->getType()->getKind() != hir::TypeKind::Pointer) {
+            MIRValue *spill = builder->createAlloca(
+                arrArg->getType(), "join.arr.spill", expr.getLoc());
+            builder->insert(
+                std::make_unique<StoreInst>(arrArg, spill, expr.getLoc()));
+            arrArg = spill;
+          }
+          // 2. Cast to *void so the C runtime signature matches perfectly
+          if (arrArg->getType() != voidPtrTy) {
+            arrArg = builder->createBitCast(arrArg, voidPtrTy, "join.arr.cast",
+                                            expr.getLoc());
+          }
+          // 3. Overwrite the argument list
+          args[0] = arrArg;
+        }
+
         MIRFunction *rtFunc = mirModule->getFunction(rtStringName);
         if (!rtFunc) {
           const hir::HIRType *retTy = expr.getType();
           if (!retTy)
-            retTy = const_cast<hir::HIRModule *>(hirModule)->getVoidType();
+            retTy = voidTy;
 
           // --- [CRITICAL FIX]: Bypass Windows ABI sret bug by forcing split to
           // return a heap pointer! ---
           if (rtStringName == "moksha_string_split") {
-            auto *voidTy =
-                const_cast<hir::HIRModule *>(hirModule)->getVoidType();
-            retTy = const_cast<hir::HIRModule *>(hirModule)->getPointerType(
-                voidTy, hir::Ownership::None);
+            retTy = voidPtrTy;
           }
 
           auto fn = std::make_unique<MIRFunction>(retTy, rtStringName,
@@ -11704,7 +11792,7 @@ private:
                    cName == "lerp" || cName == "clamp" ||
                    cName == "isPowerOf2" || cName == "isnan" ||
                    cName == "isinf" || cName == "isfinite" || cName == "min" ||
-                   cName == "max" || cName == "sign") {
+                   cName == "max" || cName == "sign" || cName == "is_close") {
           rtMathName = "moksha_rt_math_" + cName;
         }
       }
@@ -11719,9 +11807,9 @@ private:
         // Determine Return Type
         const hir::HIRType *retTy = f64Ty;
         if (cName == "isPowerOf2" || cName == "isnan" || cName == "isinf" ||
-            cName == "isfinite")
+            cName == "isfinite" || cName == "is_close") {
           retTy = boolTy;
-        else if (cName == "randint")
+        } else if (cName == "randint")
           retTy = i32Ty;
         else if (cName == "seed")
           retTy = voidTy;
@@ -11925,17 +12013,43 @@ private:
       if (lastExprValue->getType()->getKind() == hir::TypeKind::Pointer &&
           expectedAstTy->getKind() != hir::TypeKind::Pointer) {
 
-        // --- [NEW FIX] Cast *void C-return to specific *T before loading! ---
+        MIRValue *wrapperPtr = lastExprValue; // Save the raw heap pointer
+
         auto *targetPtrTy =
             const_cast<hir::HIRModule *>(hirModule)->getPointerType(
                 expectedAstTy, hir::Ownership::None);
-
-        if (lastExprValue->getType() != targetPtrTy) {
-          lastExprValue = builder->createBitCast(lastExprValue, targetPtrTy,
-                                                 "ret.ptr.cast", expr.getLoc());
+        if (wrapperPtr->getType() != targetPtrTy) {
+          wrapperPtr = builder->createBitCast(wrapperPtr, targetPtrTy,
+                                              "ret.ptr.cast", expr.getLoc());
         }
+
+        // 1. Unpack the struct values into registers
         lastExprValue =
-            builder->createLoad(lastExprValue, "abi.ret.load", expr.getLoc());
+            builder->createLoad(wrapperPtr, "abi.ret.load", expr.getLoc());
+
+        // 2. FREE THE WRAPPER IMMEDIATELY!
+        std::string freeName = "moksha_mem_free";
+        ensureBuiltinMIR(freeName);
+        MIRFunction *freeFunc = mirModule->getFunction(freeName);
+        auto *voidTy = const_cast<hir::HIRModule *>(hirModule)->getVoidType();
+        auto *voidPtrTy =
+            const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                voidTy, hir::Ownership::None);
+
+        if (!freeFunc) {
+          auto fn = std::make_unique<MIRFunction>(voidTy, freeName,
+                                                  Linkage::External);
+          fn->addArgument(
+              std::make_unique<MIRArgument>(fn.get(), voidPtrTy, 0));
+          freeFunc = fn.get();
+          mirModule->addFunction(std::move(fn));
+        }
+
+        MIRValue *castToVoid = builder->createBitCast(
+            wrapperPtr, voidPtrTy, "free.cast", expr.getLoc());
+        builder->insert(std::make_unique<CallInst>(
+            freeFunc, std::vector<MIRValue *>{castToVoid}, voidTy, "", false,
+            expr.getLoc()));
       }
 
       if (lastExprValue->getType()->toString() != expectedAstTy->toString()) {

@@ -12,13 +12,20 @@ extern "C" {
 struct _Unwind_Exception;
 
 // ============================================================================
+// Builtin Type IDs
+// ============================================================================
+// Internal primitives don't require reflection, so 0 is safe.
+#define MOKSHA_TYPE_MUTEX 0
+#define MOKSHA_TYPE_CHANNEL 0
+
+// ============================================================================
 // Core Memory Model
 // ============================================================================
 typedef struct {
-  uint32_t ref_count;  // Strong references
-  uint32_t weak_count; // Weak references
-  uint32_t type_id;    // Metadata
-  // uint32_t _padding;   // Explicit 4-byte padding to guarantee 16-byte size!
+  uint32_t ref_count;      // Strong references
+  uint32_t weak_count;     // Weak references
+  uint32_t type_id;        // Metadata
+  uint32_t capacity_bytes; // Tracks buffer size, replacing padding
 } MokshaHeader;
 
 typedef struct {
@@ -164,6 +171,15 @@ bool moksha_rt_array_contains(MokshaSlice *slice, void *value_ptr,
 int32_t moksha_rt_array_index(MokshaSlice *slice, void *value_ptr,
                               size_t element_size);
 void moksha_rt_array_sort(MokshaSlice *slice, size_t element_size);
+void moksha_rt_array_resize(MokshaSlice *slice, int32_t new_length,
+                            size_t element_size);
+bool moksha_rt_array_contains(MokshaSlice *slice, void *element,
+                              size_t element_size);
+int32_t moksha_rt_array_index(MokshaSlice *slice, void *element,
+                              size_t element_size);
+void moksha_rt_array_reverse(MokshaSlice *slice, size_t element_size);
+void moksha_rt_array_fill(MokshaSlice *slice, void *value_ptr,
+                          size_t element_size);
 
 // ============================================================================
 // Strings & I/O
@@ -223,7 +239,7 @@ char *moksha_string_to_lower(char *str);
 char *moksha_string_trim(char *str);
 char *moksha_string_replace(char *str, char *old_str, char *new_str);
 MokshaSlice *moksha_string_split(char *str, char *delim);
-char *moksha_string_join(MokshaSlice arr, char *delim);
+char *moksha_string_join(MokshaSlice *arr, char *delim);
 bool moksha_string_is_digit(char ch);
 bool moksha_string_is_alpha(char ch);
 bool moksha_string_is_whitespace(char ch);
@@ -272,7 +288,7 @@ MokshaAny *moksha_box_array(MokshaSlice *slice);
 // ============================================================================
 MokshaAnyRet moksha_file_open(char *path, int32_t mode);
 void moksha_file_close(MokshaAny *file_any);
-
+int32_t moksha_rt_any_len(MokshaAny *any_val);
 void moksha_file_write(MokshaAny *file_any, MokshaAny *data_any);
 MokshaAnyRet moksha_file_read(MokshaAny *file_any);
 
@@ -293,13 +309,13 @@ void moksha_file_writeText(char *path, char *text);
 void moksha_file_appendText(char *path, char *text);
 char *moksha_file_readText(char *path);
 
-void moksha_file_writeBytes(char *path, void *bytes_any);
-void moksha_file_appendBytes(char *path, void *bytes_any);
+void moksha_file_writeBytes(char *path, MokshaAny *data_any);
+void moksha_file_appendBytes(char *path, MokshaAny *data_any);
 MokshaAnyRet moksha_file_readBytes(char *path);
 
-void moksha_file_writeJson(char *path, void *data_any);
+void moksha_file_writeJson(char *path, MokshaAny *data_any);
 MokshaAnyRet moksha_file_readJson(char *path);
-void moksha_file_writeYaml(char *path, void *data_any);
+void moksha_file_writeYaml(char *path, MokshaAny *data_any);
 MokshaAnyRet moksha_file_readYaml(char *path);
 
 MokshaAnyRet moksha_file_createPdf(char *path);
@@ -316,9 +332,6 @@ bool moksha_file_move(char *src, char *dst);
 MokshaAnyRet moksha_file_listDir(char *path);
 bool moksha_file_remove(char *path);
 bool moksha_file_removeDir(char *path);
-
-// Missing Array length builtin from the linker error
-int32_t length(void *arr_ptr);
 
 // ============================================================================
 // Synchronization & Concurrency
@@ -359,6 +372,7 @@ void *moksha_rt_consume_exception();
 // Error Handling & Exceptions
 // ============================================================================
 void moksha_rt_panic(const char *message);
+void moksha_rt_bug(const char *message);
 void moksha_rt_panic_out_of_bounds(int64_t index, int64_t length);
 void moksha_rt_panic_null_deref(void);
 void moksha_rt_panic_key_not_found(void);
@@ -401,20 +415,20 @@ bool moksha_rt_math_isPowerOf2(int32_t x);
 bool moksha_rt_math_isnan(double x);
 bool moksha_rt_math_isinf(double x);
 bool moksha_rt_math_isfinite(double x);
+bool moksha_rt_math_is_close(double a, double b, double epsilon);
 
 // ============================================================================
 // Builtin Object Bindings
 // ============================================================================
-void AsyncMutex_constructor(void *this_ptr) __asm__(
-    "AsyncMutex_constructor_ret_void");
+void *AsyncMutex_new(void) __asm__("AsyncMutex_new");
 void *
 AsyncMutex_lock(void *this_ptr) __asm__("AsyncMutex_lock_ret_promise_void");
 void AsyncMutex_unlock(void *this_ptr) __asm__("AsyncMutex_unlock_ret_void");
 void AsyncMutex_destructor(void *this_ptr) __asm__(
     "AsyncMutex_destructor_ret_void");
 
-void moksha_builtin_Channel_constructor(void *this_ptr, int capacity) __asm__(
-    "moksha_builtin_Channel_constructor");
+void *
+moksha_builtin_Channel_new(int capacity) __asm__("moksha_builtin_Channel_new");
 void *moksha_builtin_Channel_recv(void *this_ptr) __asm__(
     "moksha_builtin_Channel_recv");
 void *

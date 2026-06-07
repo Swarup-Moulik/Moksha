@@ -71,12 +71,18 @@ add_library(mokshaSettings INTERFACE)
 target_include_directories(mokshaSettings INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+  ${LLVM_INCLUDE_DIRS}
+  ${MLIR_INCLUDE_DIRS}
 )
 
-# Force the C++ compiler to map LLVM Pass IDs directly to the DLL memory space.
-if(MINGW OR WIN32)
-  target_compile_definitions(mokshaSettings INTERFACE LLVM_LINK_LLVM_DYLIB)
-endif()
+# Tell the linker where the LLVM static libraries (like lldELF) live
+target_link_directories(mokshaSettings INTERFACE
+  ${LLVM_LIBRARY_DIRS}
+)
+
+# Safely split the LLVM definitions string and apply them as raw compiler flags
+separate_arguments(LLVM_DEFS NATIVE_COMMAND ${LLVM_DEFINITIONS})
+target_compile_options(mokshaSettings INTERFACE ${LLVM_DEFS})
 
 # ============================================================
 # Warnings (strict but sane)

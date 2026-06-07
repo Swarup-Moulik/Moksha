@@ -1,26 +1,25 @@
 #include "../../include/moksha_rt.h"
 
 // Define canonical VTables used by the runtime
-static const AnyVTable vtable_string = {MOKSHA_TYPE_STRING,
-                                        (void *)__moksha_ptr_to_string,
-                                        moksha_rt_retain, moksha_rt_release};
+const AnyVTable vtable_string = {MOKSHA_TYPE_STRING,
+                                 (void *)__moksha_ptr_to_string,
+                                 moksha_rt_retain, moksha_rt_release};
 
-static const AnyVTable vtable_i32 = {
-    MOKSHA_TYPE_I32, (void *)__moksha_int_to_string, NULL, NULL};
+const AnyVTable vtable_i32 = {MOKSHA_TYPE_I32, (void *)__moksha_int_to_string,
+                              NULL, NULL};
 
-static const AnyVTable vtable_f64 = {
-    MOKSHA_TYPE_F64, (void *)__moksha_double_to_string, NULL, NULL};
+const AnyVTable vtable_f64 = {MOKSHA_TYPE_F64,
+                              (void *)__moksha_double_to_string, NULL, NULL};
 
-static const AnyVTable vtable_bool = {
-    MOKSHA_TYPE_BOOL, (void *)__moksha_bool_to_string, NULL, NULL};
+const AnyVTable vtable_bool = {MOKSHA_TYPE_BOOL,
+                               (void *)__moksha_bool_to_string, NULL, NULL};
 
-const AnyVTable vtable_map = {MOKSHA_TYPE_TABLE,
-                                     (void *)__moksha_any_to_string,
-                                     moksha_rt_retain, moksha_rt_release};
+const AnyVTable vtable_map = {MOKSHA_TYPE_TABLE, (void *)__moksha_any_to_string,
+                              moksha_rt_retain, moksha_rt_release};
 
-static const AnyVTable vtable_array = {MOKSHA_TYPE_ARRAY,
-                                       (void *)__moksha_any_to_string,
-                                       moksha_rt_retain, moksha_rt_release};
+const AnyVTable vtable_array = {MOKSHA_TYPE_ARRAY,
+                                (void *)__moksha_any_to_string,
+                                moksha_rt_retain, moksha_rt_release};
 
 MokshaAny *moksha_box_string(char *str) {
   MokshaAny *any = moksha_rt_alloc(sizeof(MokshaAny), MOKSHA_TYPE_STRING);

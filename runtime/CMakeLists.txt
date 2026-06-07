@@ -7,13 +7,13 @@ set(MOKSHA_TARGET "host" CACHE STRING "Target platform (windows, linux, darwin, 
 
 # 2. Detect Host if no target specified
 if(MOKSHA_TARGET STREQUAL "host")
-    if(WIN32)
-        set(MOKSHA_TARGET "windows")
-    elseif(APPLE)
-        set(MOKSHA_TARGET "darwin")
-    else()
-        set(MOKSHA_TARGET "linux")
-    endif()
+  if(WIN32)
+    set(MOKSHA_TARGET "windows")
+  elseif(APPLE)
+    set(MOKSHA_TARGET "darwin")
+  else()
+    set(MOKSHA_TARGET "linux")
+  endif()
 endif()
 
 message(STATUS "Moksha Runtime Target: ${MOKSHA_TARGET}")
@@ -45,62 +45,67 @@ set(CORE_SOURCES
 set(SYS_SOURCES "")
 
 if(MOKSHA_TARGET STREQUAL "windows")
-    list(APPEND SYS_SOURCES
+  list(APPEND SYS_SOURCES
         src/sys/windows/io.c
         src/sys/windows/alloc.c
         src/sys/windows/thread.c
         src/sys/windows/caps.c
         src/sys/windows/event_loop.c
         src/sys/windows/time.c
+        src/sys/windows/process.c
     )
-    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-    set(PLATFORM_LIBS kernel32)
+  add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+  set(PLATFORM_LIBS kernel32)
 
 elseif(MOKSHA_TARGET STREQUAL "linux")
-    list(APPEND SYS_SOURCES
-        src/sys/posix_common/io.c
-        src/sys/posix_common/alloc.c
-        src/sys/posix_common/thread.c
-        src/sys/posix_common/time.c   # FIXED
-        src/sys/linux/event_loop.c
-        src/sys/linux/caps.c
-    )
-    set(PLATFORM_LIBS pthread)
-
-elseif(MOKSHA_TARGET STREQUAL "darwin")  # ADDED
-    list(APPEND SYS_SOURCES
+  list(APPEND SYS_SOURCES
         src/sys/posix_common/io.c
         src/sys/posix_common/alloc.c
         src/sys/posix_common/thread.c
         src/sys/posix_common/time.c
+        src/sys/linux/event_loop.c
+        src/sys/linux/caps.c
+        src/sys/posix_common/process.c
+    )
+  set(PLATFORM_LIBS pthread)
+
+elseif(MOKSHA_TARGET STREQUAL "darwin")
+  list(APPEND SYS_SOURCES
+        src/sys/posix_common/io.c
+        src/sys/posix_common/alloc.c
+        src/sys/posix_common/thread.c
+        src/sys/posix_common/time.c
+        src/sys/posix_common/process.c
         src/sys/darwin/event_loop.c
         src/sys/darwin/caps.c
     )
 
 elseif(MOKSHA_TARGET STREQUAL "wasi")
-    list(APPEND SYS_SOURCES
+  list(APPEND SYS_SOURCES
         src/sys/wasi/io.c
         src/sys/wasi/alloc.c
         src/sys/wasi/event_loop.c
         src/sys/wasi/caps.c
-        src/sys/posix_common/time.c   # ADDED
+        src/sys/posix_common/time.c
+        src/sys/posix_common/process.c
     )
 
-elseif(MOKSHA_TARGET STREQUAL "wasm_web") # ADDED
-    list(APPEND SYS_SOURCES
+elseif(MOKSHA_TARGET STREQUAL "wasm_web")
+  list(APPEND SYS_SOURCES
         src/sys/wasm_web/io.c
         src/sys/wasm_web/caps.c
         src/sys/wasm_web/event_loop.c
         src/sys/posix_common/time.c
+        src/sys/posix_common/process.c
     )
 
 elseif(MOKSHA_TARGET STREQUAL "baremetal")
-    # Baremetal requires Architecture and Platform selection
-    # Usage: -DMOKSHA_ARCH=aarch64 -DMOKSHA_PLATFORM=qemu_virt
-    set(MOKSHA_ARCH "x86_64" CACHE STRING "Baremetal Architecture")
-    set(MOKSHA_PLATFORM "qemu_virt" CACHE STRING "Baremetal Platform/Board")
+  # Baremetal requires Architecture and Platform selection
+  # Usage: -DMOKSHA_ARCH=aarch64 -DMOKSHA_PLATFORM=qemu_virt
+  set(MOKSHA_ARCH "x86_64" CACHE STRING "Baremetal Architecture")
+  set(MOKSHA_PLATFORM "qemu_virt" CACHE STRING "Baremetal Platform/Board")
 
-    list(APPEND SYS_SOURCES
+  list(APPEND SYS_SOURCES
         src/sys/baremetal/core/alloc.c
         src/sys/baremetal/core/event_loop.c
         src/sys/baremetal/core/caps.c
@@ -109,8 +114,8 @@ elseif(MOKSHA_TARGET STREQUAL "baremetal")
         src/sys/baremetal/platform/${MOKSHA_PLATFORM}/board.c
         src/sys/baremetal/platform/${MOKSHA_PLATFORM}/boot.S
     )
-    # Freestanding flags for baremetal
-    add_compile_options(-ffreestanding -nostdlib -fno-stack-protector -D__MOKSHA_BAREMETAL__)
+  # Freestanding flags for baremetal
+  add_compile_options(-ffreestanding -nostdlib -fno-stack-protector -D__MOKSHA_BAREMETAL__)
 endif()
 
 # 5. Create the Library
@@ -124,11 +129,11 @@ target_include_directories(moksha_rt PUBLIC
 
 # 7. Compiler-specific settings
 if(MSVC)
-    # /EHa enables asynchronous/SEH exception unwinding in MSVC
-    target_compile_options(moksha_rt PRIVATE /W4 /Z7 /EHa)
+  # /EHa enables asynchronous/SEH exception unwinding in MSVC
+  target_compile_options(moksha_rt PRIVATE /W4 /Z7 /EHa)
 else()
-    # -fexceptions forces GCC/Clang to emit unwind tables for C code
-    target_compile_options(moksha_rt PRIVATE -Wall -Wextra -g -fexceptions)
+  # -fexceptions forces GCC/Clang to emit unwind tables for C code
+  target_compile_options(moksha_rt PRIVATE -Wall -Wextra -g -fexceptions)
 endif()
 
 # 8. Output Naming (matches what mokshac.cpp expects)

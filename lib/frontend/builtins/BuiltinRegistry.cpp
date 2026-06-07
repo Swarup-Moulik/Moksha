@@ -190,6 +190,15 @@ void BuiltinRegistry::registerMathBuiltins(ASTContext &ctx, SymbolTable &sym) {
     addMath("lerp", std::move(p), mkF64());
   }
 
+  // is_close(a: F64, b: F64, epsilon: F64) -> Bool
+  {
+    std::vector<FunctionDecl::Param> p;
+    p.push_back({"a", mkF64(), loc});
+    p.push_back({"b", mkF64(), loc});
+    p.push_back({"epsilon", mkF64(), loc});
+    addMath("is_close", std::move(p), mkBool());
+  }
+
   // Int/Bool Operations
   addMath("random", {}, mkF64());
 

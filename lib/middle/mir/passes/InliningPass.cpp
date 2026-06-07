@@ -324,30 +324,27 @@ bool InliningPass::inlineCall(
 
       for (ReturnInst *ret : returns) {
         MIRBlock *retBlock = ret->getParent();
+        SourceLocation loc = ret->getLoc(); // [FIX] Extract location early
+
         if (ret->getReturnValue()) {
           MIRValue *retVal = ret->getReturnValue();
 
           if (retVal->getType() != retTy) {
             if (retVal->getType()->toString() != retTy->toString()) {
-              auto castInst =
-                  std::make_unique<CastInst>(Opcode::BitCast, retVal, retTy,
-                                             "inline.ret.cast", ret->getLoc());
+              auto castInst = std::make_unique<CastInst>(
+                  Opcode::BitCast, retVal, retTy, "inline.ret.cast", loc);
               castInst->setParent(retBlock);
               retVal = castInst.get();
               auto &retInsts = retBlock->getInstructionsMut();
-              // Insert the cast right before the ReturnInst
               retInsts.insert(retInsts.end() - 1, std::move(castInst));
             }
           }
-
           phi->addIncoming(retVal, retBlock);
         }
 
-        // Replace return with branch to the continuation block
         auto &retInsts = retBlock->getInstructionsMut();
-        retInsts.pop_back();
-        auto brInst =
-            std::make_unique<BranchInst>(returnBlockPtr, ret->getLoc());
+        retInsts.pop_back(); // Safely pop
+        auto brInst = std::make_unique<BranchInst>(returnBlockPtr, loc);
         brInst->setParent(retBlock);
         retInsts.push_back(std::move(brInst));
 
@@ -360,13 +357,14 @@ bool InliningPass::inlineCall(
           returnBlockPtr->getInstructionsMut().begin(), std::move(phi));
 
     } else {
-      // Void function, just insert branches
       for (ReturnInst *ret : returns) {
         MIRBlock *retBlock = ret->getParent();
+        SourceLocation loc = ret->getLoc(); // [FIX] Extract location early
+
         auto &retInsts = retBlock->getInstructionsMut();
-        retInsts.pop_back();
-        auto brInst =
-            std::make_unique<BranchInst>(returnBlockPtr, ret->getLoc());
+        retInsts.pop_back(); // Safely pop
+
+        auto brInst = std::make_unique<BranchInst>(returnBlockPtr, loc);
         brInst->setParent(retBlock);
         retInsts.push_back(std::move(brInst));
 
@@ -570,14 +568,14 @@ bool InliningPass::inlineInvoke(
           std::make_unique<PhiInst>(retTy, "invoke.ret", returns[0]->getLoc());
       for (ReturnInst *ret : returns) {
         MIRBlock *retBlock = ret->getParent();
+        SourceLocation loc = ret->getLoc();
         if (ret->getReturnValue()) {
           MIRValue *retVal = ret->getReturnValue();
 
           if (retVal->getType() != retTy) {
             if (retVal->getType()->toString() != retTy->toString()) {
-              auto castInst =
-                  std::make_unique<CastInst>(Opcode::BitCast, retVal, retTy,
-                                             "inline.ret.cast", ret->getLoc());
+              auto castInst = std::make_unique<CastInst>(
+                  Opcode::BitCast, retVal, retTy, "inline.ret.cast", loc);
               castInst->setParent(retBlock);
               retVal = castInst.get();
               auto &retInsts = retBlock->getInstructionsMut();
@@ -590,8 +588,9 @@ bool InliningPass::inlineInvoke(
         }
 
         auto &retInsts = retBlock->getInstructionsMut();
-        retInsts.pop_back();
-        auto brInst = std::make_unique<BranchInst>(normalDest, ret->getLoc());
+        retInsts.pop_back(); // Safely pop
+
+        auto brInst = std::make_unique<BranchInst>(normalDest, loc);
         brInst->setParent(retBlock);
         retInsts.push_back(std::move(brInst));
 
@@ -605,12 +604,12 @@ bool InliningPass::inlineInvoke(
     } else {
       for (ReturnInst *ret : returns) {
         MIRBlock *retBlock = ret->getParent();
+        SourceLocation loc = ret->getLoc();
         auto &retInsts = retBlock->getInstructionsMut();
         retInsts.pop_back();
-        auto brInst = std::make_unique<BranchInst>(normalDest, ret->getLoc());
+        auto brInst = std::make_unique<BranchInst>(normalDest, loc);
         brInst->setParent(retBlock);
         retInsts.push_back(std::move(brInst));
-
         retBlock->addSuccessor(normalDest);
         normalDest->addPredecessor(retBlock);
       }
@@ -724,11 +723,14 @@ bool InliningPass::inlineInvoke(
     for (ResumeInst *resumeInst : resumes) {
       MIRBlock *resumeBlock = resumeInst->getParent();
 
-      auto &insts = resumeBlock->getInstructionsMut();
-      insts.pop_back(); // Remove Resume
+      // [FIX] Extract all data BEFORE destroying the instruction
+      SourceLocation loc = resumeInst->getLoc();
+      MIRValue *exVal = resumeInst->getException();
 
-      auto brInst = std::make_unique<BranchInst>(actualCleanupBlock,
-                                                 resumeInst->getLoc());
+      auto &insts = resumeBlock->getInstructionsMut();
+      insts.pop_back(); // Now it's safe to pop!
+
+      auto brInst = std::make_unique<BranchInst>(actualCleanupBlock, loc);
       brInst->setParent(resumeBlock);
       insts.push_back(std::move(brInst));
 
@@ -738,7 +740,8 @@ bool InliningPass::inlineInvoke(
 
       // Feed the callee's exception into the Phi if we created one
       if (exPhi) {
-        exPhi->addIncoming(resumeInst->getException(), resumeBlock);
+        exPhi->addIncoming(exVal,
+                           resumeBlock); // Using the safely extracted value
       }
     }
   }

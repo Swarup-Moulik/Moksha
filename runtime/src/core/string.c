@@ -8,6 +8,7 @@
 
 extern void *moksha_rt_alloc(size_t payload_size, uint32_t type_id);
 extern void moksha_rt_panic(const char *message);
+extern void *moksha_mem_alloc(size_t size);
 
 // ============================================================================
 // Bare-Metal Utility Functions (Replaces <string.h> and <stdio.h>)
@@ -748,9 +749,7 @@ char *moksha_string_replace(char *str, char *old_str, char *new_str) {
 }
 
 MokshaSlice *moksha_string_split(char *str, char *delim) {
-  // Allocate the struct on the heap so we can return an 8-byte pointer (RAX
-  // compatible)
-  MokshaSlice *ret = (MokshaSlice *)moksha_rt_alloc(sizeof(MokshaSlice), 0);
+  MokshaSlice *ret = (MokshaSlice *)moksha_mem_alloc(sizeof(MokshaSlice));
 
   if (!str || !delim) {
     ret->data = NULL;
@@ -800,31 +799,38 @@ MokshaSlice *moksha_string_split(char *str, char *delim) {
   return ret;
 }
 
-char *moksha_string_join(MokshaSlice arr, char *delim) {
-  if (!arr.data || arr.length == 0) {
+char *moksha_string_join(MokshaSlice *arr, char *delim) {
+  // 1. Add a null check for the pointer itself
+  if (!arr || !arr->data || arr->length == 0) {
     char *empty = (char *)moksha_rt_alloc(1, MOKSHA_TYPE_STRING);
     empty[0] = '\0';
     return empty;
   }
-  char **strs = (char **)arr.data;
+
+  // 2. Dereference using -> instead of .
+  char **strs = (char **)arr->data;
   size_t delim_len = delim ? internal_strlen(delim) : 0;
   size_t total_len = 0;
-  for (uint64_t i = 0; i < arr.length; i++) {
+
+  for (uint64_t i = 0; i < arr->length; i++) {
     total_len += internal_strlen(strs[i]);
-    if (i < arr.length - 1)
+    if (i < arr->length - 1)
       total_len += delim_len;
   }
+
   char *res = (char *)moksha_rt_alloc(total_len + 1, MOKSHA_TYPE_STRING);
   char *dst = res;
-  for (uint64_t i = 0; i < arr.length; i++) {
+
+  for (uint64_t i = 0; i < arr->length; i++) {
     size_t len = internal_strlen(strs[i]);
     for (size_t j = 0; j < len; j++)
       *dst++ = strs[i][j];
-    if (i < arr.length - 1 && delim_len > 0) {
+    if (i < arr->length - 1 && delim_len > 0) {
       for (size_t j = 0; j < delim_len; j++)
         *dst++ = delim[j];
     }
   }
+
   *dst = '\0';
   return res;
 }

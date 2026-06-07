@@ -4,8 +4,33 @@
 
 # Moksha
 
+<p align="left">
+  <a href="https://discord.com/channels/1510845258605527151/1510845260547227791">
+    <img src="https://img.shields.io/badge/Discord-333333?style=flat-square&logo=discord&logoColor=5865F2" alt="Discord" />
+  </a>
+  <a href="https://youtube.com/@mokshaprogramminglanguage?si=qzSkAgmgsRRNs-jA">
+    <img src="https://img.shields.io/badge/YouTube-333333?style=flat-square&logo=youtube&logoColor=FF0000" alt="YouTube" />
+  </a>
+  <a href="https://moksha-lang-web.onrender.com/">
+    <img src="https://img.shields.io/badge/Website-333333?style=flat-square&logo=data:image/svg%2Bxml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMTAwIDEwMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYjg1YzE5IiBzdHJva2Utd2lkdGg9IjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8Y2lyY2xlIGN4PSIyMCIgY3k9IjgwIiByPSI1IiBmaWxsPSIjYjg1YzE5IiAvPgogIDxjaXJjbGUgY3g9IjIwIiBjeT0iMzUiIHI9IjUiIGZpbGw9IiNiODVjMTkiIC8+CiAgPGNpcmNsZSBjeD0iNTAiIGN5PSI2NSIgcj0iNSIgZmlsbD0iI2I4NWMxOSIgLz4KICA8Y2lyY2xlIGN4PSI4MCIgY3k9IjM1IiByPSI1IiBmaWxsPSIjYjg1YzE5IiAvPgoKICA8cGF0aCBkPSJNIDIwIDc1IEwgMjAgNDAiIC8+CiAgPHBhdGggZD0iTSAyMyAzOCBMIDQ3IDYyIiAvPgogIDxwYXRoIGQ9Ik0gNTMgNjIgTCA3NyAzOCIgLz4KCiAgPHBhdGggZD0iTSA4MCAzMCBMIDgwIDE1IiBzdHJva2UtZGFzaGFycmF5PSI0IDQiIC8+CiAgPHBhdGggZD0iTSA3MCAyNSBMIDgwIDE1IEwgOTAgMjUiIC8+Cjwvc3ZnPgo=" alt="Moksha Website" />
+  </a>
+</p>
+
 Moksha is a statically typed systems programming language with a custom multi-stage compilation pipeline, aimed to
 bridge the performance with flexibility and safety.
+
+<p align="left">
+  <a href="https://github.com/Swarup-Moulik/Moksha/stargazers">
+    <img src="https://img.shields.io/github/stars/Swarup-Moulik/Moksha?style=flat-square&color=c9a0dc" alt="GitHub Stars" />
+  </a>
+  <a href="https://github.com/Swarup-Moulik/Moksha/network/members">
+    <img src="https://img.shields.io/github/forks/Swarup-Moulik/Moksha?style=flat-square&color=c9a0dc" alt="GitHub Forks" />
+  </a>
+  
+  <a href="https://github.com/Swarup-Moulik/Moksha/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/Swarup-Moulik/Moksha?style=flat-square&color=4caf50" alt="License" />
+  </a>
+</p>
 
 ---
 

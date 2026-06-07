@@ -1002,9 +1002,13 @@ ResumeInst::ResumeInst(MIRValue *exception, SourceLocation loc)
 
 void ResumeInst::dump(llvm::raw_ostream &os) const {
   os << "resume ";
-  printType(os, exception->getType());
-  os << " ";
-  printOperand(os, exception);
+  if (exception) {
+    printType(os, exception->getType());
+    os << " ";
+    printOperand(os, exception);
+  } else {
+    os << "none <null exception>"; // Prevent the segfault!
+  }
 }
 
 ThrowInst::ThrowInst(MIRValue *exception, MIRBlock *unwindDest,

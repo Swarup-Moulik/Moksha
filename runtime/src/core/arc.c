@@ -58,6 +58,7 @@ void *moksha_rt_alloc(size_t payload_size, uint32_t type_id) {
   header->ref_count = 1;
   header->weak_count = 1;
   header->type_id = type_id;
+  header->capacity_bytes = (uint32_t)payload_size; // Store capacity natively!
 
   void *payload = (void *)(header + 1);
 

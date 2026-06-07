@@ -93,12 +93,14 @@ void __moksha_unlock(void *ptr) {
   __atomic_store_n(&lock_table[idx].locked, 0, __ATOMIC_RELEASE);
 }
 
-void AsyncMutex_constructor(void *this_ptr) {
-  MokshaAsyncMutex *mtx = (MokshaAsyncMutex *)this_ptr;
-  mtx->is_locked = false;
+void *AsyncMutex_new(void) {
+  void *ptr = moksha_rt_alloc(sizeof(MokshaAsyncMutex), MOKSHA_TYPE_MUTEX);
+  MokshaAsyncMutex *mtx = (MokshaAsyncMutex *)ptr;
+  mtx->spin_lock = 0;
   mtx->waiters_head = NULL;
   mtx->waiters_tail = NULL;
-  mtx->spin_lock = 0;
+  mtx->is_locked = false;
+  return ptr;
 }
 
 void *AsyncMutex_lock(void *this_ptr) {

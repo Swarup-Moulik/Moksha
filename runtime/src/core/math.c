@@ -214,3 +214,7 @@ bool moksha_rt_math_isPowerOf2(int32_t x) {
 bool moksha_rt_math_isnan(double x) { return isnan(x); }
 bool moksha_rt_math_isinf(double x) { return isinf(x); }
 bool moksha_rt_math_isfinite(double x) { return isfinite(x); }
+
+bool moksha_rt_math_is_close(double a, double b, double epsilon) {
+  return fabs(a - b) < epsilon;
+}

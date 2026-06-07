@@ -52,7 +52,6 @@ sys_err_t sys_event_register_timer(uint64_t timeout_ms, sys_task_waker_t waker,
   ectx->waker = waker;
   ectx->ctx = ctx;
 
-  // Create a timer file descriptor
   int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
   if (tfd == -1) {
     free(ectx);
@@ -60,17 +59,15 @@ sys_err_t sys_event_register_timer(uint64_t timeout_ms, sys_task_waker_t waker,
   }
   ectx->fd = tfd;
 
-  // Configure the timer
   struct itimerspec its;
   its.it_value.tv_sec = timeout_ms / 1000;
   its.it_value.tv_nsec = (timeout_ms % 1000) * 1000000;
   its.it_interval.tv_sec = 0;
   its.it_interval.tv_nsec = 0;
-
   timerfd_settime(tfd, 0, &its, NULL);
 
-  // Register the timer fd with our epoll instance
   struct epoll_event ev;
+  // ADD EPOLLONESHOT HERE:
   ev.events = EPOLLIN | EPOLLONESHOT;
   ev.data.ptr = ectx;
 

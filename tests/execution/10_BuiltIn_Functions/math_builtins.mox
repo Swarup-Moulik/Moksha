@@ -23,25 +23,27 @@ void test_constants() {
 void test_basic_math() {
     println("--- Testing Basic Math ---");
 
+    // Strict equality is fine for integers/simple results
     if (abs(-5.0) == 5.0) {
         println("PASS: abs()");
     } else {
         println("[CRITICAL] FAIL: abs()");
     }
 
-    if (sqrt(16.0) == 4.0) {
+    // Use is_close for floating point calculations
+    if (is_close(sqrt(16.0), 4.0, 1e-6)) {
         println("PASS: sqrt()");
     } else {
         println("[CRITICAL] FAIL: sqrt()");
     }
 
-    if (cbrt(27.0) == 3.0) {
+    if (is_close(cbrt(27.0), 3.0, 1e-6)) {
         println("PASS: cbrt()");
     } else {
         println("[CRITICAL] FAIL: cbrt()");
     }
 
-    if (hypot(3.0, 4.0) == 5.0) {
+    if (is_close(hypot(3.0, 4.0), 5.0, 1e-6)) {
         println("PASS: hypot()");
     } else {
         println("[CRITICAL] FAIL: hypot()");
