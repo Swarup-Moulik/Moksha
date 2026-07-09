@@ -1,15 +1,23 @@
-println("--- [E2E] evaluation_and_control_flow.mox ---");
-
 // ---------------------------------------------------------
 // 1. Evaluation Order & Side Effects
 // ---------------------------------------------------------
 int global_state = 0;
+ref class Node {
+    public int[] values;
+    public Node? next;
+    constructor() {
+        this.values = [10, 20];
+        this.next = null;
+    }
+}
 
 int track(int val) {
     global_state += val;
     println(`Evaluated: ${val}`);
     return val;
 }
+
+println("--- [E2E] evaluation_and_control_flow.mox ---");
 
 // Tests left-to-right evaluation vs precedence binding
 int eval_result = track(1) + track(2) * track(3);
@@ -40,15 +48,6 @@ println(nested_ternary); // Expected: 2
 // ---------------------------------------------------------
 // 4. Deep Nullable & Pipeline Chaining
 // ---------------------------------------------------------
-ref class Node {
-    public int[] values;
-    public Node? next;
-    constructor() {
-        this.values = [10, 20];
-        this.next = null;
-    }
-}
-
 Node? root = null;
 // Must safely abort the chain and fallback to 42 without panicking
 int safe_extract = root?.next?.values?[0] ?? 42;

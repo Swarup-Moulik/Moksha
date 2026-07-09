@@ -1,5 +1,3 @@
-println("--- [E2E] tls_storage.mox ---")
-
 // Verifies TLS initialization duration and linking
 static thread_local int cpu_id = 0;
 static thread_local int[10] kernel_gs_base;
@@ -22,4 +20,5 @@ void run_tls_test() {
     });
 }
 
+println("--- [E2E] tls_storage.mox ---")
 run_tls_test();

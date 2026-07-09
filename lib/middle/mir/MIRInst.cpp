@@ -902,6 +902,21 @@ void PhiInst::dump(llvm::raw_ostream &os) const {
   }
 }
 
+void PhiInst::replaceOperand(MIRValue *oldVal, MIRValue *newVal) {
+  for (auto &inc : incoming) {
+    // 1. Remap the incoming value
+    if (inc.first == oldVal)
+      inc.first = newVal;
+
+    // 2. Remap the incoming block (Critical for Inlining!)
+    if (static_cast<MIRValue *>(inc.second) == oldVal) {
+      if (auto *newBlock = llvm::dyn_cast<MIRBlock>(newVal)) {
+        inc.second = newBlock;
+      }
+    }
+  }
+}
+
 CallInst::CallInst(MIRValue *callee, std::vector<MIRValue *> &&args,
                    const hir::HIRType *retType, std::string name, bool isVarArg,
                    SourceLocation loc)

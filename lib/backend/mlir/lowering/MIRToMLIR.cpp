@@ -1336,6 +1336,49 @@ private:
       ::mlir::Block *normalDest = blockMap[invInst->getNormalDest()];
       ::mlir::Block *unwindDest = blockMap[invInst->getUnwindDest()];
 
+      bool needsTrampoline = false;
+      for (auto &i : invInst->getNormalDest()->getInstructions()) {
+        if (llvm::isa<mir::PhiInst>(i.get())) {
+          needsTrampoline = true;
+          break;
+        }
+      }
+
+      if (needsTrampoline) {
+        // 1. Save the current insertion point
+        auto restorePoint = builder.saveInsertionPoint();
+
+        // 2. Create the empty trampoline block
+        ::mlir::Block *trampoline =
+            builder.createBlock(normalDest->getParent());
+
+        // 3. Collect the arguments for the destination's Phi nodes
+        llvm::SmallVector<::mlir::Value, 4> blockArgs;
+        for (auto &i : invInst->getNormalDest()->getInstructions()) {
+          if (auto *phi = llvm::dyn_cast<mir::PhiInst>(i.get())) {
+            for (auto &pair : phi->getIncoming()) {
+              if (pair.second ==
+                  inst->getParent()) { // inst->getParent() is the current block
+                blockArgs.push_back(getValue(pair.first));
+                break;
+              }
+            }
+          } else {
+            break; // Phis are always at the top
+          }
+        }
+
+        // 4. Emit unconditional branch from trampoline to normalDest passing
+        // args
+        builder.create<::mlir::cf::BranchOp>(loc, normalDest, blockArgs);
+
+        // 5. Reroute the invoke to target our trampoline
+        normalDest = trampoline;
+
+        // 6. Restore the insertion point so the invoke is placed correctly
+        builder.restoreInsertionPoint(restorePoint);
+      }
+
       // --- [FIX] Add sret ABI logic for Invoke ---
       bool isSRet = false;
       ::mlir::Type sretTy;

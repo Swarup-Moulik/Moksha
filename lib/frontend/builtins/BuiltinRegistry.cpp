@@ -1228,12 +1228,14 @@ void BuiltinRegistry::registerFileBuiltins(ASTContext &ctx, SymbolTable &sym) {
         BType::Void);
 
   // ========================================================================
-  // 6. Structured Data (JSON/YAML)
+  // 6. Structured Data (JSON/YAML/CSV)
   // ========================================================================
   regFn("readJson", {{"path", BType::Str}}, BType::Any);
   regFn("writeJson", {{"path", BType::Str}, {"data", BType::Any}}, BType::Void);
   regFn("readYaml", {{"path", BType::Str}}, BType::Any);
   regFn("writeYaml", {{"path", BType::Str}, {"data", BType::Any}}, BType::Void);
+  regFn("readCsv", {{"path", BType::Str}}, BType::Any);
+  regFn("writeCsv", {{"path", BType::Str}, {"data", BType::Any}}, BType::Void);
 
   // ========================================================================
   // 7. PDF Utilities

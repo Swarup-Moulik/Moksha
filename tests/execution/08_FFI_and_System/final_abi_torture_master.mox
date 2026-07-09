@@ -1,5 +1,3 @@
-println("--- [E2E] final_abi_torture_master.mox ---")
-
 // ============================================================================
 // 1. ABI CLASSIFICATION: THE MEMORY FALLBACK TRAP
 // ============================================================================
@@ -154,6 +152,7 @@ void test_simd_vectors() {
 // ============================================================================
 // EXECUTION
 // ============================================================================
+println("--- [E2E] final_abi_torture_master.mox ---")
 test_reg_preservation();
 test_vararg_spill();
 test_bitcast();

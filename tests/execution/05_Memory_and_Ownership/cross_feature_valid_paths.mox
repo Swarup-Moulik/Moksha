@@ -1,7 +1,7 @@
-println("--- [E2E] cross_feature_valid_paths.mox ---")
-
 // Global variable to test valid global escape origins
 int global_val = 100;
+
+println("--- [E2E] cross_feature_valid_paths.mox ---")
 
 *view int get_global_ptr() {
     return &global_val; // Valid: origin is global, not local stack
@@ -89,9 +89,9 @@ void test_disjoint_borrows() {
 void test_pointer_closure_capture() {
     println("Category 8: Pointer Capture in Closure");
     int x = 77;
-    *view int p = &x;           // [cite: 31]
+    *view int p = &x;
 
-    // Capture the pointer itself by value into the closure [cite: 21, 27]
+    // Capture the pointer itself by value into the closure
     closure() -> int f = () => {
         return *p;
     };

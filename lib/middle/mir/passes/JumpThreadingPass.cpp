@@ -18,8 +18,8 @@ bool JumpThreadingPass::runOnModule(MIRModule &M) {
       // Look for a CondBranch at the end of the block
       if (block->getInstructions().empty())
         continue;
-      auto *condBr =
-          llvm::dyn_cast<CondBranchInst>(block->getInstructions().back().get());
+      auto *condBr = llvm::dyn_cast_or_null<CondBranchInst>(
+          block->getInstructions().back().get());
       if (!condBr)
         continue;
 
@@ -40,13 +40,27 @@ bool JumpThreadingPass::runOnModule(MIRModule &M) {
           // The icmp will be FALSE for this edge.
           MIRBlock *bailoutBlock = condBr->getFalseBlock();
 
-          // Thread the jump: Change the predecessor to branch directly to the
-          // bailout
+          // ========================================================================
+          // [CRITICAL FIX]: Abort threading if the target block has Phi nodes!
+          // We cannot bypass the current block because the target's Phis depend
+          // on it.
+          // ========================================================================
+          bool targetHasPhis = false;
+          if (!bailoutBlock->getInstructions().empty()) {
+            if (llvm::isa<PhiInst>(
+                    bailoutBlock->getInstructions().front().get())) {
+              targetHasPhis = true;
+            }
+          }
+          if (targetHasPhis)
+            continue;
+
           if (predBlock->getInstructions().empty())
             continue;
-          if (auto *predBr = llvm::dyn_cast<BranchInst>(
-                  predBlock->getInstructions().back().get())) {
 
+          MIRInst *term = predBlock->getInstructions().back().get();
+
+          if (auto *predBr = llvm::dyn_cast_or_null<BranchInst>(term)) {
             // Rewrite unconditional branch in predecessor
             auto newBr =
                 std::make_unique<BranchInst>(bailoutBlock, predBr->getLoc());
@@ -56,17 +70,75 @@ bool JumpThreadingPass::runOnModule(MIRModule &M) {
             // Fixup CFG Edges
             predBlock->removeSuccessor(block.get());
             block->removePredecessor(predBlock);
-            predBlock->addSuccessor(bailoutBlock);
-            bailoutBlock->addPredecessor(predBlock);
 
-            // Clean up stale Phi edges to prevent the Infinite Loop!
+            bool hasBailoutPred = false;
+            for (auto *p : bailoutBlock->getPredecessors()) {
+              if (p == predBlock) {
+                hasBailoutPred = true;
+                break;
+              }
+            }
+            if (!hasBailoutPred) {
+              predBlock->addSuccessor(bailoutBlock);
+              bailoutBlock->addPredecessor(predBlock);
+            }
+
+            // Clean up stale Phi edges in the current block
             for (auto &instPtr : block->getInstructionsMut()) {
               if (auto *p = llvm::dyn_cast_or_null<PhiInst>(instPtr.get())) {
                 p->removeIncoming(predBlock);
               } else {
-                break; // Phis are always at the top of the block, so we can
-                       // break early
+                break; // Phis are always at the top
               }
+            }
+
+            changed = true;
+            break; // Restart analysis as CFG mutated
+
+          } else if (auto *condBrPred =
+                         llvm::dyn_cast_or_null<CondBranchInst>(term)) {
+            // Handle jumping through conditional branches
+            if (condBrPred->getTrueBlock() == block.get()) {
+              condBrPred->setTrueBlock(bailoutBlock);
+            } else if (condBrPred->getFalseBlock() == block.get()) {
+              condBrPred->setFalseBlock(bailoutBlock);
+            }
+
+            // Rebuild CFG Edges accurately
+            predBlock->getSuccessors().clear();
+            predBlock->addSuccessor(condBrPred->getTrueBlock());
+            if (condBrPred->getTrueBlock() != condBrPred->getFalseBlock()) {
+              predBlock->addSuccessor(condBrPred->getFalseBlock());
+            }
+
+            block->removePredecessor(predBlock);
+
+            // Re-add the predecessor link if the other branch STILL points to
+            // 'block'
+            if (condBrPred->getTrueBlock() == block.get() ||
+                condBrPred->getFalseBlock() == block.get()) {
+              block->addPredecessor(predBlock);
+            } else {
+              // Clean up stale Phi edges
+              for (auto &instPtr : block->getInstructionsMut()) {
+                if (auto *p = llvm::dyn_cast_or_null<PhiInst>(instPtr.get())) {
+                  p->removeIncoming(predBlock);
+                } else {
+                  break;
+                }
+              }
+            }
+
+            // Safely link the bailout block
+            bool hasBailoutPred = false;
+            for (auto *p : bailoutBlock->getPredecessors()) {
+              if (p == predBlock) {
+                hasBailoutPred = true;
+                break;
+              }
+            }
+            if (!hasBailoutPred) {
+              bailoutBlock->addPredecessor(predBlock);
             }
 
             changed = true;

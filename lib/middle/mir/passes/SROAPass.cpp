@@ -49,7 +49,7 @@ bool SROAPass::runOnFunction(MIRFunction *F, MIRModule &M) {
   // ------------------------------------------------------------------------
   for (auto &blockPtr : F->getBlocks()) {
     for (auto &instPtr : blockPtr->getInstructions()) {
-      if (auto *alloca = llvm::dyn_cast<AllocaInst>(instPtr.get())) {
+      if (auto *alloca = llvm::dyn_cast_or_null<AllocaInst>(instPtr.get())) {
         const hir::HIRType *allocTy = alloca->getAllocatedType();
         if (allocTy && allocTy->getKind() == hir::TypeKind::Struct) {
           structAllocas.push_back(alloca);
@@ -69,20 +69,20 @@ bool SROAPass::runOnFunction(MIRFunction *F, MIRModule &M) {
   for (auto &blockPtr : F->getBlocks()) {
     for (auto &instPtr : blockPtr->getInstructions()) {
       MIRInst *inst = instPtr.get();
-      if (auto *load = llvm::dyn_cast<LoadInst>(inst)) {
+      if (auto *load = llvm::dyn_cast_or_null<LoadInst>(inst)) {
         uses[load->getPointer()].push_back(inst);
-      } else if (auto *store = llvm::dyn_cast<StoreInst>(inst)) {
+      } else if (auto *store = llvm::dyn_cast_or_null<StoreInst>(inst)) {
         uses[store->getValue()].push_back(inst);
         uses[store->getPointer()].push_back(inst);
-      } else if (auto *gep = llvm::dyn_cast<GetElementPtrInst>(inst)) {
+      } else if (auto *gep = llvm::dyn_cast_or_null<GetElementPtrInst>(inst)) {
         uses[gep->getPointer()].push_back(inst);
-      } else if (auto *cast = llvm::dyn_cast<CastInst>(inst)) {
+      } else if (auto *cast = llvm::dyn_cast_or_null<CastInst>(inst)) {
         uses[cast->getValue()].push_back(inst);
-      } else if (auto *call = llvm::dyn_cast<CallInst>(inst)) {
+      } else if (auto *call = llvm::dyn_cast_or_null<CallInst>(inst)) {
         for (auto *arg : call->getArgs()) {
           uses[arg].push_back(inst);
         }
-      } else if (auto *mc = llvm::dyn_cast<MakeClosureInst>(inst)) {
+      } else if (auto *mc = llvm::dyn_cast_or_null<MakeClosureInst>(inst)) {
         for (auto *cap : mc->getCaptures()) {
           uses[cap].push_back(inst);
         }
@@ -102,11 +102,11 @@ bool SROAPass::runOnFunction(MIRFunction *F, MIRModule &M) {
 
     // Check if the struct is ONLY used by constant GEPs
     for (auto *user : allocUses) {
-      if (auto *gep = llvm::dyn_cast<GetElementPtrInst>(user)) {
+      if (auto *gep = llvm::dyn_cast_or_null<GetElementPtrInst>(user)) {
         // Ensure GEP has {0, index} format for structs
         if (gep->getIndices().size() == 2) {
-          auto *baseIdx = llvm::dyn_cast<ConstantInt>(gep->getIndices()[0]);
-          auto *fieldIdx = llvm::dyn_cast<ConstantInt>(gep->getIndices()[1]);
+          auto *baseIdx = llvm::dyn_cast_or_null<ConstantInt>(gep->getIndices()[0]);
+          auto *fieldIdx = llvm::dyn_cast_or_null<ConstantInt>(gep->getIndices()[1]);
 
           if (baseIdx && baseIdx->getValue() == 0 && fieldIdx) {
             geps.push_back(gep);

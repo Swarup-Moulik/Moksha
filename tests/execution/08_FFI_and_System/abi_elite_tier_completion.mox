@@ -1,3 +1,5 @@
+thread_local int tls_complex = 42;
+
 println("--- [E2E] abi_elite_tier_completion.mox ---")
 
 // ============================================================================
@@ -46,9 +48,8 @@ void test_cc_clobber() {
 // ============================================================================
 // 4. TLS MODELS: FORCING GLOBAL-DYNAMIC
 // ============================================================================
-// Stresses thread-local storage models.
-thread_local int tls_complex = 42;
 
+// Stresses thread-local storage models.
 void test_tls_dynamic() {
     println(tls_complex);
 }

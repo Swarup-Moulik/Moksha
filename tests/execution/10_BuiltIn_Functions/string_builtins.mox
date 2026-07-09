@@ -115,7 +115,7 @@ void test_split_join() {
     }
 
     // Creating a string slice to test join
-    string[] to_join = cast<string[]>(["x", "y", "z"]);
+    string[] to_join = ["x", "y", "z"];
 
     if (join(to_join, "-") == "x-y-z") {
         println("PASS: join()");

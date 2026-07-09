@@ -631,9 +631,12 @@ bool Parser::isStartOfDeclaration() {
       return false; // No matching '>' found
     }
 
-    // "Type[] Name" -> Declaration
-    if (nextTok.is(TokenKind::LBracket)) {
-      // Manual lookahead to disambiguate "Type[N] name" from "array[N] = val"
+    // "Type[] Name", "Type? Name", "Type* Name" -> Declaration vs Operator
+    // ambiguity
+    if (nextTok.is(TokenKind::LBracket) || nextTok.is(TokenKind::Question) ||
+        nextTok.is(TokenKind::Star) || nextTok.is(TokenKind::Power)) {
+
+      // Manual lookahead to disambiguate types from expressions
       const char *ptr = nextTok.getSpelling().data();
       while (*ptr != '\0') {
         if (*ptr == '[') {
@@ -650,8 +653,8 @@ bool Parser::isStartOfDeclaration() {
         } else if (*ptr == ' ' || *ptr == '\t' || *ptr == '\r' ||
                    *ptr == '\n') {
           ptr++; // Skip whitespace
-        } else if (*ptr == '?') {
-          ptr++; // Skip nullable suffix e.g. Type[]?
+        } else if (*ptr == '?' || *ptr == '*') {
+          ptr++; // Skip nullable or pointer suffix
         } else if ((*ptr >= 'a' && *ptr <= 'z') ||
                    (*ptr >= 'A' && *ptr <= 'Z') || *ptr == '_') {
           return true; // Followed by a variable name -> It's a Declaration!
@@ -662,13 +665,6 @@ bool Parser::isStartOfDeclaration() {
       }
       return false;
     }
-
-    // "Type* Name" or "Type** Name" -> Declaration
-    if (nextTok.is(TokenKind::Star) || nextTok.is(TokenKind::Power))
-      return true;
-    // "Type? Name" -> Declaration
-    if (nextTok.is(TokenKind::Question))
-      return true;
   }
 
   // 4. Prefix Pointers & References for Declarations
@@ -723,12 +719,14 @@ std::unique_ptr<ModuleDecl> Parser::parseModule() {
 
   while (curTok.isNot(TokenKind::Eof)) {
     if (isStartOfDeclaration()) {
-      auto newDecls = parseTopLevelDecls(); // Unpack vector!
+      auto newDecls = parseTopLevelDecls();
       for (auto &decl : newDecls) {
-        if (decl)
+        if (decl) {
           decls.push_back(std::move(decl));
+        }
       }
     } else {
+      // We hit a standalone statement (like println), enter script mode!
       if (auto stmt = parseStatement()) {
         scriptStatements.push_back(std::move(stmt));
       } else {
@@ -737,7 +735,7 @@ std::unique_ptr<ModuleDecl> Parser::parseModule() {
     }
   }
 
-  // Wrap all script statements (variables + logic) in a synthetic 'main'
+  // Wrap all script statements (logic only) in a synthetic 'main'
   if (!scriptStatements.empty()) {
     bool hasMain = false;
     for (const auto &d : decls) {
@@ -756,10 +754,18 @@ std::unique_ptr<ModuleDecl> Parser::parseModule() {
       auto voidType = std::make_unique<PrimitiveType>(
           PrimitiveType::Scalar::Void, startLoc);
 
+      // Ensure imported scripts don't collide with the root file's main()
+      static int scriptCounter = 0;
+      std::string scriptFuncName =
+          (scriptCounter == 0)
+              ? "main"
+              : "__moksha_imported_script_" + std::to_string(scriptCounter);
+      scriptCounter++;
+
       auto mainFunc = std::make_unique<FunctionDecl>(
-          "main", std::vector<FunctionDecl::Param>{}, std::move(voidType),
-          std::move(body), false, false, false, false, Visibility::Default,
-          startLoc);
+          scriptFuncName, std::vector<FunctionDecl::Param>{},
+          std::move(voidType), std::move(body), false, false, false, false,
+          Visibility::Default, startLoc);
 
       decls.push_back(std::move(mainFunc));
     }
@@ -3727,51 +3733,11 @@ TypePtr Parser::parseType() {
   while (true) {
     SourceLocation loc = curTok.location;
 
-    // Case 1: int?[] (Nullable Array)
-    if (curTok.is(TokenKind::Question) && peekIs(TokenKind::LBracket)) {
-      consume(); // Eat prefix '?'
-
-      std::vector<ExprPtr> sizes;
-      do {
-        consume(); // Eat '['
-        ExprPtr sizeExpr =
-            (curTok.isNot(TokenKind::RBracket)) ? parseExpression() : nullptr;
-        expect(TokenKind::RBracket);
-        sizes.push_back(std::move(sizeExpr));
-      } while (curTok.is(TokenKind::LBracket));
-
-      bool trailingQuestion = consumeIf(TokenKind::Question);
-
-      auto it = sizes.rbegin();
-      // Apply all INNER array dimensions first
-      while (it != sizes.rend() - 1) {
-        if (*it == nullptr) {
-          type = std::make_unique<SliceType>(std::move(type), loc);
-        } else {
-          type =
-              std::make_unique<ArrayType>(std::move(type), std::move(*it), loc);
-        }
-        ++it;
-      }
-
-      // The trailing '?' makes the OUTERMOST elements nullable
-      if (trailingQuestion) {
-        type = std::make_unique<NullableType>(std::move(type), loc);
-      }
-
-      // Apply the OUTERMOST dimension
-      if (*it == nullptr) {
-        type = std::make_unique<SliceType>(std::move(type), loc);
-      } else {
-        type =
-            std::make_unique<ArrayType>(std::move(type), std::move(*it), loc);
-      }
-
-      // Final wrap: Apply the prefix '?' to make the entire array structure
-      // nullable
+    // Case 1: Standard T? (Nullable Wrapper)
+    if (consumeIf(TokenKind::Question)) {
       type = std::make_unique<NullableType>(std::move(type), loc);
     }
-    // Case 2: int[]? (Non-nullable array of nullables)
+    // Case 2: Array/Slice Dimensions T[]
     else if (curTok.is(TokenKind::LBracket)) {
       std::vector<ExprPtr> sizes;
       do {
@@ -3782,11 +3748,9 @@ TypePtr Parser::parseType() {
         sizes.push_back(std::move(sizeExpr));
       } while (curTok.is(TokenKind::LBracket));
 
-      bool trailingQuestion = consumeIf(TokenKind::Question);
-
+      // Apply dimensions from the inside out
       auto it = sizes.rbegin();
-      // Apply all INNER array dimensions first
-      while (it != sizes.rend() - 1) {
+      while (it != sizes.rend()) {
         if (*it == nullptr) {
           type = std::make_unique<SliceType>(std::move(type), loc);
         } else {
@@ -3795,34 +3759,17 @@ TypePtr Parser::parseType() {
         }
         ++it;
       }
-
-      // The trailing '?' makes the OUTERMOST elements nullable
-      if (trailingQuestion) {
-        type = std::make_unique<NullableType>(std::move(type), loc);
-      }
-
-      // Apply the OUTERMOST dimension
-      if (*it == nullptr) {
-        type = std::make_unique<SliceType>(std::move(type), loc);
-      } else {
-        type =
-            std::make_unique<ArrayType>(std::move(type), std::move(*it), loc);
-      }
     }
-    // Case 3: Standard T? (Primitive nullable)
-    else if (consumeIf(TokenKind::Question)) {
-      type = std::make_unique<NullableType>(std::move(type), loc);
-    }
-    // Case 4: Pointers (int*)
+    // Case 3: Pointers (int*)
     else if (consumeIf(TokenKind::Star)) {
       type = std::make_unique<PointerType>(std::move(type), loc);
     }
-    // Case 5: Double Pointers parsed as suffix (int**)
+    // Case 4: Double Pointers parsed as suffix (int**)
     else if (consumeIf(TokenKind::Power)) {
       type = std::make_unique<PointerType>(
           std::make_unique<PointerType>(std::move(type), loc), loc);
     } else {
-      break;
+      break; // No more suffixes
     }
   }
   return type;

@@ -1,0 +1,27 @@
+// Destructure the specific variables we want to test from literals.mox
+import { val, f, s1, s2 } from "../01_Lexical_and_Syntax/literals"
+
+println("--- Testing Cross-Folder Imports ---");
+
+// 1. Accessing basic integer values across folders
+if (val == 20) {
+    println("PASS: Successfully imported and read integer (val)");
+} else {
+    println("[FAIL] Integer value mismatch.");
+}
+
+// 2. Accessing floats across folders
+if (f > 123.0 && f < 124.0) {
+    println("PASS: Successfully imported and read float (f)");
+} else {
+    println("[FAIL] Float value mismatch.");
+}
+
+// 3. Accessing strings and template strings
+println("Imported standard string:");
+println(s1); // Should print "Hello World"
+
+println("Imported evaluated template string:");
+println(s2); // Should print "Value: 20"
+
+println("--- Cross-Folder Import Test Complete ---");

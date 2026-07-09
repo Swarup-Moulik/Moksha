@@ -111,7 +111,7 @@ bool DeadCodeEliminationPass::runOnModule(MIRModule &M) {
           auto &incoming = phi->getIncoming();
 
           // If the Phi has been reduced to a single valid incoming edge
-          if (incoming.size() == 1) {
+          if (incoming.size() == 1 && block->getPredecessors().size() <= 1) {
             MIRValue *resolvedVal = incoming.front().first;
 
             // Break self-referential dead cycles to prevent use-after-free
@@ -121,6 +121,13 @@ bool DeadCodeEliminationPass::runOnModule(MIRModule &M) {
             }
 
             replaceAllUsesLocally(func, phi, resolvedVal);
+            it = insts.erase(it);
+            changed = true;
+            continue;
+          } else if (incoming.empty()) {
+            MIRValue *undefVal =
+                M.getOrInsertConstant<ConstantUndef>(phi->getType());
+            replaceAllUsesLocally(func, phi, undefVal);
             it = insts.erase(it);
             changed = true;
             continue;

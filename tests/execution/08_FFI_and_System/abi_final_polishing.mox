@@ -1,3 +1,6 @@
+// Must map to LLVM's thread_local global and placed in .tdata/.tbss
+thread_local int cpu_core_id = 0;
+
 println("--- [E2E] abi_final_polishing_fixed.mox ---")
 
 // ============================================================================
@@ -51,8 +54,6 @@ void test_callback_signatures() {
 // ============================================================================
 // 4. THREAD-LOCAL STORAGE (TLS)
 // ============================================================================
-// Must map to LLVM's thread_local global and placed in .tdata/.tbss
-thread_local int cpu_core_id = 0;
 
 void test_tls() {
     cpu_core_id = 1;

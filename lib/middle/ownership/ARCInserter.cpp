@@ -121,25 +121,49 @@ private:
     if (!type)
       return false;
 
+    // 1. Unwrap Nullable Optionals (e.g., Node?)
     if (auto *nullableTy = llvm::dyn_cast<const hir::HIRNullableType>(type)) {
       type = nullableTy->getInner();
     }
 
+    // 2. Safely capture Reference Classes and explicitly tagged pointers
     if (auto *ptrType = llvm::dyn_cast<const hir::PointerType>(type)) {
-      return ptrType->getOwnership() == hir::Ownership::Shared;
+      if (ptrType->getOwnership() == hir::Ownership::Borrowed ||
+          ptrType->getOwnership() == hir::Ownership::None) {
+        return false;
+      }
+
+      // Explicit tags
+      if (ptrType->getOwnership() == hir::Ownership::Shared ||
+          ptrType->getOwnership() == hir::Ownership::Owned) {
+        return true;
+      }
+
+      // Implicit Reference Classes (ref class compiles to a pointer to a
+      // struct)
+      if (ptrType->getPointee() &&
+          ptrType->getPointee()->getKind() == hir::TypeKind::Struct) {
+        return true;
+      }
+      return false;
     }
-    if (llvm::isa<hir::SliceType>(type))
+
+    // 3. Catch native built-in managed types
+    auto kind = type->getKind();
+    if (kind == hir::TypeKind::Any || kind == hir::TypeKind::Slice ||
+        kind == hir::TypeKind::String || kind == hir::TypeKind::Map ||
+        kind == hir::TypeKind::Closure || kind == hir::TypeKind::Promise) {
       return true;
-    if (type->getKind() == hir::TypeKind::Any)
-      return true;
+    }
+
     return false;
   }
 
+  // Analyzes the actual memory location rather than the loaded SSA instance.
   MIRValue *getUnderlyingObject(MIRValue *val) {
     while (auto *inst = llvm::dyn_cast<MIRInst>(val)) {
-      if (inst->getOpcode() == Opcode::BitCast ||
-          inst->getOpcode() == Opcode::AnyCast) {
-        val = static_cast<CastInst *>(inst)->getValue();
+      if (auto *cast = llvm::dyn_cast<CastInst>(inst)) {
+        val = cast->getValue();
         continue;
       } else if (inst->getOpcode() == Opcode::ExtractValue) {
         auto *ext = static_cast<ExtractValueInst *>(inst);
@@ -164,77 +188,92 @@ private:
     // 1. Identify which parameters actually need ARC
     std::vector<MIRArgument *> refCountedParams;
     for (auto *arg : func->getRawArguments()) {
+      if (arg->getName() == "this") {
+        continue;
+      }
       if (isRefCounted(arg->getType())) {
         refCountedParams.push_back(arg);
       }
     }
 
     // 2. Insert Retains at the Entry Block
-    if (entryBlock && !refCountedParams.empty()) {
-      std::vector<std::unique_ptr<MIRInst>> paramRetains;
-      for (auto *arg : refCountedParams) {
-        auto retain = std::make_unique<ARCInst>(
-            Opcode::Retain, arg, nullptr,
-            entryBlock->getInstructions().front()->getLoc());
-        retain->setParent(entryBlock);
-        paramRetains.push_back(std::move(retain));
-        functionModified = true;
-      }
+    // if (entryBlock && !refCountedParams.empty()) {
+    //   std::vector<std::unique_ptr<MIRInst>> paramRetains;
+    //   for (auto *arg : refCountedParams) {
+    //     auto retain = std::make_unique<ARCInst>(
+    //         Opcode::Retain, arg, nullptr,
+    //         entryBlock->getInstructions().front()->getLoc());
+    //     retain->setParent(entryBlock);
+    //     paramRetains.push_back(std::move(retain));
+    //     functionModified = true;
+    //   }
 
-      auto &entryInsts = entryBlock->getInstructionsMut();
+    //   auto &entryInsts = entryBlock->getInstructionsMut();
 
-      auto insertIt = entryInsts.begin();
-      while (insertIt != entryInsts.end() &&
-             llvm::isa<AllocaInst>(insertIt->get())) {
-        ++insertIt;
-      }
+    //   auto insertIt = entryInsts.begin();
+    //   while (insertIt != entryInsts.end() &&
+    //          llvm::isa<AllocaInst>(insertIt->get())) {
+    //     ++insertIt;
+    //   }
 
-      entryInsts.insert(insertIt, std::make_move_iterator(paramRetains.begin()),
-                        std::make_move_iterator(paramRetains.end()));
-    }
+    //   entryInsts.insert(insertIt,
+    //   std::make_move_iterator(paramRetains.begin()),
+    //                     std::make_move_iterator(paramRetains.end()));
+    // }
 
     std::unordered_set<MIRValue *> initializedPointers;
 
     for (auto &blockPtr : func->getBlocks()) {
       MIRBlock *block = blockPtr.get();
-      // Need to swap out instructions array to safely mutate while iterating
       auto &instructions = block->getInstructionsMut();
       std::vector<std::unique_ptr<MIRInst>> newInstructions;
 
       bool blockModified = false;
 
+      // ---> [FIX 1] RVO: Identify the return value to apply +1 Return
+      // Convention
+      MIRValue *exitVal = nullptr;
+      MIRValue *baseExitVal = nullptr;
+      if (!instructions.empty()) {
+        if (auto *retInst =
+                llvm::dyn_cast<ReturnInst>(instructions.back().get())) {
+          exitVal = retInst->getReturnValue();
+          if (exitVal && exitVal->getType() &&
+              isRefCounted(exitVal->getType())) {
+            baseExitVal = getUnderlyingObject(exitVal);
+          }
+        }
+      }
+
+      bool elidedFrontendRelease = false;
+
       for (auto &inst : instructions) {
-
-        // Insert Releases before Returning, Throwing, or Resuming!
         auto op = inst->getOpcode();
-        if ((op == Opcode::Return || op == Opcode::Throw ||
-             op == Opcode::Resume) &&
-            !refCountedParams.empty()) {
 
-          MIRValue *exitVal = nullptr;
-          if (op == Opcode::Return) {
-            exitVal = static_cast<ReturnInst *>(inst.get())->getReturnValue();
-          } else if (op == Opcode::Throw) {
-            exitVal = static_cast<ThrowInst *>(inst.get())->getException();
+        // ---> [FIX 2] Intercept and delete the frontend release for the return
+        // value
+        if (op == Opcode::Release && baseExitVal) {
+          auto *arcInst = static_cast<ARCInst *>(inst.get());
+          if (getUnderlyingObject(arcInst->getObject()) == baseExitVal) {
+            elidedFrontendRelease = true;
+            blockModified = true;
+            continue; // Skip this release, transferring ownership to the caller
+                      // (+1)
           }
+        }
 
-          // Unwrap any bitcasts to find the true base pointer escaping the
-          // function
-          while (auto *cast = llvm::dyn_cast_or_null<CastInst>(exitVal)) {
-            exitVal = cast->getValue();
-          }
-
+        // ---> [FIX 3] Guarantee +1 Return Convention if no release was elided
+        if (op == Opcode::Return && baseExitVal) {
+          bool isParam = false;
           for (auto *arg : refCountedParams) {
-            // Do NOT release the parameter if we are returning or throwing it!
-            // The +1 reference count safely transfers back to the
-            // caller/catcher.
-            if (arg == exitVal) {
-              continue;
-            }
-            newInstructions.push_back(std::make_unique<ARCInst>(
-                Opcode::Release, arg, getDropFunc(arg), inst->getLoc()));
+            if (arg == baseExitVal)
+              isParam = true;
           }
-          blockModified = true;
+          if (!elidedFrontendRelease && !isParam) {
+            newInstructions.push_back(std::make_unique<ARCInst>(
+                Opcode::Retain, exitVal, nullptr, inst->getLoc()));
+            blockModified = true;
+          }
         }
 
         // --- 1. Handle Assignments (Stores) ---
@@ -246,32 +285,40 @@ private:
             MIRValue *ptr = getUnderlyingObject(store->getPointer());
             blockModified = true;
 
-            // [FIX] Trace the value to see if it came straight from the
-            // allocator
             bool isFreshAllocation = false;
             MIRValue *traceVal = newValue;
 
-            // Pierce through bitcasts to find the source
-            while (auto *cast = llvm::dyn_cast<CastInst>(traceVal)) {
-              traceVal = cast->getValue();
-            }
-            // If the source is an allocator call, the ref_count is already 1!
-            if (auto *call = llvm::dyn_cast<CallInst>(traceVal)) {
-              if (call->getCallee() &&
-                  (call->getCallee()->getName() == "__moksha_alloc" ||
-                   call->getCallee()->getName() == "moksha_rt_array_alloc")) {
-                isFreshAllocation = true;
+            // =========================================================
+            // [FIX 2] Look through ALL cast types to find the allocator
+            // =========================================================
+            while (traceVal) {
+              // CastInst handles BitCast, AnyCast, and Upcast automatically!
+              if (auto *cast = llvm::dyn_cast<CastInst>(traceVal)) {
+                traceVal = cast->getValue();
+              } else {
+                break;
               }
             }
 
-            // A. Do NOT emit a Retain if we are storing a function parameter
-            // into its local variable slot OR if the object was just allocated.
-            if (!llvm::isa<MIRArgument>(newValue) && !isFreshAllocation) {
+            // Now check if the true origin was the allocator!
+            if (auto call = llvm::dyn_cast<CallInst>(traceVal)) {
+              if (call->getCallee() &&
+                  call->getCallee()->getName() == "__moksha_alloc") {
+                isFreshAllocation = true;
+              }
+            } else if (auto invoke = llvm::dyn_cast<InvokeInst>(traceVal)) {
+              if (invoke->getCallee() &&
+                  invoke->getCallee()->getName() == "__moksha_alloc") {
+                isFreshAllocation = true;
+              }
+            }
+            // =========================================================
+
+            if (!isFreshAllocation) {
               newInstructions.push_back(std::make_unique<ARCInst>(
                   Opcode::Retain, newValue, nullptr, inst->getLoc()));
             }
 
-            // B. If the pointer was already initialized, release the old value
             if (initializedPointers.count(ptr)) {
               auto loadOld =
                   std::make_unique<LoadInst>(ptr, "old_val", inst->getLoc());
@@ -282,7 +329,6 @@ private:
                   inst->getLoc()));
             }
 
-            // C. Push the actual store and mark as initialized
             initializedPointers.insert(ptr);
             newInstructions.push_back(std::move(inst));
             continue;

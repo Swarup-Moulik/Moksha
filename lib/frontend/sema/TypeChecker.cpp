@@ -359,6 +359,35 @@ bool checkDefiniteReturn(const Stmt *stmt, DiagnosticEngine &Diags) {
     return tryReturns && allCatchesReturn;
   }
 
+  case StmtKind::WhileStmt: {
+    auto *wStmt = static_cast<const WhileStmt *>(stmt);
+    if (auto *bLit = llvm::dyn_cast<const BoolLiteral>(wStmt->getCondition())) {
+      if (bLit->getValue())
+        return true; // while(true)
+    }
+    return false;
+  }
+
+  case StmtKind::DoWhileStmt: {
+    auto *dStmt = static_cast<const DoWhileStmt *>(stmt);
+    if (auto *bLit = llvm::dyn_cast<const BoolLiteral>(dStmt->getCondition())) {
+      if (bLit->getValue())
+        return true; // do { } while(true)
+    }
+    return false;
+  }
+
+  case StmtKind::ForStmt: {
+    auto *fStmt = static_cast<const ForStmt *>(stmt);
+    if (!fStmt->getCondition())
+      return true; // for(;;)
+    if (auto *bLit = llvm::dyn_cast<const BoolLiteral>(fStmt->getCondition())) {
+      if (bLit->getValue())
+        return true; // for(; true; )
+    }
+    return false;
+  }
+
   default:
     return false;
   }
@@ -647,6 +676,11 @@ bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
   // Expanded Pointer Logic
   if (auto ptrExp = llvm::dyn_cast<const PointerType>(rawExp)) {
     if (auto ptrAct = llvm::dyn_cast<const PointerType>(rawAct)) {
+      const Type *expPointee = unwrapConcurrency(ptrExp->getPointee());
+      const Type *actPointee = unwrapConcurrency(ptrAct->getPointee());
+      if (expPointee->is<NullableType>() != actPointee->is<NullableType>()) {
+        return false;
+      }
       return isCompatible(ptrExp->getPointee(), ptrAct->getPointee());
     }
     if (ptrExp->getPointee()->is<PrimitiveType>() &&
@@ -743,11 +777,16 @@ bool TypeChecker::isCastAllowed(const Type *src, const Type *dst) {
   src = resolveAlias(unwrapConcurrency(src), context, symbols);
   dst = resolveAlias(unwrapConcurrency(dst), context, symbols);
 
+  // 1. If it's implicitly compatible, the explicit cast is ALWAYS safe!
+  if (isCompatible(dst, src)) {
+    return true;
+  }
+
   if (src->is<AnyType>() || dst->is<AnyType>()) {
     return true;
   }
 
-  // 1. Allow casting between the same types
+  // 2. Allow casting between the same types
   if (src->isEquivalent(*dst))
     return true;
 
@@ -1046,6 +1085,7 @@ void TypeChecker::visitCharLiteral(const CharLiteral *expr) {
 
 void TypeChecker::visitArrayLiteral(const ArrayLiteral *expr) {
   const Type *expectedElemType = nullptr;
+  bool expectsSlice = false;
 
   // Extract expected element type from the LHS declaration if it exists
   if (currentExpectedReturnType) {
@@ -1055,11 +1095,14 @@ void TypeChecker::visitArrayLiteral(const ArrayLiteral *expr) {
     } else if (auto sliceT =
                    llvm::dyn_cast<const SliceType>(currentExpectedReturnType)) {
       expectedElemType = sliceT->getElementType();
+      expectsSlice = true;
     } else if (auto ptrT = llvm::dyn_cast<const PointerType>(
                    currentExpectedReturnType)) {
       // Extract element type from transposed C-style arrays of pointers
       const Type *pointee = unwrapConcurrency(ptrT->getPointee());
       if (pointee->is<SliceType>() || pointee->is<ArrayType>()) {
+        if (pointee->is<SliceType>())
+          expectsSlice = true;
         const Type *elem =
             pointee->is<SliceType>()
                 ? llvm::cast<SliceType>(pointee)->getElementType()
@@ -1171,9 +1214,8 @@ void TypeChecker::visitArrayLiteral(const ArrayLiteral *expr) {
   }
 
   // Type dynamic array literals as Slices natively
-  if (hasSpread) {
-    // Dynamic spread means the size is unknown at compile time -> emit a
-    // SliceType!
+  if (hasSpread || expectsSlice) {
+    // Dynamic spread or explicit LHS Slice -> emit a SliceType!
     lastComputedType = context.getSliceType(commonType);
   } else {
     // Fixed number of elements -> emit a static ArrayType
@@ -1705,6 +1747,7 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
     if (lhsType->isString() || rhsType->isString()) {
       if (op == TokenKind::Plus) {
         lastComputedType = context.getStringType();
+        setAndReturn();
         return;
       }
     }
@@ -1747,6 +1790,7 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
 
         if (newP > 0) {
           lastComputedType = context.createDecimalType(newP, newS);
+          setAndReturn();
           return; // Return the new perfectly scaled type!
         }
       }
@@ -1758,13 +1802,14 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
 
       // ptr + int OR ptr - int => ptr
       if (isPtrL && isIntegerOrChar(rawRHS)) {
-        lastComputedType =
-            lhsType; // Preserve original wrappers (like volatile)
+        lastComputedType = lhsType;
+        setAndReturn(); // <----- ADD THIS
         return;
       }
       // int + ptr => ptr
       if (isPtrR && isIntegerOrChar(rawLHS) && op == TokenKind::Plus) {
         lastComputedType = rhsType;
+        setAndReturn(); // <----- ADD THIS
         return;
       }
       // ptr - ptr => isize (Pointer Difference)
@@ -1775,6 +1820,7 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
           hasError = true;
         }
         lastComputedType = context.getISizeType();
+        setAndReturn(); // <----- ADD THIS
         return;
       }
     }
@@ -2082,7 +2128,6 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
   if (op == TokenKind::DotDotDot) {
     const Type *unwrapped = unwrapConcurrency(operandType);
 
-    // [FIX 1] Extract the inner element type (int[] -> int)
     if (auto sliceType = llvm::dyn_cast<const SliceType>(unwrapped)) {
       lastComputedType = sliceType->getElementType();
     } else if (auto arrType = llvm::dyn_cast<const ArrayType>(unwrapped)) {
@@ -2096,7 +2141,7 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
       lastComputedType = context.getAnyType();
     }
 
-    setAndReturn(); // [FIX 2] Apply the extracted element type to the AST
+    setAndReturn();
     return;
   }
 
@@ -2150,6 +2195,7 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
 
         if (bestMatch) {
           lastComputedType = bestMatch->getReturnType();
+          setAndReturn(); // <--- FIX APPLIED
           return;
         }
       }
@@ -2176,7 +2222,6 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
       hasError = true;
     }
 
-    // --- [NEW] Strict L-Value Check ---
     const Expr *target = expr->getOperand();
     bool isLValue = false;
 
@@ -2198,7 +2243,6 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
              "l-value.";
       hasError = true;
     } else {
-      // --- [NEW] Const Mutation Check ---
       if (auto id = llvm::dyn_cast<const IdentifierExpr>(target)) {
         Symbol *sym = symbols.lookup(id->getName());
         if (sym && sym->decl &&
@@ -2211,7 +2255,6 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
         }
       }
     }
-
     lastComputedType = operandType;
   } else if (op == TokenKind::Tilde) {
     if (!isIntegerOrChar(operandType)) {
@@ -2223,7 +2266,6 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
   } else if (op == TokenKind::KwShared) {
     const Type *rawType = unwrapConcurrency(operandType);
 
-    // Check if they are trying to double-wrap a 'ref class'
     if (auto namedTy = llvm::dyn_cast<const NamedType>(rawType)) {
       if (const ClassDecl *cls = context.lookupClass(namedTy->getName())) {
         if (cls->isReferenceType()) {
@@ -2238,8 +2280,6 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
       }
     }
 
-    // When a value is shared, its type capability effectively becomes a
-    // Reference so it can be tracked globally by the NLL borrow checker.
     if (!rawType->is<ReferenceType>()) {
       const Type *inner = operandType;
       if (!hasMutOrLock(inner) && !hasView(inner) && !inner->is<ConstType>()) {
@@ -2252,12 +2292,10 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
   } else if (op == TokenKind::Amp) {
     bool isImmutable = false;
 
-    // 1. Check if the type itself is explicitly const or view
     if (operandType->is<ConstType>() || operandType->is<ViewType>()) {
       isImmutable = true;
     }
 
-    // 2. Trace back to the base variable to see if it was declared as 'const'
     const Expr *target = expr->getOperand();
     while (true) {
       if (auto mem = llvm::dyn_cast<const MemberExpr>(target))
@@ -2278,13 +2316,9 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
     }
 
     const Type *inner = operandType;
-
-    // 3. Since standard variables are mutable by default, taking their address
-    // yields a mutable capability (*mut T) unless they are explicitly const.
     if (!isImmutable && !hasMutOrLock(inner)) {
       inner = context.createMutType(inner);
     }
-
     lastComputedType = context.createPointerType(inner);
   } else if (op == TokenKind::Star || op == TokenKind::Power) {
     if (operandType->toString().find("lock") != std::string::npos) {
@@ -2300,14 +2334,12 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
       }
     }
 
-    // Dereference: T* -> T (or ** -> T)
     const Type *raw = unwrapConcurrency(operandType);
     if (auto ptr = llvm::dyn_cast<const PointerType>(raw)) {
       const Type *pointeeType = ptr->getPointee();
       const Type *unwrappedPointee = unwrapConcurrency(pointeeType);
 
       if (op == TokenKind::Power) {
-        // SECOND DEREFERENCE
         if (auto innerPtr =
                 llvm::dyn_cast<const PointerType>(unwrappedPointee)) {
           const Type *innerPointeeType = innerPtr->getPointee();
@@ -2327,7 +2359,6 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
           lastComputedType = context.getAnyType();
         }
       } else {
-        // SINGLE DEREFERENCE
         if (isNumericOrChar(unwrappedPointee) ||
             isIntegerOrChar(unwrappedPointee) || unwrappedPointee->isBool()) {
           lastComputedType = unwrappedPointee;
@@ -2345,6 +2376,7 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
   } else {
     lastComputedType = operandType;
   }
+
   setAndReturn();
 }
 
@@ -2624,6 +2656,22 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
               }
             }
           }
+          for (size_t i = 0; i < mutExpr->getArgs().size(); ++i) {
+            if (i < pTypes.size()) {
+              const Type *targetPType =
+                  resolveAlias(pTypes[i], context, symbols);
+              const Type *targetArgType =
+                  resolveAlias(argTypes[i], context, symbols);
+
+              if (!targetArgType->isEquivalent(*targetPType)) {
+                auto cast = std::make_unique<CastExpr>(
+                    targetPType->clone(), std::move(mutExpr->getArgsMut()[i]),
+                    expr->getLoc());
+                cast->setType(targetPType);
+                mutExpr->getArgsMut()[i] = std::move(cast);
+              }
+            }
+          }
 
           // --- [FIX] Wrap the final return type in Nullable if using optional
           // chaining ---
@@ -2755,6 +2803,200 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
       } else {
         lastComputedType = context.getVoidType();
       }
+      return;
+    }
+
+    // 1. Peek at the first argument to see if it's a Map or a File String
+    bool isMapOp = false;
+    bool isFileOp = false;
+    if (!argTypes.empty()) {
+      const Type *rawFirst = unwrapConcurrency(argTypes[0]);
+      if (auto *ptrTy = llvm::dyn_cast<const PointerType>(rawFirst)) {
+        rawFirst = unwrapConcurrency(ptrTy->getPointee());
+      } else if (auto *refTy = llvm::dyn_cast<const ReferenceType>(rawFirst)) {
+        rawFirst = unwrapConcurrency(refTy->getInner());
+      }
+
+      if (rawFirst->is<MapType>()) {
+        isMapOp = true;
+      } else if (rawFirst->isString()) {
+        isFileOp = true;
+      }
+    }
+
+    // 2. Only trap the call if it's NOT a map operation AND NOT a file
+    // operation
+    if (!isMapOp && !isFileOp &&
+        (funcName == "push" || funcName == "pop" || funcName == "insert" ||
+         funcName == "remove" || funcName == "clear" ||
+         funcName == "capacity" || funcName == "resize" ||
+         funcName == "extend")) {
+
+      if (expr->getArgs().empty()) {
+        Diags.report(expr->getLoc(), DiagID::err_argument_count_mismatch);
+        hasError = true;
+        lastComputedType = context.getAnyType();
+        setAndReturn();
+        return;
+      }
+
+      const Type *firstArgTy = argTypes[0];
+      const Type *rawFirstArg = unwrapConcurrency(firstArgTy);
+
+      // Peel away pointer or reference layers
+      if (auto *ptrTy = llvm::dyn_cast<const PointerType>(rawFirstArg)) {
+        rawFirstArg = unwrapConcurrency(ptrTy->getPointee());
+      } else if (auto *refTy =
+                     llvm::dyn_cast<const ReferenceType>(rawFirstArg)) {
+        rawFirstArg = unwrapConcurrency(refTy->getInner());
+      }
+
+      if (auto *nullTy = llvm::dyn_cast<const NullableType>(rawFirstArg)) {
+        rawFirstArg = unwrapConcurrency(nullTy->getInner());
+        argTypes[0] = rawFirstArg;
+      }
+
+      // Statically reject operations on fixed-size stack arrays
+      if (llvm::isa<const ArrayType>(rawFirstArg)) {
+        Diags.report(expr->getArgs()[0]->getLoc(), DiagID::err_type_mismatch)
+            << ("Cannot call dynamic heap-allocating method '" + funcName +
+                "' on a fixed-size stack array.");
+        hasError = true;
+        lastComputedType = context.getAnyType();
+        setAndReturn();
+        return;
+      }
+
+      // --- [NEW FIX: STRICT TYPE CHECKING FOR DYNAMIC ARRAY BUILTINS] ---
+      const Type *elementType = nullptr;
+      if (auto *sliceTy = llvm::dyn_cast<const SliceType>(rawFirstArg)) {
+        elementType = sliceTy->getElementType();
+      } else if (rawFirstArg->is<AnyType>()) {
+        elementType = context.getAnyType(); // Cascade fallback
+      } else {
+        Diags.report(expr->getArgs()[0]->getLoc(), DiagID::err_type_mismatch)
+            << "First argument to '" << funcName
+            << "' must be a dynamic array, found '" << rawFirstArg->toString()
+            << "'";
+        hasError = true;
+        lastComputedType = context.getAnyType();
+        setAndReturn();
+        return;
+      }
+
+      // Helper to inject implicit casts for valid pushes (e.g., pushing an int
+      // into a float[] array)
+      auto applyImplicitCast = [&](size_t argIdx, const Type *targetType) {
+        if (!targetType || targetType->is<AnyType>())
+          return;
+        const Type *targetArgType =
+            resolveAlias(argTypes[argIdx], context, symbols);
+        const Type *resolvedTarget = resolveAlias(targetType, context, symbols);
+        if (!targetArgType->isEquivalent(*resolvedTarget)) {
+          auto *mutExpr = const_cast<CallExpr *>(expr);
+          auto cast = std::make_unique<CastExpr>(
+              resolvedTarget->clone(), std::move(mutExpr->getArgsMut()[argIdx]),
+              expr->getLoc());
+          cast->setType(resolvedTarget);
+          mutExpr->getArgsMut()[argIdx] = std::move(cast);
+        }
+      };
+
+      if (funcName == "push") {
+        if (argTypes.size() != 2) {
+          Diags.report(expr->getLoc(), DiagID::err_argument_count_mismatch);
+          hasError = true;
+        } else if (!isCompatible(elementType, argTypes[1])) {
+          Diags.report(expr->getArgs()[1]->getLoc(), DiagID::err_type_mismatch)
+              << "Cannot push value of type '" << argTypes[1]->toString()
+              << "' into array of type '" << rawFirstArg->toString() << "'";
+          hasError = true;
+        } else {
+          applyImplicitCast(1, elementType);
+        }
+      } else if (funcName == "insert") {
+        if (argTypes.size() != 3) {
+          Diags.report(expr->getLoc(), DiagID::err_argument_count_mismatch);
+          hasError = true;
+        } else {
+          if (!isIntegerOrChar(argTypes[1])) {
+            Diags.report(expr->getArgs()[1]->getLoc(),
+                         DiagID::err_type_mismatch)
+                << "Index for 'insert' must be an integer";
+            hasError = true;
+          }
+          if (!isCompatible(elementType, argTypes[2])) {
+            Diags.report(expr->getArgs()[2]->getLoc(),
+                         DiagID::err_type_mismatch)
+                << "Cannot insert value of type '" << argTypes[2]->toString()
+                << "' into array of type '" << rawFirstArg->toString() << "'";
+            hasError = true;
+          } else {
+            applyImplicitCast(2, elementType);
+          }
+        }
+      } else if (funcName == "pop" || funcName == "clear" ||
+                 funcName == "capacity") {
+        if (argTypes.size() != 1) {
+          Diags.report(expr->getLoc(), DiagID::err_argument_count_mismatch);
+          hasError = true;
+        }
+      } else if (funcName == "remove" || funcName == "resize") {
+        if (argTypes.size() != 2) {
+          Diags.report(expr->getLoc(), DiagID::err_argument_count_mismatch);
+          hasError = true;
+        } else if (!isIntegerOrChar(argTypes[1])) {
+          Diags.report(expr->getArgs()[1]->getLoc(), DiagID::err_type_mismatch)
+              << "Second argument to '" << funcName << "' must be an integer";
+          hasError = true;
+        }
+      } else if (funcName == "extend") {
+        if (argTypes.size() != 2) {
+          Diags.report(expr->getLoc(), DiagID::err_argument_count_mismatch);
+          hasError = true;
+        } else {
+          const Type *rawSecond = unwrapConcurrency(argTypes[1]);
+          if (auto *ptrTy2 = llvm::dyn_cast<const PointerType>(rawSecond))
+            rawSecond = unwrapConcurrency(ptrTy2->getPointee());
+          else if (auto *refTy2 =
+                       llvm::dyn_cast<const ReferenceType>(rawSecond))
+            rawSecond = unwrapConcurrency(refTy2->getInner());
+
+          if (auto *sliceTy2 = llvm::dyn_cast<const SliceType>(rawSecond)) {
+            if (!isCompatible(elementType, sliceTy2->getElementType())) {
+              Diags.report(expr->getArgs()[1]->getLoc(),
+                           DiagID::err_type_mismatch)
+                  << "Cannot extend array with incompatible array type '"
+                  << argTypes[1]->toString() << "'";
+              hasError = true;
+            }
+          } else if (!rawSecond->is<AnyType>()) {
+            Diags.report(expr->getArgs()[1]->getLoc(),
+                         DiagID::err_type_mismatch)
+                << "Second argument to 'extend' must be an array/slice";
+            hasError = true;
+          }
+        }
+      }
+      // --- [/NEW FIX] ---
+
+      // Compute the native return type
+      if (funcName == "pop" || funcName == "remove") {
+        if (auto *sliceTy = llvm::dyn_cast<const SliceType>(rawFirstArg)) {
+          lastComputedType = sliceTy->getElementType();
+        } else {
+          lastComputedType = context.getAnyType();
+        }
+      } else if (funcName == "capacity") {
+        lastComputedType = context.getISizeType();
+      } else {
+        lastComputedType = context.getVoidType();
+      }
+
+      // Override AST types and short-circuit the standard function resolver
+      const_cast<IdentifierExpr *>(idExpr)->setType(
+          context.createFunctionType(argTypes, lastComputedType));
+      setAndReturn();
       return;
     }
 
@@ -3608,30 +3850,36 @@ void TypeChecker::visitMemberExpr(const MemberExpr *expr) {
     }
   }
 
-  bool isNullableResult = false;
+  bool isNullableResult = expr->isOptionalAccess();
+  bool foundNullable = false;
 
-  if (auto *nullTy = llvm::dyn_cast<NullableType>(rawType)) {
-    if (!expr->isOptionalAccess()) {
-      Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
-          << "Cannot access member on nullable type '" << objType->toString()
-          << "'. Use '?.' instead.";
-      hasError = true;
-      lastComputedType = context.getAnyType();
-      return;
+  // Robustly peel away all L-Value pointers, references, and Nullable wrappers
+  while (rawType) {
+    rawType = unwrapConcurrency(rawType);
+
+    if (auto *ptrTy = llvm::dyn_cast<PointerType>(rawType)) {
+      rawType = ptrTy->getPointee();
+    } else if (auto *refTy = llvm::dyn_cast<ReferenceType>(rawType)) {
+      rawType = refTy->getInner();
+    } else if (auto *nullTy = llvm::dyn_cast<NullableType>(rawType)) {
+      foundNullable = true;
+      rawType = nullTy->getInner();
+    } else {
+      break;
     }
-    rawType = unwrapConcurrency(nullTy->getInner());
-    isNullableResult = true;
-  } else if (expr->isOptionalAccess()) {
-    isNullableResult = true;
-  }
-
-  if (auto *ptrTy = llvm::dyn_cast<PointerType>(rawType)) {
-    rawType = ptrTy->getPointee();
-  } else if (auto *refTy = llvm::dyn_cast<ReferenceType>(rawType)) {
-    rawType = refTy->getInner();
   }
 
   rawType = unwrapConcurrency(rawType);
+
+  // Enforce safe navigation operator
+  if (foundNullable && !expr->isOptionalAccess()) {
+    Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
+        << "Cannot access member on nullable type '" << objType->toString()
+        << "'. Use '?.' instead.";
+    hasError = true;
+    lastComputedType = context.getAnyType();
+    return;
+  }
 
   // 3. Now verify the base object is actually a Struct/Class
   if (auto *namedObj = llvm::dyn_cast<NamedType>(rawType)) {
@@ -4327,6 +4575,10 @@ void TypeChecker::visitVariableDecl(const VariableDecl *decl) {
   } else if (decl->isExternVar()) {
     // Extern variables are defined elsewhere, so they are considered "assigned"
     initializedVars.insert(decl);
+  } else if (varType->is<ArrayType>()) {
+    // [FIX] Fixed-size stack arrays in Moksha are safely zero-initialized
+    // by the runtime automatically. Treat them as definitively assigned!
+    initializedVars.insert(decl);
   }
 
   const Type *effectiveType = varType;
@@ -4596,7 +4848,7 @@ void TypeChecker::visitFunctionDecl(const FunctionDecl *decl) {
 
   // Enter the new scope for the function body
   symbols.enterScope(ScopeKind::Function);
-
+  auto previousInitializedVars = initializedVars;
   const Type *prevRet = currentExpectedReturnType;
   bool prevStatic = inStaticContext;
   bool prevInterrupt = inInterruptContext;
@@ -4658,6 +4910,7 @@ void TypeChecker::visitFunctionDecl(const FunctionDecl *decl) {
   inInterruptContext = prevInterrupt;
   inConstructorContext = prevConstructor;
   currentExpectedReturnType = prevRet;
+  initializedVars = previousInitializedVars;
   symbols.exitScope();
 }
 

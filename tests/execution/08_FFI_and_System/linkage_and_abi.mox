@@ -1,5 +1,3 @@
-println("--- [E2E] linkage_and_abi.mox ---")
-
 // Weak symbols (Allowing user-overrides for drivers)
 weak void default_irq_handler() {
     println("Default IRQ Handler executed");
@@ -19,4 +17,5 @@ void test_linkage() {
     println(kernel_version); // Expected: 1
 }
 
+println("--- [E2E] linkage_and_abi.mox ---")
 test_linkage();

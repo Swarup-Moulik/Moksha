@@ -7,7 +7,7 @@ void test_memory_types() {
     // (A nullable view borrow).
     *view int? borrowed = null;
 
-    int val = 42;
+    int? val = 42;
     borrowed = &val;
 
     println(*borrowed ?? -1); // Expected: 42

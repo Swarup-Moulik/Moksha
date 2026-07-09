@@ -20,6 +20,7 @@
 #endif
 
 extern void *moksha_rt_alloc(size_t payload_size, uint32_t type_id);
+extern void moksha_rt_release(void *ptr);
 extern void moksha_mem_free(void *ptr);
 
 // External map & string bindings needed for structured data
@@ -56,6 +57,8 @@ int32_t length(void *arr_ptr) {
   MokshaAny *any_val = (MokshaAny *)arr_ptr;
   if (!any_val->data)
     return 0;
+
+  // Single unbox ABI matching the compiler
   MokshaSlice *slice = (MokshaSlice *)any_val->data;
   return (int32_t)slice->length;
 }
@@ -64,10 +67,10 @@ int32_t moksha_rt_any_len(MokshaAny *any_val) {
   if (!any_val || !any_val->vtable || !any_val->data)
     return 0;
 
-  // Check vtable type id to dynamically dispatch the correct length
   if (any_val->vtable->type_id == MOKSHA_TYPE_STRING) {
     return strlen((char *)any_val->data);
   } else if (any_val->vtable->type_id == MOKSHA_TYPE_ARRAY) {
+    // Single unbox ABI matching the compiler
     MokshaSlice *slice = (MokshaSlice *)any_val->data;
     return (int32_t)slice->length;
   } else if (any_val->vtable->type_id == MOKSHA_TYPE_TABLE) {
@@ -395,6 +398,8 @@ void moksha_file_appendText(char *path, char *text) {
 void moksha_file_writeBytes(char *path, MokshaAny *data_any) {
   if (!path || !data_any || !data_any->data)
     return;
+
+  // Fix: Single unbox to match the compiler's anycast ABI
   MokshaSlice *slice = (MokshaSlice *)data_any->data;
 
   int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
@@ -413,6 +418,8 @@ void moksha_file_writeBytes(char *path, MokshaAny *data_any) {
 void moksha_file_appendBytes(char *path, MokshaAny *data_any) {
   if (!path || !data_any || !data_any->data)
     return;
+
+  // Fix: Single unbox to match the compiler's anycast ABI
   MokshaSlice *slice = (MokshaSlice *)data_any->data;
 
   int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_BINARY, 0666);
@@ -453,7 +460,6 @@ MokshaAnyRet moksha_file_readBytes(char *path) {
   MokshaSlice *slice = (MokshaSlice *)moksha_rt_alloc(sizeof(MokshaSlice), 18);
   slice->data = buf;
   slice->length = bytes_read;
-
   return moksha_pack_any(slice, &vtable_array);
 }
 
@@ -634,6 +640,225 @@ MokshaAnyRet moksha_file_readYaml(char *path) {
 }
 
 // ============================================================================
+// CSV File Streamers (Array of Tables)
+// ============================================================================
+
+void moksha_file_writeCsv(char *path, MokshaAny *data_any) {
+  if (!path || !data_any || !data_any->data)
+    return;
+
+  // Single unbox ABI matching the compiler
+  MokshaSlice *slice = (MokshaSlice *)data_any->data;
+  if (slice->length == 0)
+    return;
+
+  int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
+  if (fd < 0)
+    return;
+
+  // Assume data_any is an array of maps. Get the first row to extract headers.
+  MokshaAny *first_row = &((MokshaAny *)slice->data)[0];
+  void *map_ptr = first_row->data;
+  if (!map_ptr) {
+    close(fd);
+    return;
+  }
+
+  int cols = moksha_rt_map_len(map_ptr);
+
+  // Write Headers
+  for (int i = 0; i < cols; i++) {
+    MokshaAny *k = moksha_rt_map_get_key_at(map_ptr, i);
+    char *k_str = "";
+    if (k && k->vtable && k->vtable->type_id == 16) {
+      k_str = (char *)k->data; // Directly unbox C-string
+    }
+
+    bool needs_quotes = strchr(k_str, ',') != NULL;
+    if (needs_quotes)
+      write(fd, "\"", 1);
+    write(fd, k_str, strlen(k_str));
+    if (needs_quotes)
+      write(fd, "\"", 1);
+
+    if (i < cols - 1)
+      write(fd, ",", 1);
+  }
+  write(fd, "\n", 1);
+
+  // Write Rows
+  for (uint64_t r = 0; r < slice->length; r++) {
+    MokshaAny *row_any = &((MokshaAny *)slice->data)[r];
+    void *row_map = row_any->data;
+    if (!row_map)
+      continue;
+
+    for (int i = 0; i < cols; i++) {
+      MokshaAny *v = moksha_rt_map_get_val_at(row_map, i);
+
+      // Match the JSON/YAML implementation for string extraction
+      bool is_str = (v && v->vtable && v->vtable->type_id == 16);
+      char *v_str =
+          is_str ? (char *)v->data : (v ? __moksha_any_to_string(v) : "");
+
+      bool needs_quotes = strchr(v_str, ',') != NULL;
+      if (needs_quotes)
+        write(fd, "\"", 1);
+      write(fd, v_str, strlen(v_str));
+      if (needs_quotes)
+        write(fd, "\"", 1);
+
+      // Use ARC release safely on the allocated C-string
+      if (!is_str && v) {
+        moksha_rt_release(v_str);
+      }
+
+      if (i < cols - 1)
+        write(fd, ",", 1);
+    }
+    write(fd, "\n", 1);
+  }
+  close(fd);
+}
+
+MokshaAnyRet moksha_file_readCsv(char *path) {
+  MokshaSlice *empty = (MokshaSlice *)moksha_rt_alloc(sizeof(MokshaSlice), 18);
+  empty->data = NULL;
+  empty->length = 0;
+
+  if (!path) {
+    return moksha_pack_any(empty, &vtable_array);
+  }
+
+  int fd = open(path, O_RDONLY | O_BINARY);
+  if (fd < 0) {
+    return moksha_pack_any(empty, &vtable_array);
+  }
+
+  off_t size = lseek(fd, 0, SEEK_END);
+  lseek(fd, 0, SEEK_SET);
+
+  char *text = (char *)malloc(size + 1);
+  int bytes_read = read(fd, text, size);
+  close(fd);
+
+  if (bytes_read < 0) {
+    free(text);
+    return moksha_pack_any(empty, &vtable_array);
+  }
+  text[bytes_read] = '\0';
+
+  size_t cap = 16;
+  size_t count = 0;
+  MokshaAny *arr = (MokshaAny *)moksha_rt_alloc(cap * sizeof(MokshaAny), 18);
+
+  char *p = text;
+  char *headers[256];
+  int cols = 0;
+
+  while (*p == ' ' || *p == '\r' || *p == '\n')
+    p++;
+
+  // 1. Parse Headers
+  while (*p && *p != '\n' && *p != '\r' && cols < 256) {
+    char *start = p;
+    if (*p == '"') {
+      p++;
+      start = p;
+      while (*p && *p != '"')
+        p++;
+      int len = p - start;
+      headers[cols] = make_mstring(start, len);
+      if (*p == '"')
+        p++;
+    } else {
+      while (*p && *p != ',' && *p != '\n' && *p != '\r')
+        p++;
+      int len = p - start;
+      headers[cols] = make_mstring(start, len);
+    }
+    cols++;
+    if (*p == ',')
+      p++;
+  }
+
+  if (*p == '\r')
+    p++;
+  if (*p == '\n')
+    p++;
+
+  // 2. Parse Rows
+  while (*p) {
+    if (*p == '\n' || *p == '\r') {
+      p++;
+      continue;
+    }
+
+    void *map = moksha_rt_map_new();
+
+    for (int i = 0; i < cols; i++) {
+      if (!*p || *p == '\n' || *p == '\r')
+        break;
+
+      char *start = p;
+      if (*p == '"') {
+        p++;
+        start = p;
+        while (*p && *p != '"')
+          p++;
+        int len = p - start;
+
+        MokshaAny *kp = moksha_box_string(headers[i]);
+        MokshaAny *vp = parse_and_box_literal(start, len, true);
+        moksha_rt_map_insert(map, kp, vp);
+
+        if (*p == '"')
+          p++;
+      } else {
+        while (*p && *p != ',' && *p != '\n' && *p != '\r')
+          p++;
+        int len = p - start;
+
+        MokshaAny *kp = moksha_box_string(headers[i]);
+        MokshaAny *vp = parse_and_box_literal(start, len, false);
+        moksha_rt_map_insert(map, kp, vp);
+      }
+
+      if (*p == ',')
+        p++;
+    }
+
+    if (count >= cap) {
+      cap *= 2;
+      MokshaAny *new_arr =
+          (MokshaAny *)moksha_rt_alloc(cap * sizeof(MokshaAny), 18);
+      memcpy(new_arr, arr, count * sizeof(MokshaAny));
+      arr = new_arr;
+    }
+
+    arr[count].data = map;
+    arr[count].vtable = &vtable_map;
+    count++;
+
+    while (*p && *p != '\n' && *p != '\r')
+      p++;
+    if (*p == '\r')
+      p++;
+    if (*p == '\n')
+      p++;
+  }
+
+  free(text);
+
+  // Single-box array return ABI
+  MokshaSlice *slice = (MokshaSlice *)moksha_rt_alloc(sizeof(MokshaSlice), 18);
+  slice->data = arr;
+  slice->length = count;
+
+  return moksha_pack_any(slice, &vtable_array);
+}
+
+// ============================================================================
 // PDF endpoints
 // ============================================================================
 
@@ -766,7 +991,7 @@ MokshaAnyRet moksha_file_listDir(char *path) {
     MokshaSlice *empty = (MokshaSlice *)moksha_rt_alloc(sizeof(MokshaSlice), 2);
     empty->data = NULL;
     empty->length = 0;
-    return moksha_pack_any(empty, NULL);
+    return moksha_pack_any(empty, &vtable_array);
   }
 
   size_t cap = 16;

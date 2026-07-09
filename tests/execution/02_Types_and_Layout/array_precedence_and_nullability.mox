@@ -35,8 +35,8 @@ void test_typing() {
 // --- 3. The Nullability Matrix (1D & 2D) ---
 void test_nullability_1D() {
     int[] nonNull_nonNull = [1, 2];      // Non-nullable array, non-nullable elements
-    int?[] null_nonNull = null;          // Nullable array, non-nullable elements
-    int[]? nonNull_null = [1, null, 3];  // Non-nullable array, nullable elements
+    int[]? null_nonNull = null;          // Nullable array, non-nullable elements
+    int?[] nonNull_null = [1, null, 3];  // Non-nullable array, nullable elements
     int?[]? null_null = null;            // Nullable array, nullable elements
 
     println(nonNull_nonNull[1]); // Expected: 2
@@ -51,13 +51,13 @@ void test_nullability_2D() {
     int[][] matrix1 = [[1, 2], [3, 4]];
 
     // Nullable matrix (the container itself can be null)
-    int?[] [] matrix2 = null;
+    int[][]? matrix2 = null;
 
     // Non-nullable matrix where elements (inner arrays) can be null
-    int[][]? matrix3 = [[1, 2], null, [5, 6]];
+    int[]?[] matrix3 = [[1, 2], null, [5, 6]];
 
-    // Fully nullable 2D structure
-    int?[][]? matrix4 = null;
+    // Fully nullable 2D structure (Nullable matrix of nullable inner arrays of nullable ints)
+    int?[]?[]? matrix4 = null;
     matrix4 = [null, [1, 2]];
 
     println(matrix1[0][1]); // Expected: 2

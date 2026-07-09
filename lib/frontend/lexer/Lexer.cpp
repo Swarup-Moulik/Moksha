@@ -525,16 +525,6 @@ Token Lexer::scanOperator() {
   return Token(kind, SourceLocation::getFromPointer(start), curPtr - start);
 }
 
-/**
- * @brief Skips over line (//) and block (/* ... */) comments.
- * * @details
- * - For line comments, consumes characters until the next newline or EOF.
- * - For block comments, implements nested comment support by maintaining a
- * 'depth' counter. This allows comments like '/* outer /* inner */ */'
- * to be handled correctly without terminating early.
- * * @return true if the comment was successfully terminated, false if an
- * unterminated block comment error was encountered.
- */
 bool Lexer::skipComment() {
   // Handle line comments: // ...
   if (peek(1) == '/') {

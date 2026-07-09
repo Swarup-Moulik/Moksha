@@ -151,6 +151,33 @@ void test_stream_navigation() {
     }
 }
 
+void test_csv_operations() {
+    println("--- Testing CSV Serialization ---");
+
+    // 1. Prepare data (Array of Maps/Tables)
+    any row1 = {"id": 1, "name": "Moksha", "type": "Language"};
+    any row2 = {"id": 2, "name": "Compiler", "type": "Tool"};
+    any[] data_out = [row1, row2];
+
+    // 2. Write CSV
+    writeCsv("test.csv", data_out);
+
+    // 3. Read back
+    any data_in = readCsv("test.csv");
+
+    // 4. Validate
+    if (length(data_in) == 2) {
+        // Accessing first row's column "name"
+        if (data_in[0]["name"] == "Moksha" && data_in[1]["id"] == 2) {
+            println("PASS: writeCsv() and readCsv()");
+        } else {
+            println("[CRITICAL] FAIL: CSV data content mismatch");
+        }
+    } else {
+        println("[CRITICAL] FAIL: CSV read length mismatch");
+    }
+}
+
 void test_pdf_operations() {
     println("--- Testing PDF Operations ---");
 
@@ -236,6 +263,7 @@ test_high_level_text();
 test_high_level_binary();
 test_structured_data();
 test_stream_navigation();
+test_csv_operations();
 test_pdf_operations();
 test_filesystem_ops();
 

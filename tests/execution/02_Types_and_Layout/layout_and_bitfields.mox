@@ -1,5 +1,3 @@
-println("--- [E2E] layout_and_bitfields.mox ---")
-
 packed struct EthernetHeader {
     char[6] dest_mac;
     char[6] src_mac;
@@ -29,4 +27,5 @@ void process_hardware() {
     println(pte.address);  // Expected: 1048575 (0xFFFFF)
 }
 
+println("--- [E2E] layout_and_bitfields.mox ---")
 process_hardware();

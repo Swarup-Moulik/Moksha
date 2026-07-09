@@ -329,7 +329,7 @@ void *spawn_func(void *closure_ptr) {
   return moksha_rt_spawn(*(MokshaClosure *)closure_ptr);
 }
 
-void *join(void *p1_handle, void *p2_handle) {
+void *moksha_builtin_join(void *p1_handle, void *p2_handle) {
   if (p1_handle) {
     moksha_rt_block_on(p1_handle);
     ((InternalPromise *)p1_handle)->was_awaited = true;

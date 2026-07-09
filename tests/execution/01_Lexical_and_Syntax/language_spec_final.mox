@@ -1,3 +1,4 @@
+int global_state = 0;
 println("--- [E2E] language_spec_final.mox ---");
 
 // ---------------------------------------------------------
@@ -51,7 +52,6 @@ println(`Array Aliasing (Expected 99): ${arr1[0]}`);
 // ---------------------------------------------------------
 // 7. Function Argument Evaluation Order
 // ---------------------------------------------------------
-int global_state = 0;
 int step(int val) {
     global_state = global_state * 10 + val;
     return val;

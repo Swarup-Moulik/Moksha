@@ -20,17 +20,23 @@ static std::unordered_map<MIRBlock *, std::unordered_set<MIRBlock *>>
 computeDominanceFrontiers(MIRFunction *F, const MIRDominance &dom) {
   std::unordered_map<MIRBlock *, std::unordered_set<MIRBlock *>> DF;
 
+  // [FIX] Build a reliable predecessor map using native getSuccessors() edges
+  std::unordered_map<MIRBlock *, std::vector<MIRBlock *>> truePreds;
+  for (auto &blockPtr : F->getBlocks()) {
+    for (auto *succ : blockPtr->getSuccessors()) {
+      truePreds[succ].push_back(blockPtr.get());
+    }
+  }
+
   for (auto &blockPtr : F->getBlocks()) {
     MIRBlock *b = blockPtr.get();
 
-    // DF is only applicable to blocks with multiple incoming edges
-    if (b->getPredecessors().size() >= 2) {
-      for (MIRBlock *pred : b->getPredecessors()) {
+    // Use truePreds instead of the potentially broken b->getPredecessors()
+    if (truePreds[b].size() >= 2) {
+      for (MIRBlock *pred : truePreds[b]) {
         MIRBlock *runner = pred;
 
-        // Walk up the dominator tree until we hit the immediate dominator of
-        // 'b'
-        while (runner != dom.getIDom(b) && runner != nullptr) {
+        while (runner && runner != dom.getIDom(b)) {
           DF[runner].insert(b);
           runner = dom.getIDom(runner);
         }
@@ -67,6 +73,50 @@ bool Mem2RegPass::runOnModule(MIRModule &M) {
 }
 
 bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
+  // ========================================================================
+  // [NEW] PRE-PASS: HEAL CFG BEFORE DOMINANCE ANALYSIS
+  // ========================================================================
+  for (auto &blockPtr : F->getBlocks()) {
+    blockPtr->getSuccessors().clear();
+    blockPtr->getPredecessors().clear();
+  }
+
+  for (auto &blockPtr : F->getBlocks()) {
+    MIRBlock *b = blockPtr.get();
+    if (b->getInstructions().empty())
+      continue;
+
+    MIRInst *term = b->getInstructions().back().get();
+    if (auto *br = llvm::dyn_cast_or_null<BranchInst>(term)) {
+      b->addSuccessor(br->getTarget());
+      br->getTarget()->addPredecessor(b);
+    } else if (auto *condBr = llvm::dyn_cast_or_null<CondBranchInst>(term)) {
+      b->addSuccessor(condBr->getTrueBlock());
+      condBr->getTrueBlock()->addPredecessor(b);
+      b->addSuccessor(condBr->getFalseBlock());
+      condBr->getFalseBlock()->addPredecessor(b);
+    } else if (auto *invoke = llvm::dyn_cast_or_null<InvokeInst>(term)) {
+      b->addSuccessor(invoke->getNormalDest());
+      invoke->getNormalDest()->addPredecessor(b);
+      if (invoke->getUnwindDest()) {
+        b->addSuccessor(invoke->getUnwindDest());
+        invoke->getUnwindDest()->addPredecessor(b);
+      }
+    } else if (auto *switchInst = llvm::dyn_cast_or_null<SwitchInst>(term)) {
+      b->addSuccessor(switchInst->getDefaultBlock());
+      switchInst->getDefaultBlock()->addPredecessor(b);
+      for (auto &casePair : switchInst->getCases()) {
+        b->addSuccessor(casePair.second);
+        casePair.second->addPredecessor(b);
+      }
+    } else if (auto *throwInst = llvm::dyn_cast_or_null<ThrowInst>(term)) {
+      if (throwInst->getUnwindDest()) {
+        b->addSuccessor(throwInst->getUnwindDest());
+        throwInst->getUnwindDest()->addPredecessor(b);
+      }
+    }
+  }
+
   // ------------------------------------------------------------------------
   // Phase 1: Identify Promotable Allocas & Record Definitions
   // ------------------------------------------------------------------------
@@ -346,9 +396,8 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
         if (auto *alloca =
                 llvm::dyn_cast_or_null<AllocaInst>(load->getPointer())) {
           if (promotableSet.count(alloca)) {
-            MIRValue *undefVal =
-                M.getOrInsertConstant<ConstantUndef>(load->getType());
-            replaceAllUsesInFunction(F, load, undefVal);
+            // [FIX] Do NOT replace uses with undef. Phase 4 already wired the
+            // SSA graph. Just queue the dead load for garbage collection.
             toDelete.push_back(load);
           }
         }

@@ -1,5 +1,3 @@
-println("--- [E2E] abi_pathological_edge_cases.mox ---")
-
 // ============================================================================
 // 1. ABI CLASSIFICATION: STRUCT BOUNDARIES
 // ============================================================================
@@ -122,6 +120,7 @@ void test_over_alignment() {
 // ============================================================================
 // EXECUTION
 // ============================================================================
+println("--- [E2E] abi_pathological_edge_cases.mox ---")
 test_variadic_promotion();
 test_init_order();
 test_over_alignment()

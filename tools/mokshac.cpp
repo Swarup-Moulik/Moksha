@@ -163,6 +163,10 @@ static cl::opt<std::string>
                    cl::init(""), cl::cat(MokshaCategory));
 static cl::opt<bool> DisableOpt("O0", cl::desc("Disable backend optimizations"),
                                 cl::init(false), cl::cat(MokshaCategory));
+static cl::opt<std::string>
+    Sanitize("fsanitize", cl::desc("Enable a sanitizer (e.g., address)"),
+             cl::value_desc("sanitizer"), cl::init(""),
+             cl::cat(MokshaCategory));
 static cl::list<std::string>
     Libraries("l",
               cl::desc("Libraries to link against (e.g., curl for -lcurl)"),
@@ -566,8 +570,9 @@ int main(int argc, char **argv) {
 
         // Dynamically find the correct optimizer binary
         std::string optBinary = findLLVMTool("opt");
-        std::string optCmd =
-            optBinary + " -O2 " + llFilename + " -S -o " + llFilename;
+        std::string optLevel = DisableOpt ? "-O0" : "-O2";
+        std::string optCmd = optBinary + " " + optLevel + " " + llFilename +
+                             " -S -o " + llFilename;
         int optResult = std::system(optCmd.c_str());
 
         if (optResult != 0) {
@@ -591,10 +596,14 @@ int main(int argc, char **argv) {
 
         // Dynamically find the correct compiler binary
         std::string compilerBinary = findLLVMTool(compilerBase);
+        std::string asanFlags = (Sanitize == "address")
+                                    ? " -g -fsanitize=address -static-libasan"
+                                    : "";
 
         // 2. Build the base command
-        std::string cmd = compilerBinary + " -O2 -Wno-override-module " +
-                          llFilename + extraFilesStr + " " + resolvedRtLib;
+        std::string cmd = compilerBinary + " " + optLevel + asanFlags +
+                          " -Wno-override-module " + llFilename +
+                          extraFilesStr + " " + resolvedRtLib;
 
         // Inject custom library paths (-L)
         for (const auto &path : LibraryPaths) {

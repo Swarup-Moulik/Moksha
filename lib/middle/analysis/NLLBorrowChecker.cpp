@@ -28,34 +28,41 @@ static bool isPointerType(MIRValue *val) {
     return false;
   }
 
-  // 2. Now check for explicit borrow kinds
-  MIRValue *traced = val;
-  while (traced) {
-    if (traced->getBorrowKind() != BorrowKind::None)
-      return true;
-    if (auto *cast = llvm::dyn_cast<CastInst>(traced)) {
-      traced = cast->getValue();
-    } else {
-      break;
+  // --- [CRITICAL FIX]: ARC Managed Types are Heap-Bound, NOT Stack Pointers
+  // --- If the value is managed by ARC, it is inherently safe to escape the
+  // stack frame.
+  if (kind == hir::TypeKind::String || kind == hir::TypeKind::Slice ||
+      kind == hir::TypeKind::Closure || kind == hir::TypeKind::Map ||
+      kind == hir::TypeKind::Promise || kind == hir::TypeKind::Struct) {
+    return false;
+  }
+
+  if (kind == hir::TypeKind::Nullable) {
+    auto *nullTy = static_cast<const hir::HIRNullableType *>(val->getType());
+    auto innerKind = nullTy->getInner()->getKind();
+
+    // [FIX]: Also exempt nullable variants of ARC types!
+    if (innerKind == hir::TypeKind::String ||
+        innerKind == hir::TypeKind::Slice ||
+        innerKind == hir::TypeKind::Closure ||
+        innerKind == hir::TypeKind::Map ||
+        innerKind == hir::TypeKind::Promise ||
+        innerKind == hir::TypeKind::Struct || innerKind == hir::TypeKind::Any) {
+      return false;
     }
   }
 
-  // 3. Fallback type checks
-  switch (kind) {
-  case hir::TypeKind::Pointer:
-  case hir::TypeKind::Reference:
-  case hir::TypeKind::Closure:
-  case hir::TypeKind::Function:
-    return true;
-  default: {
-    std::string name = val->getType()->toString();
-    if (name.find("Closure") != std::string::npos ||
-        name.find("closure") != std::string::npos ||
-        name.find("->") != std::string::npos)
-      return true;
-    return false;
+  // [FIX]: Finally, if it's an explicit pointer, check if it's Shared/Owned
+  if (auto *pTy = llvm::dyn_cast<hir::PointerType>(val->getType())) {
+    if (pTy->getOwnership() == hir::Ownership::Shared ||
+        pTy->getOwnership() == hir::Ownership::Owned) {
+      return false; // ARC pointers can escape safely
+    }
   }
-  }
+
+  // Only raw Borrowed/None pointers trigger the escape analysis!
+  return val->getType()->getKind() == hir::TypeKind::Pointer ||
+         val->getType()->getKind() == hir::TypeKind::Reference;
 }
 
 static bool isExclusiveBorrow(MIRValue *pointerVal) {

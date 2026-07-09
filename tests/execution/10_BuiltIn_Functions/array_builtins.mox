@@ -92,9 +92,9 @@ void test_dynamic_mutations() {
     int[] more = [...arr, 100, 200];
 
     if (length(more) == 4) {
-        println("PASS: extend() merges slices");
+        println("PASS: spread operator merges slices");
     } else {
-        println("[CRITICAL] FAIL: extend() merges slices");
+        println("[CRITICAL] FAIL: spread operator merges slices");
     }
 
     // Clear & Resize

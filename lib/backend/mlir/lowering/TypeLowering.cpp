@@ -18,12 +18,12 @@ static uint64_t getMLIRTypeSize(::mlir::Type ty) {
 
   // FIXED: Explicitly size Fat Pointers (Data + Metadata/VTable/Length)
   if (::llvm::isa<::moksha::IR::AnyType>(ty) ||
-      ::llvm::isa<::moksha::IR::SliceType>(ty) ||
       ::llvm::isa<::moksha::IR::ClosureType>(ty)) {
     return 16;
   }
 
   if (::llvm::isa<::moksha::IR::PointerType>(ty) ||
+      ::llvm::isa<::moksha::IR::SliceType>(ty) ||
       ::llvm::isa<::mlir::LLVM::LLVMPointerType>(ty)) {
     return 8; // 64-bit pointers
   }
@@ -349,7 +349,29 @@ TypeLowering::TypeLowering(::mlir::MLIRContext &ctx) : context(ctx) {}
   }
   case hir::TypeKind::Nullable: {
     auto &nullType = static_cast<const hir::HIRNullableType &>(type);
-    ::mlir::Type inner = lowerHIRType(*nullType.getInner());
+
+    // ========================================================================
+    // NULL POINTER OPTIMIZATION (NPO)
+    // ========================================================================
+    const hir::HIRType *innerHir = nullType.getInner();
+    hir::TypeKind innerKind = innerHir->getKind();
+
+    if (innerKind == hir::TypeKind::Slice ||
+        innerKind == hir::TypeKind::String ||
+        innerKind == hir::TypeKind::Closure ||
+        innerKind == hir::TypeKind::Any ||
+        innerKind == hir::TypeKind::Pointer ||
+        innerKind == hir::TypeKind::Map ||
+        innerKind == hir::TypeKind::Promise ||
+        (innerKind == hir::TypeKind::Struct &&
+         static_cast<const hir::StructType *>(innerHir)->isRefClass())) {
+
+      // Return the exact same physical memory layout as the inner type!
+      return lowerHIRType(*innerHir);
+    }
+
+    // Fallback: If it's a primitive like 'int?', generate the standard wrapper
+    ::mlir::Type inner = lowerHIRType(*innerHir);
     return ::moksha::IR::NullableType::get(&context, inner);
   }
   case hir::TypeKind::Null: {
@@ -406,12 +428,12 @@ bool TypeLowering::isTriviallyCopyable(const hir::HIRType &type) const {
 }
 
 bool TypeLowering::requiresOwnership(const hir::HIRType &type) const {
-  if (type.getKind() == hir::TypeKind::Pointer ||
-      type.getKind() == hir::TypeKind::String ||
+  if (type.getKind() == hir::TypeKind::String ||
       type.getKind() == hir::TypeKind::Closure ||
       type.getKind() == hir::TypeKind::Any ||
       type.getKind() == hir::TypeKind::Map ||
-      type.getKind() == hir::TypeKind::Promise) {
+      type.getKind() == hir::TypeKind::Promise ||
+      type.getKind() == hir::TypeKind::Slice) {
     return true;
   }
   if (type.getKind() == hir::TypeKind::Struct) {

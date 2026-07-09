@@ -40,20 +40,38 @@ static int internal_strcmp(const char *s1, const char *s2) {
   return *(const unsigned char *)s1 - *(const unsigned char *)s2;
 }
 
-static uint32_t hash_any(MokshaAny *key) {
-  if (!key || !key->data || !key->vtable)
+// Safely extract type_id even if vtable is NULL
+static uint32_t get_any_type(MokshaAny *key) {
+  if (!key || !key->data)
     return 0;
-  uint32_t type_id = key->vtable->type_id;
+
+  // Try vtable first for complex objects
+  if (key->vtable)
+    return key->vtable->type_id;
+
+  // Fallback to the physical MokshaHeader for Primitives!
+  MokshaHeader *hdr =
+      (MokshaHeader *)((uint8_t *)key->data - sizeof(MokshaHeader));
+  return hdr->type_id;
+}
+
+static uint32_t hash_any(MokshaAny *key) {
+  if (!key || !key->data)
+    return 0;
+
+  uint32_t type_id = get_any_type(key);
   uint32_t hash = 2166136261u;
 
   if (type_id == MOKSHA_TYPE_STRING) {
     const char *str = (const char *)key->data;
     while (*str) {
-      hash ^= (uint8_t)(*str++);
+      hash ^= (uint8_t)(*str);
       hash *= 16777619;
+      str++;
     }
     return hash;
   }
+
   if (type_id == MOKSHA_TYPE_I32 || type_id == MOKSHA_TYPE_U32 ||
       type_id == MOKSHA_TYPE_F32) {
     uint32_t val = *(uint32_t *)key->data;
@@ -61,6 +79,7 @@ static uint32_t hash_any(MokshaAny *key) {
     hash *= 16777619;
     return hash;
   }
+
   if (type_id == MOKSHA_TYPE_I64 || type_id == MOKSHA_TYPE_U64 ||
       type_id == MOKSHA_TYPE_ISIZE || type_id == MOKSHA_TYPE_USIZE ||
       type_id == MOKSHA_TYPE_F64) {
@@ -72,6 +91,7 @@ static uint32_t hash_any(MokshaAny *key) {
     return hash;
   }
 
+  // Fallback: Pointer Hashing for Objects
   uint64_t addr = (uint64_t)(uintptr_t)key->data;
   hash ^= (uint32_t)(addr & 0xFFFFFFFF);
   hash *= 16777619;
@@ -83,25 +103,40 @@ static uint32_t hash_any(MokshaAny *key) {
 static bool cmp_any(MokshaAny *a, MokshaAny *b) {
   if (!a || !b)
     return false;
-  if (a->data == b->data && a->vtable == b->vtable)
-    return true;
-  if (!a->data || !b->data || !a->vtable || !b->vtable)
-    return false;
-  if (a->vtable->type_id != b->vtable->type_id)
+  if (a->data == b->data)
+    return true; // Fast path for identical pointers
+  if (!a->data || !b->data)
     return false;
 
-  if (a->vtable->type_id == MOKSHA_TYPE_STRING) {
-    return internal_strcmp((const char *)a->data, (const char *)b->data) == 0;
+  uint32_t type_a = get_any_type(a);
+  uint32_t type_b = get_any_type(b);
+
+  if (type_a != type_b)
+    return false;
+
+  if (type_a == MOKSHA_TYPE_STRING) {
+    const char *str_a = (const char *)a->data;
+    const char *str_b = (const char *)b->data;
+    return internal_strcmp(str_a, str_b) == 0;
   }
-  if (a->vtable->type_id == MOKSHA_TYPE_I32 ||
-      a->vtable->type_id == MOKSHA_TYPE_U32) {
+
+  if (type_a == MOKSHA_TYPE_I32 || type_a == MOKSHA_TYPE_U32 ||
+      type_a == MOKSHA_TYPE_F32) {
     return *(uint32_t *)a->data == *(uint32_t *)b->data;
   }
-  if (a->vtable->type_id == MOKSHA_TYPE_I64 ||
-      a->vtable->type_id == MOKSHA_TYPE_U64) {
+
+  if (type_a == MOKSHA_TYPE_I64 || type_a == MOKSHA_TYPE_U64 ||
+      type_a == MOKSHA_TYPE_ISIZE || type_a == MOKSHA_TYPE_USIZE ||
+      type_a == MOKSHA_TYPE_F64) {
     return *(uint64_t *)a->data == *(uint64_t *)b->data;
   }
+
   return false;
+}
+
+// Forward to our unified logic
+static bool map_keys_equal(MokshaAny *k1, MokshaAny *k2) {
+  return cmp_any(k1, k2);
 }
 
 void *moksha_rt_map_new(void) {
@@ -178,6 +213,52 @@ MokshaAny *moksha_rt_map_get(void *map_ptr, MokshaAny *key) {
   return NULL;
 }
 
+// ============================================================================
+// Dynamic 'Any' Indexing Dispatcher
+// ============================================================================
+MokshaAny *moksha_rt_any_get(MokshaAny *container, MokshaAny *key) {
+  if (!container || !key || !container->data)
+    return NULL;
+
+  uint32_t type_id = get_any_type(container);
+
+  // 1. Route Map Lookups (e.g., row["name"])
+  if (type_id == MOKSHA_TYPE_TABLE) {
+    return moksha_rt_map_get(container->data, key);
+  }
+  // 2. Route Array/Slice Lookups (e.g., data_in[0])
+  else if (type_id == MOKSHA_TYPE_ARRAY) {
+    uint32_t key_type = get_any_type(key);
+    int64_t index = 0;
+
+    // Safely extract the index regardless of integer size
+    if (key_type == MOKSHA_TYPE_I32 || key_type == MOKSHA_TYPE_U32) {
+      index = *(int32_t *)key->data;
+    } else if (key_type == MOKSHA_TYPE_I64 || key_type == MOKSHA_TYPE_U64 ||
+               key_type == MOKSHA_TYPE_ISIZE || key_type == MOKSHA_TYPE_USIZE) {
+      index = *(int64_t *)key->data;
+    } else {
+      moksha_rt_panic("Type Error: Array index must be an integer.");
+    }
+
+    MokshaSlice *slice = (MokshaSlice *)container->data;
+
+    // Bounds checking
+    if (index < 0 || (uint64_t)index >= slice->length) {
+      moksha_rt_panic_out_of_bounds(index, slice->length);
+    }
+
+    // Because the container is an 'any', its elements are boxed as 'MokshaAny'
+    // structs
+    MokshaAny *arr = (MokshaAny *)slice->data;
+    return &arr[index];
+  }
+
+  // 3. Fallback for invalid types
+  moksha_rt_panic("Type Error: Cannot index into a non-collection 'any' type.");
+  return NULL;
+}
+
 static MapEntry *get_entry_at(MokshaMap *map, int32_t index) {
   int32_t count = 0;
   MapEntry *curr = map->head;
@@ -243,20 +324,38 @@ int32_t moksha_rt_map_len(void *map_ptr) {
 // ============================================================================
 
 // Helper to check key equality securely across types
-static bool map_keys_equal(MokshaAny *k1, MokshaAny *k2) {
-  if (k1->vtable->type_id != k2->vtable->type_id)
-    return false;
+// static bool map_keys_equal(MokshaAny *k1, MokshaAny *k2) {
+//   if (k1 == k2)
+//     return true;
+//   if (!k1 || !k2)
+//     return false;
 
-  if (k1->data == k2->data)
-    return true; // Matches Ints/Bools/Refs
+//   // Strict Type Enforcement
+//   if (k1->type_id != k2->type_id)
+//     return false;
 
-  char *s1 = (char *)k1->data;
-  char *s2 = (char *)k2->data;
-  if (s1 && s2) {
-    return internal_strcmp(s1, s2) == 0; // Safely matches dynamic strings
-  }
-  return false;
-}
+//   // Type ID 5 & 6 = 32-bit Integers (Signed & Unsigned)
+//   if (k1->type_id == 5 || k1->type_id == 6) {
+//     return *(int32_t *)k1->data == *(int32_t *)k2->data;
+//   }
+
+//   // Type ID 16 = String
+//   if (k1->type_id == 16) {
+//     MokshaString *s1 = (MokshaString *)k1->data;
+//     MokshaString *s2 = (MokshaString *)k2->data;
+//     if (s1->length != s2->length)
+//       return false;
+
+//     for (uint64_t i = 0; i < s1->length; i++) {
+//       if (s1->chars[i] != s2->chars[i])
+//         return false;
+//     }
+//     return true;
+//   }
+
+//   // Fallback: Pointer/Reference Equality for Objects
+//   return k1->data == k2->data;
+// }
 
 extern MokshaAny *moksha_rt_map_get(void *map_ptr, MokshaAny *key);
 

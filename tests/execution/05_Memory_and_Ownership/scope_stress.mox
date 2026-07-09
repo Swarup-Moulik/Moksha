@@ -1,6 +1,6 @@
-println("--- [E2E] scope_stress.mox ---")
-
 int x = 100; // Global/Module scope
+
+println("--- [E2E] scope_stress.mox ---")
 
 void run_scope_stress() {
     println(x); // Expected: 100

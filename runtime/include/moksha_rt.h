@@ -140,7 +140,9 @@ void __moksha_free(void *ptr);
 // ============================================================================
 // Arrays & Slices
 // ============================================================================
+void *moksha_rt_array_view(void *stack_data, uint64_t length);
 void *moksha_rt_array_alloc(size_t element_size, uint64_t capacity);
+void *moksha_rt_array_data(MokshaSlice *slice);
 void moksha_rt_array_push(MokshaSlice *slice, void *value_ptr,
                           size_t element_size);
 void *moksha_rt_array_pop(MokshaSlice *slice, size_t element_size);
@@ -264,6 +266,7 @@ void moksha_rt_map_insert(void *map_ptr, MokshaAny *key, MokshaAny *value);
 MokshaAny *moksha_rt_map_get_key_at(void *map_ptr, int32_t index);
 MokshaAny *moksha_rt_map_get_val_at(void *map_ptr, int32_t index);
 MokshaAny *moksha_rt_map_get(void *map_ptr, MokshaAny *key);
+MokshaAny *moksha_rt_any_get(MokshaAny *container, MokshaAny *key);
 int32_t moksha_rt_map_len(void *map_ptr);
 void moksha_rt_map_free_internal(void *map_ptr);
 
@@ -318,6 +321,9 @@ MokshaAnyRet moksha_file_readJson(char *path);
 void moksha_file_writeYaml(char *path, MokshaAny *data_any);
 MokshaAnyRet moksha_file_readYaml(char *path);
 
+void moksha_file_writeCsv(char *path, MokshaAny *data_any);
+MokshaAnyRet moksha_file_readCsv(char *path);
+
 MokshaAnyRet moksha_file_createPdf(char *path);
 void moksha_file_writePdfText(MokshaAny *pdf_any, char *text);
 void moksha_file_savePdf(MokshaAny *pdf_any);
@@ -356,7 +362,7 @@ void *moksha_rt_coro_setup(void *coro_handle);
 void moksha_rt_coro_finish(void *promise_handle, void *payload);
 void *moksha_rt_make_unresolved_promise(void);
 void *spawn_func(void *closure_ptr);
-void *join(void *p1_handle, void *p2_handle);
+void *moksha_builtin_join(void *p1_handle, void *p2_handle);
 bool moksha_scheduler_is_active(void);
 void moksha_rt_join_all_callback(void *sub_result, void *ctx_ptr, int index);
 void *moksha_builtin_yield(void);

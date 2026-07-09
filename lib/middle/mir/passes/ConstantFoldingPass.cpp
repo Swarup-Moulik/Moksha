@@ -23,17 +23,17 @@ static void replaceAllUsesInFunction(MIRFunction *F, MIRValue *oldVal,
 // Traces a pointer through arithmetic and casts to find its base allocation
 static MIRValue *getBasePointer(MIRValue *val) {
   while (val) {
-    if (auto *gep = llvm::dyn_cast<GetElementPtrInst>(val)) {
+    if (auto *gep = llvm::dyn_cast_or_null<GetElementPtrInst>(val)) {
       val = gep->getPointer();
-    } else if (auto *cast = llvm::dyn_cast<CastInst>(val)) {
+    } else if (auto *cast = llvm::dyn_cast_or_null<CastInst>(val)) {
       val = cast->getValue();
-    } else if (auto *cCast = llvm::dyn_cast<ConstantBitCast>(val)) {
+    } else if (auto *cCast = llvm::dyn_cast_or_null<ConstantBitCast>(val)) {
       val = cCast->getValue();
-    } else if (auto *cAny = llvm::dyn_cast<ConstantAnyCast>(val)) {
+    } else if (auto *cAny = llvm::dyn_cast_or_null<ConstantAnyCast>(val)) {
       val = cAny->getValue();
-    } else if (auto *cArr = llvm::dyn_cast<ConstantArrayToSlice>(val)) {
+    } else if (auto *cArr = llvm::dyn_cast_or_null<ConstantArrayToSlice>(val)) {
       val = cArr->getValue();
-    } else if (auto *cSlice = llvm::dyn_cast<ConstantSliceToArray>(val)) {
+    } else if (auto *cSlice = llvm::dyn_cast_or_null<ConstantSliceToArray>(val)) {
       val = cSlice->getValue();
     } else {
       break;
@@ -56,7 +56,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
       for (auto &inst : block->getInstructions()) {
 
         // 1. Scan for any potential mutation or escape of a global
-        if (auto *store = llvm::dyn_cast<StoreInst>(inst.get())) {
+        if (auto *store = llvm::dyn_cast_or_null<StoreInst>(inst.get())) {
           // Direct/Indirect mutation: Storing TO the global
           if (auto *g = llvm::dyn_cast_or_null<MIRGlobal>(
                   getBasePointer(store->getPointer()))) {
@@ -69,14 +69,14 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
           }
         }
         // Escape: Passing the global to a function
-        else if (auto *call = llvm::dyn_cast<CallInst>(inst.get())) {
+        else if (auto *call = llvm::dyn_cast_or_null<CallInst>(inst.get())) {
           for (MIRValue *arg : call->getArgs()) {
             if (auto *g =
                     llvm::dyn_cast_or_null<MIRGlobal>(getBasePointer(arg))) {
               mutatedGlobals.insert(g);
             }
           }
-        } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(inst.get())) {
+        } else if (auto *invoke = llvm::dyn_cast_or_null<InvokeInst>(inst.get())) {
           for (MIRValue *arg : invoke->getArgs()) {
             if (auto *g =
                     llvm::dyn_cast_or_null<MIRGlobal>(getBasePointer(arg))) {
@@ -84,7 +84,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
             }
           }
         } else if (auto *closure =
-                       llvm::dyn_cast<MakeClosureInst>(inst.get())) {
+                       llvm::dyn_cast_or_null<MakeClosureInst>(inst.get())) {
           for (MIRValue *cap : closure->getCaptures()) {
             if (auto *g =
                     llvm::dyn_cast_or_null<MIRGlobal>(getBasePointer(cap))) {
@@ -116,7 +116,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
         for (auto &block : func->getBlocks()) {
           auto &insts = block->getInstructionsMut();
           for (auto it = insts.begin(); it != insts.end();) {
-            if (auto *load = llvm::dyn_cast<LoadInst>(it->get())) {
+            if (auto *load = llvm::dyn_cast_or_null<LoadInst>(it->get())) {
               if (!load->isVolatile() && load->getPointer() == g) {
                 MIRValue *replacement = g->getInitializer();
 
@@ -156,7 +156,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
         MIRValue *folded = nullptr;
 
         // Fold Slice Property Accesses
-        if (auto *ext = llvm::dyn_cast<ExtractValueInst>(inst)) {
+        if (auto *ext = llvm::dyn_cast_or_null<ExtractValueInst>(inst)) {
           if (auto *constSlice =
                   llvm::dyn_cast_or_null<ConstantSlice>(ext->getAggregate())) {
 
@@ -167,7 +167,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
               // To fold the pointer, we create a ConstantArray of the elements
               // and return a BitCast of that array to the expected pointer type
               if (auto *sliceTy =
-                      llvm::dyn_cast<hir::SliceType>(constSlice->getType())) {
+                      llvm::dyn_cast_or_null<hir::SliceType>(constSlice->getType())) {
                 auto *elemTy = sliceTy->getElementType();
                 auto *arrayTy =
                     M.getArrayType(elemTy, constSlice->getElements().size());
@@ -192,7 +192,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
 
         // Fold Compare Instructions (e.g., icmp ne null, null OR icmp sgt 10,
         // 20)
-        if (auto *icmp = llvm::dyn_cast<CompareInst>(inst)) {
+        if (auto *icmp = llvm::dyn_cast_or_null<CompareInst>(inst)) {
 
           // Strip away BitCasts so we can see the raw Constants underneath
           auto unwrapCasts = [](MIRValue *val) -> MIRValue * {
@@ -236,8 +236,8 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
             }
           }
           // 2. Fold Constant Integer Comparisons
-          else if (auto *lInt = llvm::dyn_cast<ConstantInt>(lhs)) {
-            if (auto *rInt = llvm::dyn_cast<ConstantInt>(rhs)) {
+          else if (auto *lInt = llvm::dyn_cast_or_null<ConstantInt>(lhs)) {
+            if (auto *rInt = llvm::dyn_cast_or_null<ConstantInt>(rhs)) {
 
               // Determine if the operands are signed based on LHS type
               bool isSigned = false;
@@ -318,7 +318,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
         // --------------------------------------------------------------------
         // Fold Floating-Point Comparisons
         // --------------------------------------------------------------------
-        if (auto *fcmp = llvm::dyn_cast<FCmpInst>(inst)) {
+        if (auto *fcmp = llvm::dyn_cast_or_null<FCmpInst>(inst)) {
           auto unwrapCasts = [](MIRValue *val) -> MIRValue * {
             while (val) {
               if (auto *cast = llvm::dyn_cast_or_null<CastInst>(val)) {
@@ -347,8 +347,8 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
           MIRValue *lhs = unwrapCasts(fcmp->getLHS());
           MIRValue *rhs = unwrapCasts(fcmp->getRHS());
 
-          if (auto *lFloat = llvm::dyn_cast<ConstantFloat>(lhs)) {
-            if (auto *rFloat = llvm::dyn_cast<ConstantFloat>(rhs)) {
+          if (auto *lFloat = llvm::dyn_cast_or_null<ConstantFloat>(lhs)) {
+            if (auto *rFloat = llvm::dyn_cast_or_null<ConstantFloat>(rhs)) {
               double lVal = lFloat->getValue();
               double rVal = rFloat->getValue();
               bool result = false;
@@ -389,7 +389,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
         // --------------------------------------------------------------------
         // Fold Binary Math (Arithmetic)
         // --------------------------------------------------------------------
-        if (auto *binOp = llvm::dyn_cast<BinaryInst>(inst)) {
+        if (auto *binOp = llvm::dyn_cast_or_null<BinaryInst>(inst)) {
           auto unwrapCasts = [](MIRValue *val) -> MIRValue * {
             while (val) {
               if (auto *cast = llvm::dyn_cast_or_null<CastInst>(val)) {
@@ -419,8 +419,8 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
           MIRValue *rhs = unwrapCasts(binOp->getRHS());
 
           // Integer Math
-          if (auto *lInt = llvm::dyn_cast<ConstantInt>(lhs)) {
-            if (auto *rInt = llvm::dyn_cast<ConstantInt>(rhs)) {
+          if (auto *lInt = llvm::dyn_cast_or_null<ConstantInt>(lhs)) {
+            if (auto *rInt = llvm::dyn_cast_or_null<ConstantInt>(rhs)) {
 
               // Check if the Moksha type is a signed integer
               bool isSigned = false;
@@ -508,8 +508,8 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
             }
           }
           // Floating-Point Math
-          else if (auto *lFloat = llvm::dyn_cast<ConstantFloat>(lhs)) {
-            if (auto *rFloat = llvm::dyn_cast<ConstantFloat>(rhs)) {
+          else if (auto *lFloat = llvm::dyn_cast_or_null<ConstantFloat>(lhs)) {
+            if (auto *rFloat = llvm::dyn_cast_or_null<ConstantFloat>(rhs)) {
               double lVal = lFloat->getValue();
               double rVal = rFloat->getValue();
               double result = 0.0;

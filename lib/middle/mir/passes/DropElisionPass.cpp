@@ -33,13 +33,13 @@ MIRValue *getBaseAlloca(MIRValue *val) {
   while (val) {
     if (llvm::isa<AllocaInst>(val))
       return val;
-    if (auto *load = llvm::dyn_cast<LoadInst>(val))
+    if (auto *load = llvm::dyn_cast_or_null<LoadInst>(val))
       val = load->getPointer();
-    else if (auto *gep = llvm::dyn_cast<GetElementPtrInst>(val))
+    else if (auto *gep = llvm::dyn_cast_or_null<GetElementPtrInst>(val))
       val = gep->getPointer();
-    else if (auto *cast = llvm::dyn_cast<CastInst>(val))
+    else if (auto *cast = llvm::dyn_cast_or_null<CastInst>(val))
       val = cast->getValue();
-    else if (auto *ext = llvm::dyn_cast<ExtractValueInst>(val))
+    else if (auto *ext = llvm::dyn_cast_or_null<ExtractValueInst>(val))
       val = ext->getAggregate();
     else
       break;
@@ -100,14 +100,14 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
       for (auto &instPtr : block->getInstructions()) {
         MIRInst *inst = instPtr.get();
 
-        if (auto *store = llvm::dyn_cast<StoreInst>(inst)) {
+        if (auto *store = llvm::dyn_cast_or_null<StoreInst>(inst)) {
           // KILL: Re-initialization
           if (MIRValue *destAlloca = getBaseAlloca(store->getPointer())) {
             currentOut.erase(destAlloca);
           }
 
           // GEN: Moving a value
-          if (auto *sourceLoad = llvm::dyn_cast<LoadInst>(store->getValue())) {
+          if (auto *sourceLoad = llvm::dyn_cast_or_null<LoadInst>(store->getValue())) {
             std::string loadName = sourceLoad->getName();
             if (loadName.find("cleanup") == std::string::npos &&
                 loadName.find("old") == std::string::npos) {
@@ -146,9 +146,9 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
           }
 
           // GEN: Consumed by function call
-          if (auto *call = llvm::dyn_cast<CallInst>(inst)) {
+          if (auto *call = llvm::dyn_cast_or_null<CallInst>(inst)) {
             for (auto *arg : call->getArgs()) {
-              if (auto *argLoad = llvm::dyn_cast<LoadInst>(arg)) {
+              if (auto *argLoad = llvm::dyn_cast_or_null<LoadInst>(arg)) {
                 std::string argName = argLoad->getName();
                 if (argName.find("cleanup") == std::string::npos &&
                     argName.find("old") == std::string::npos) {
@@ -187,9 +187,9 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
               }
             }
           }
-        } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(inst)) {
+        } else if (auto *invoke = llvm::dyn_cast_or_null<InvokeInst>(inst)) {
           for (auto *arg : invoke->getArgs()) {
-            if (auto *argLoad = llvm::dyn_cast<LoadInst>(arg)) {
+            if (auto *argLoad = llvm::dyn_cast_or_null<LoadInst>(arg)) {
               if (argLoad->getName() != "cleanup_val" &&
                   argLoad->getBorrowKind() != BorrowKind::View) {
 
@@ -248,11 +248,11 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
       bool elideInstruction = false;
 
       // Update local state within the block
-      if (auto *store = llvm::dyn_cast<StoreInst>(inst)) {
+      if (auto *store = llvm::dyn_cast_or_null<StoreInst>(inst)) {
         if (MIRValue *destAlloca = getBaseAlloca(store->getPointer())) {
           movedAllocas.erase(destAlloca);
         }
-        if (auto *sourceLoad = llvm::dyn_cast<LoadInst>(store->getValue())) {
+        if (auto *sourceLoad = llvm::dyn_cast_or_null<LoadInst>(store->getValue())) {
           if (sourceLoad->getName() != "cleanup_val" &&
               sourceLoad->getName() != "old_val") {
             // FIX: Do not track as moved if it is just a borrow!
@@ -264,9 +264,9 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
             }
           }
         }
-      } else if (auto *call = llvm::dyn_cast<CallInst>(inst)) {
+      } else if (auto *call = llvm::dyn_cast_or_null<CallInst>(inst)) {
         for (auto *arg : call->getArgs()) {
-          if (auto *argLoad = llvm::dyn_cast<LoadInst>(arg)) {
+          if (auto *argLoad = llvm::dyn_cast_or_null<LoadInst>(arg)) {
             if (argLoad->getName() != "cleanup_val") {
               // FIX: Do not track as moved if it is just a borrow!
               if (argLoad->getBorrowKind() != BorrowKind::View) {
@@ -278,7 +278,7 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
             }
           }
         }
-      } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(inst)) {
+      } else if (auto *invoke = llvm::dyn_cast_or_null<InvokeInst>(inst)) {
         if (invoke->getCallee()) {
           std::string calleeName = invoke->getCallee()->getName();
           if (calleeName == "__moksha_free" ||
@@ -295,14 +295,14 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
       }
 
       // Check for Elision targets
-      if (auto *arc = llvm::dyn_cast<ARCInst>(inst)) {
+      if (auto *arc = llvm::dyn_cast_or_null<ARCInst>(inst)) {
         if (arc->getOpcode() == Opcode::Release) {
           if (MIRValue *base = getBaseAlloca(arc->getObject())) {
             if (movedAllocas.count(base))
               elideInstruction = true;
           }
         }
-      } else if (auto *call = llvm::dyn_cast<CallInst>(inst)) {
+      } else if (auto *call = llvm::dyn_cast_or_null<CallInst>(inst)) {
         if (call->getCallee()) {
           std::string calleeName = call->getCallee()->getName();
 

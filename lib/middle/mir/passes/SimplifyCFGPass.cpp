@@ -30,23 +30,23 @@ static void replaceAllUsesInFunction(MIRFunction *F, MIRValue *oldVal,
 // ============================================================================
 static void replaceTargetBlock(MIRInst *term, MIRBlock *oldTarget,
                                MIRBlock *newTarget) {
-  if (auto *br = llvm::dyn_cast<BranchInst>(term)) {
+  if (auto *br = llvm::dyn_cast_or_null<BranchInst>(term)) {
     if (br->getTarget() == oldTarget)
       br->setTarget(newTarget);
-  } else if (auto *condBr = llvm::dyn_cast<CondBranchInst>(term)) {
+  } else if (auto *condBr = llvm::dyn_cast_or_null<CondBranchInst>(term)) {
     if (condBr->getTrueBlock() == oldTarget)
       condBr->setTrueBlock(newTarget);
     if (condBr->getFalseBlock() == oldTarget)
       condBr->setFalseBlock(newTarget);
-  } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(term)) {
+  } else if (auto *invoke = llvm::dyn_cast_or_null<InvokeInst>(term)) {
     if (invoke->getNormalDest() == oldTarget)
       invoke->setNormalDest(newTarget);
     if (invoke->getUnwindDest() == oldTarget)
       invoke->setUnwindDest(newTarget);
-  } else if (auto *throwInst = llvm::dyn_cast<ThrowInst>(term)) {
+  } else if (auto *throwInst = llvm::dyn_cast_or_null<ThrowInst>(term)) {
     if (throwInst->getUnwindDest() == oldTarget)
       throwInst->setUnwindDest(newTarget);
-  } else if (auto *switchInst = llvm::dyn_cast<SwitchInst>(term)) {
+  } else if (auto *switchInst = llvm::dyn_cast_or_null<SwitchInst>(term)) {
     if (switchInst->getDefaultBlock() == oldTarget)
       switchInst->setDefaultBlock(newTarget);
     for (auto &casePair : switchInst->getCasesMut()) {
@@ -85,27 +85,27 @@ bool SimplifyCFGPass::runOnFunction(MIRFunction *F) {
       continue;
 
     MIRInst *term = b->getInstructions().back().get();
-    if (auto *br = llvm::dyn_cast<BranchInst>(term)) {
+    if (auto *br = llvm::dyn_cast_or_null<BranchInst>(term)) {
       b->addSuccessor(br->getTarget());
       br->getTarget()->addPredecessor(b);
-    } else if (auto *condBr = llvm::dyn_cast<CondBranchInst>(term)) {
+    } else if (auto *condBr = llvm::dyn_cast_or_null<CondBranchInst>(term)) {
       b->addSuccessor(condBr->getTrueBlock());
       condBr->getTrueBlock()->addPredecessor(b);
       b->addSuccessor(condBr->getFalseBlock());
       condBr->getFalseBlock()->addPredecessor(b);
-    } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(term)) {
+    } else if (auto *invoke = llvm::dyn_cast_or_null<InvokeInst>(term)) {
       b->addSuccessor(invoke->getNormalDest());
       invoke->getNormalDest()->addPredecessor(b);
       if (invoke->getUnwindDest()) {
         b->addSuccessor(invoke->getUnwindDest());
         invoke->getUnwindDest()->addPredecessor(b);
       }
-    } else if (auto *throwInst = llvm::dyn_cast<ThrowInst>(term)) {
+    } else if (auto *throwInst = llvm::dyn_cast_or_null<ThrowInst>(term)) {
       if (throwInst->getUnwindDest()) {
         b->addSuccessor(throwInst->getUnwindDest());
         throwInst->getUnwindDest()->addPredecessor(b);
       }
-    } else if (auto *switchInst = llvm::dyn_cast<SwitchInst>(term)) {
+    } else if (auto *switchInst = llvm::dyn_cast_or_null<SwitchInst>(term)) {
       b->addSuccessor(switchInst->getDefaultBlock());
       switchInst->getDefaultBlock()->addPredecessor(b);
       for (auto &casePair : switchInst->getCases()) {
@@ -114,21 +114,45 @@ bool SimplifyCFGPass::runOnFunction(MIRFunction *F) {
       }
     }
 
-    // [FIX] Restore Predecessor Edges from Phi Nodes!
     for (auto &instPtr : b->getInstructions()) {
-      if (auto *phi = llvm::dyn_cast<PhiInst>(instPtr.get())) {
+      if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(instPtr.get())) {
+        std::vector<MIRBlock *> stalePhiBlocks;
         for (auto &[val, predBlock] : phi->getIncoming()) {
-          // Ensure the predecessor knows it flows into this block
-          if (std::find(predBlock->getSuccessors().begin(),
-                        predBlock->getSuccessors().end(),
-                        b) == predBlock->getSuccessors().end()) {
-            predBlock->addSuccessor(b);
-          }
-          // Ensure this block knows it receives flow from the predecessor
           if (std::find(b->getPredecessors().begin(),
                         b->getPredecessors().end(),
                         predBlock) == b->getPredecessors().end()) {
-            b->addPredecessor(predBlock);
+            stalePhiBlocks.push_back(predBlock);
+          }
+        }
+
+        std::vector<MIRBlock *> missingCFGBlocks;
+        for (MIRBlock *cfgPred : b->getPredecessors()) {
+          bool found = false;
+          for (auto &[val, predBlock] : phi->getIncoming()) {
+            if (predBlock == cfgPred) {
+              found = true;
+              break;
+            }
+          }
+          if (!found)
+            missingCFGBlocks.push_back(cfgPred);
+        }
+
+        // [FIX] If exactly 1 block was bypassed, auto-repair the Phi even if
+        // it resulted in multiple new incoming edges (1-to-N mapping).
+        if (stalePhiBlocks.size() == 1 && !missingCFGBlocks.empty()) {
+          MIRValue *rescuedVal = nullptr;
+          for (auto &[val, predBlock] : phi->getIncoming()) {
+            if (predBlock == stalePhiBlocks[0]) {
+              rescuedVal = val;
+              break;
+            }
+          }
+          if (rescuedVal) {
+            phi->removeIncoming(stalePhiBlocks[0]);
+            for (MIRBlock *missingBlock : missingCFGBlocks) {
+              phi->addIncoming(rescuedVal, missingBlock);
+            }
           }
         }
       } else {
@@ -175,8 +199,8 @@ bool SimplifyCFGPass::foldBranches(MIRFunction *F) {
     if (b->getInstructions().empty())
       continue;
 
-    auto *condBr =
-        llvm::dyn_cast<CondBranchInst>(b->getInstructions().back().get());
+    auto *condBr = llvm::dyn_cast_or_null<CondBranchInst>(
+        b->getInstructions().back().get());
 
     if (condBr && condBr->getTrueBlock() == condBr->getFalseBlock()) {
       MIRBlock *target = condBr->getTrueBlock();
@@ -185,6 +209,25 @@ bool SimplifyCFGPass::foldBranches(MIRFunction *F) {
       auto newBr = std::make_unique<BranchInst>(target, condBr->getLoc());
       b->getInstructionsMut().pop_back();
       b->addInstruction(std::move(newBr));
+
+      // [ADD THIS]: Clean up the duplicate CFG edge and duplicate Phi entry
+      b->removeSuccessor(target); // Removes one instance of the duplicate edge
+      target->removePredecessor(b);
+
+      for (auto &inst : target->getInstructionsMut()) {
+        if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst.get())) {
+          auto &incoming = phi->getIncomingMut();
+          // Find and erase exactly ONE of the duplicate incoming edges
+          for (auto it = incoming.begin(); it != incoming.end(); ++it) {
+            if (it->second == b) {
+              incoming.erase(it);
+              break;
+            }
+          }
+        } else {
+          break;
+        }
+      }
 
       changed = true;
     }
@@ -211,7 +254,8 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
     if (B->getInstructions().size() != 1)
       continue;
 
-    auto *br = llvm::dyn_cast<BranchInst>(B->getInstructions().front().get());
+    auto *br =
+        llvm::dyn_cast_or_null<BranchInst>(B->getInstructions().front().get());
     if (!br)
       continue;
 
@@ -219,12 +263,12 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
     if (B == C)
       continue; // Ignore infinite self-loops
 
-    // [FIX START] Prevent the creation of ambiguous parallel edges into Phi
-    // nodes! If A branches to B and C, and we bypass B to jump directly to C, A
-    // will have two parallel edges into C. If C has a Phi node, the CFG becomes
-    // invalid.
     bool cHasPhi = false;
     for (auto &inst : C->getInstructions()) {
+      // 1. MUST ADD THIS NULL CHECK!
+      if (!inst)
+        continue;
+
       if (llvm::isa<PhiInst>(inst.get())) {
         cHasPhi = true;
         break;
@@ -232,6 +276,20 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
     }
 
     bool canBypass = true;
+
+    // Prevent bypassing if the predecessor is an InvokeInst
+    for (MIRBlock *A : B->getPredecessors()) {
+      if (A->getInstructionsMut().empty())
+        continue;
+
+      auto *term = A->getInstructionsMut().back().get();
+      // 2. MUST ADD NULL CHECK HERE TOO!
+      if (term && llvm::isa<InvokeInst>(term)) {
+        canBypass = false;
+        break;
+      }
+    }
+
     if (cHasPhi) {
       for (MIRBlock *A : B->getPredecessors()) {
         // If predecessor A already has a path to C, abort bypassing B!
@@ -265,7 +323,7 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
       for (auto &inst : C->getInstructionsMut()) {
         if (!inst)
           continue;
-        if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
+        if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst.get())) {
           MIRValue *valForB = nullptr;
           for (auto &[val, pred] : phi->getIncoming()) {
             if (pred == B) {
@@ -287,13 +345,14 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
     for (auto &inst : C->getInstructionsMut()) {
       if (!inst)
         continue;
-      if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
+      if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst.get())) {
         phi->removeIncoming(B);
       } else {
         break;
       }
     }
     B->getPredecessors().clear();
+    B->getSuccessors().clear();
 
     // Return immediately to restart the scan (since the graph mutated)
     return true;
@@ -311,7 +370,8 @@ bool SimplifyCFGPass::mergeBlocks(MIRFunction *F) {
     if (A->getInstructions().empty())
       continue;
 
-    auto *br = llvm::dyn_cast<BranchInst>(A->getInstructions().back().get());
+    auto *br =
+        llvm::dyn_cast_or_null<BranchInst>(A->getInstructions().back().get());
     if (!br)
       continue;
 
@@ -331,10 +391,7 @@ bool SimplifyCFGPass::mergeBlocks(MIRFunction *F) {
       for (auto &inst : B->getInstructionsMut()) {
         if (!inst)
           continue;
-        if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
-          // Because B only has 1 predecessor (A), this Phi is purely redundant.
-          // Extract the single incoming value, replace all uses, and drop the
-          // Phi!
+        if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst.get())) {
           MIRValue *incomingVal = nullptr;
           for (auto &[val, pred] : phi->getIncoming()) {
             if (pred == A) {
@@ -363,7 +420,7 @@ bool SimplifyCFGPass::mergeBlocks(MIRFunction *F) {
         for (auto &inst : succ->getInstructionsMut()) {
           if (!inst)
             continue;
-          if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
+          if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst.get())) {
             MIRValue *valForB = nullptr;
             for (auto &[val, pred] : phi->getIncoming()) {
               if (pred == B) {
@@ -400,10 +457,19 @@ void SimplifyCFGPass::removeDeadBlocks(MIRFunction *F) {
 
   while (changed) {
     changed = false;
+
+    // [ADD THIS FIX] Rebuild reliable predecessors dynamically
+    std::unordered_map<MIRBlock *, std::vector<MIRBlock *>> truePreds;
+    for (auto &blockPtr : blocks) {
+      for (MIRBlock *succ : blockPtr->getSuccessors()) {
+        truePreds[succ].push_back(blockPtr.get());
+      }
+    }
+
     for (auto it = blocks.begin(); it != blocks.end();) {
       MIRBlock *block = it->get();
 
-      if (block != F->getEntryBlock() && block->getPredecessors().empty()) {
+      if (block != F->getEntryBlock() && truePreds[block].empty()) {
 
         // 1. Sever outgoing CFG edges to prevent dangling pointers in live
         // blocks!
@@ -414,7 +480,7 @@ void SimplifyCFGPass::removeDeadBlocks(MIRFunction *F) {
           for (auto &inst : succ->getInstructionsMut()) {
             if (!inst)
               continue;
-            if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
+            if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst.get())) {
               phi->removeIncoming(block);
             } else {
               break; // Phis are always at the top

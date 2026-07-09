@@ -1,0 +1,1237 @@
+
+// ==========================================
+// File: .\array_builtins.mox
+// ==========================================
+
+void test_universal_properties() {
+    println("--- Testing Universal Properties ---");
+
+    int[5] fixed = [1, 2, 3, 4, 5];
+
+    if (length(fixed) == 5) {
+        println("PASS: Fixed array length()");
+    } else {
+        println("[CRITICAL] FAIL: Fixed array length()");
+    }
+
+    if (at(fixed, 2) == 3) {
+        println("PASS: at() returns correct value");
+    } else {
+        println("[CRITICAL] FAIL: at() returns correct value");
+    }
+
+    if (is_empty(fixed) == false) {
+        println("PASS: Fixed array is_empty()");
+    } else {
+        println("[CRITICAL] FAIL: Fixed array is_empty()");
+    }
+
+    int[] dyn = [];
+
+    if (length(dyn) == 0) {
+        println("PASS: Dynamic array length() on empty");
+    } else {
+        println("[CRITICAL] FAIL: Dynamic array length() on empty");
+    }
+
+    if (is_empty(dyn) == true) {
+        println("PASS: Dynamic array is_empty() on empty");
+    } else {
+        println("[CRITICAL] FAIL: Dynamic array is_empty() on empty");
+    }
+}
+
+void test_dynamic_mutations() {
+    println("--- Testing Dynamic Heap Mutations ---");
+    int[] arr = [];
+
+    // Push & Pop
+    push(arr, 10);
+    push(arr, 20);
+    push(arr, 30);
+
+    if (length(arr) == 3) {
+        println("PASS: push() updates length");
+    } else {
+        println("[CRITICAL] FAIL: push() updates length");
+    }
+
+    int last = pop(arr);
+
+    if (last == 30) {
+        println("PASS: pop() returns correct value");
+    } else {
+        println("[CRITICAL] FAIL: pop() returns correct value");
+    }
+
+    if (length(arr) == 2) {
+        println("PASS: pop() decrements length");
+    } else {
+        println("[CRITICAL] FAIL: pop() decrements length");
+    }
+
+    // Insert & Remove
+    insert(arr, 1, 15); // [10, 15, 20]
+
+    if (arr[1] == 15) {
+        println("PASS: insert() shifts elements correctly");
+    } else {
+        println("[CRITICAL] FAIL: insert() shifts elements correctly");
+    }
+
+    int removed = remove(arr, 0); // [15, 20]
+
+    if (removed == 10) {
+        println("PASS: remove() returns correct value");
+    } else {
+        println("[CRITICAL] FAIL: remove() returns correct value");
+    }
+
+    if (length(arr) == 2) {
+        println("PASS: remove() shifts elements left");
+    } else {
+        println("[CRITICAL] FAIL: remove() shifts elements left");
+    }
+
+    // Extend
+    int[] more = [...arr, 100, 200];
+
+    if (length(more) == 4) {
+        println("PASS: spread operator merges slices");
+    } else {
+        println("[CRITICAL] FAIL: spread operator merges slices");
+    }
+
+    // Clear & Resize
+    clear(arr);
+
+    if (is_empty(arr) == true) {
+        println("PASS: clear() resets length");
+    } else {
+        println("[CRITICAL] FAIL: clear() resets length");
+    }
+
+    resize(arr, 5);
+
+    if (length(arr) == 5) {
+        println("PASS: resize() allocates exact length");
+    } else {
+        println("[CRITICAL] FAIL: resize() allocates exact length");
+    }
+}
+
+void test_search_and_sort() {
+    println("--- Testing Search, Sort, and Fill ---");
+    int[] arr = [50, 10, 30, 20, 40];
+
+    // Contains & Index
+    if (contains(arr, 30) == true) {
+        println("PASS: contains() finds element");
+    } else {
+        println("[CRITICAL] FAIL: contains() finds element");
+    }
+
+    if (contains(arr, 99) == false) {
+        println("PASS: contains() rejects missing element");
+    } else {
+        println("[CRITICAL] FAIL: contains() rejects missing element");
+    }
+
+    if (index(arr, 30) == 2) {
+        println("PASS: index() returns correct position");
+    } else {
+        println("[CRITICAL] FAIL: index() returns correct position");
+    }
+
+    // Sort & Reverse
+    sort(arr); // [10, 20, 30, 40, 50]
+
+    if (arr[0] == 10) {
+        println("PASS: sort() orders ascending (min)");
+    } else {
+        println("[CRITICAL] FAIL: sort() orders ascending (min)");
+    }
+
+    if (arr[4] == 50) {
+        println("PASS: sort() orders ascending (max)");
+    } else {
+        println("[CRITICAL] FAIL: sort() orders ascending (max)");
+    }
+
+    reverse(arr); // [50, 40, 30, 20, 10]
+
+    if (arr[0] == 50) {
+        println("PASS: reverse() flips ordering");
+    } else {
+        println("[CRITICAL] FAIL: reverse() flips ordering");
+    }
+
+    // Fill
+    fill(arr, 7);
+
+    if (arr[0] == 7) {
+        println("PASS: fill() updates start");
+    } else {
+        println("[CRITICAL] FAIL: fill() updates start");
+    }
+
+    if (arr[4] == 7) {
+        println("PASS: fill() updates end");
+    } else {
+        println("[CRITICAL] FAIL: fill() updates end");
+    }
+}
+
+void test_memory_semantics() {
+    println("--- Testing Reference & Memory Semantics ---");
+    int[] original = [1, 2, 3];
+
+    // Clone (Deep Copy)
+    int[] deep_copy = clone(original);
+    push(deep_copy, 4);
+
+    if (length(original) == 3) {
+        println("PASS: clone() protects original array from mutations");
+    } else {
+        println("[CRITICAL] FAIL: clone() protects original array from mutations");
+    }
+
+    if (length(deep_copy) == 4) {
+        println("PASS: clone() allows independent mutation");
+    } else {
+        println("[CRITICAL] FAIL: clone() allows independent mutation");
+    }
+
+    // Copy (Raw Blit)
+    int[] dest = [0, 0, 0];
+    copy(dest, original);
+
+    if (dest[0] == 1) {
+        println("PASS: copy() blits data correctly");
+    } else {
+        println("[CRITICAL] FAIL: copy() blits data correctly");
+    }
+
+    // Slice (O(1) View)
+    int[] my_slice = slice(original, 1, 3); // [2, 3]
+
+    if (length(my_slice) == 2) {
+        println("PASS: slice() creates correctly sized fat pointer");
+    } else {
+        println("[CRITICAL] FAIL: slice() creates correctly sized fat pointer");
+    }
+
+    if (my_slice[0] == 2) {
+        println("PASS: slice() offsets base pointer correctly");
+    } else {
+        println("[CRITICAL] FAIL: slice() offsets base pointer correctly");
+    }
+}
+
+
+// ==========================================
+// Top-Level Script Execution
+// ==========================================
+println("==========================================");
+println("      Moksha Array API Test Suite         ");
+println("==========================================");
+
+test_universal_properties();
+test_dynamic_mutations();
+test_search_and_sort();
+test_memory_semantics();
+
+println("==========================================");
+
+// ==========================================
+// File: .\cross_compile.mox
+// ==========================================
+
+println("Hello from Moksha!");
+println("Cross-platform compilation is working.");
+
+
+// -target x86_64-pc-linux-gnu -o cross_compile_linux
+// -target aarch64-linux-android -o cross_compile_android
+// -target arm64-apple-darwin -o cross_compile_mac
+// -target aarch64-apple-ios -o cross_compile_ios
+// -target x86_64-pc-windows-msvc -o cross_compile_windows
+// -target wasm32-wasi -o cross_compile_wasm.wasm
+// -target wasm32-unknown-unknown -o index.html
+
+// ==========================================
+// File: .\c_lib_bind.mox
+// ==========================================
+
+// Declare the external C wrapper function
+extern "C" int fetch_url(string url);
+extern "C" void open_url_in_browser(string url);
+
+println("--- Testing libcurl Integration ---");
+int result
+// Call the C function from Moksha
+unsafe { result = fetch_url("https://example.com"); }
+
+if (result == 0) {
+    println("Successfully connected and fetched data!");
+} else {
+    println("Network request failed with error code: " + result);
+}
+
+unsafe { open_url_in_browser("https://example.com"); }
+
+// ==========================================
+// File: .\file_builtins.mox
+// ==========================================
+
+// ==========================================
+// File System & IO Builtins Test Suite
+// ==========================================
+
+void test_basic_io() {
+    println("--- Testing Basic IO & Constants ---");
+
+    // Test Open, Write, Close using Constants
+    any f = open("test_basic.txt", WRITE | CREATE);
+    write(f, "Moksha V1");
+    close(f);
+
+    if (exists("test_basic.txt")) {
+        println("PASS: open(path, mode), write(file, data), and close(file)");
+    } else {
+        println("[CRITICAL] FAIL: open(), write(), or close()");
+    }
+
+    // Test Read & Size
+    any f_read = open("test_basic.txt", READ);
+    int s = size(f_read);
+    any data = read(f_read);
+    close(f_read);
+
+    if (s > 0) {
+        println("PASS: size(file)");
+    } else {
+        println("[CRITICAL] FAIL: size(file)");
+    }
+
+    if (data == "Moksha V1") {
+        println("PASS: read(file)");
+    } else {
+        println("[CRITICAL] FAIL: read(file)");
+    }
+}
+
+void test_high_level_text() {
+    println("--- Testing High-Level Text IO ---");
+
+    writeText("hello.txt", "Hello\n");
+    appendText("hello.txt", "World");
+
+    any content = readText("hello.txt");
+    if (content == "Hello\nWorld") {
+        println("PASS: writeText(), appendText(), readText()");
+    } else {
+        println("[CRITICAL] FAIL: High-level text IO methods");
+    }
+
+    any lines = readLines("hello.txt"); // Assuming returns Array
+    if (length(lines) == 2) {
+        println("PASS: readLines(file)");
+    } else {
+        println("[CRITICAL] FAIL: readLines(file)");
+    }
+}
+
+void test_high_level_binary() {
+    println("--- Testing High-Level Binary IO ---");
+
+    int[] out_bytes = [255, 128, 64];
+    writeBytes("data.bin", out_bytes);
+
+    int[] more_bytes = [32, 16];
+    appendBytes("data.bin", more_bytes);
+
+    any in_bytes = readBytes("data.bin");
+
+    if (length(in_bytes) == 5) {
+        println("PASS: writeBytes(), appendBytes(), readBytes()");
+    } else {
+        println("[CRITICAL] FAIL: Binary IO length mismatch");
+    }
+}
+
+void test_structured_data() {
+    println("--- Testing JSON & YAML Serialization ---");
+
+    // JSON
+    any config_out = {"version": 1, "name": "moksha"};
+    writeJson("config.json", config_out);
+
+    any config_in = readJson("config.json");
+    if (config_in["version"] == 1) {
+        println("PASS: writeJson() and readJson()");
+    } else {
+        println("[CRITICAL] FAIL: JSON Serialization");
+    }
+
+    // YAML
+    writeYaml("config.yaml", config_out);
+    any yaml_in = readYaml("config.yaml");
+    if (yaml_in["name"] == "moksha") {
+        println("PASS: writeYaml() and readYaml()");
+    } else {
+        println("[CRITICAL] FAIL: YAML Serialization");
+    }
+}
+
+void test_stream_navigation() {
+    println("--- Testing Stream Navigation & Operations ---");
+
+    any f = open("stream.txt", WRITE | CREATE | TRUNCATE);
+    writeLine(f, "Line 1");
+    writeLine(f, "Line 2");
+    flush(f);
+    close(f);
+
+    any f_in = open("stream.txt", READ);
+    any l1 = readLine(f_in);
+
+    if (l1 == "Line 1") {
+        println("PASS: writeLine() and readLine()");
+    } else {
+        println("[CRITICAL] FAIL: writeLine() and readLine()");
+    }
+
+    int pos = tell(f_in);
+    if (pos > 0) {
+        println("PASS: tell(file)");
+    } else {
+        println("[CRITICAL] FAIL: tell(file)");
+    }
+
+    seek(f_in, 0);
+    if (tell(f_in) == 0) {
+        println("PASS: seek(file, position)");
+    } else {
+        println("[CRITICAL] FAIL: seek(file, position)");
+    }
+
+    readLine(f_in);
+    readLine(f_in); // Reach EOF
+
+    if (eof(f_in) == true) {
+        println("PASS: eof(file)");
+    } else {
+        println("[CRITICAL] FAIL: eof(file)");
+    }
+    close(f_in);
+
+    // Truncate
+    any f_trunc = open("stream.txt", WRITE | APPEND);
+    truncate(f_trunc, 4);
+    close(f_trunc);
+    if (size(open("stream.txt", READ)) == 4) {
+        println("PASS: truncate(file, size)");
+    } else {
+        println("[CRITICAL] FAIL: truncate(file, size)");
+    }
+}
+
+void test_csv_operations() {
+    println("--- Testing CSV Serialization ---");
+
+    // 1. Prepare data (Array of Maps/Tables)
+    any row1 = {"id": 1, "name": "Moksha", "type": "Language"};
+    any row2 = {"id": 2, "name": "Compiler", "type": "Tool"};
+    any[] data_out = [row1, row2];
+
+    // 2. Write CSV
+    writeCsv("test.csv", data_out);
+
+    // 3. Read back
+    any data_in = readCsv("test.csv");
+
+    // 4. Validate
+    if (length(data_in) == 2) {
+        // Accessing first row's column "name"
+        if (data_in[0]["name"] == "Moksha" && data_in[1]["id"] == 2) {
+            println("PASS: writeCsv() and readCsv()");
+        } else {
+            println("[CRITICAL] FAIL: CSV data content mismatch");
+        }
+    } else {
+        println("[CRITICAL] FAIL: CSV read length mismatch");
+    }
+}
+
+void test_pdf_operations() {
+    println("--- Testing PDF Operations ---");
+
+    any pdf = createPdf("doc.pdf");
+    writePdfText(pdf, "Moksha PDF Generation");
+    savePdf(pdf);
+
+    if (exists("doc.pdf")) {
+        println("PASS: createPdf(), writePdfText(), savePdf()");
+    } else {
+        println("[CRITICAL] FAIL: PDF Creation pipeline");
+    }
+
+    any in_pdf = openPdf("doc.pdf");
+    any text = extractText(in_pdf);
+
+    if (text == "Moksha PDF Generation") {
+        println("PASS: openPdf() and extractText()");
+    } else {
+        println("[CRITICAL] FAIL: PDF Extraction pipeline");
+    }
+}
+
+void test_filesystem_ops() {
+    println("--- Testing File System & Directory Management ---");
+
+    createDir("sandbox");
+    if (isDir("sandbox") == true) {
+        println("PASS: createDir() and isDir()");
+    } else {
+        println("[CRITICAL] FAIL: createDir() or isDir()");
+    }
+
+    writeText("sandbox/temp.txt", "data");
+    if (isFile("sandbox/temp.txt") == true) {
+        println("PASS: isFile()");
+    } else {
+        println("[CRITICAL] FAIL: isFile()");
+    }
+
+    copy("sandbox/temp.txt", "sandbox/backup.txt");
+    if (exists("sandbox/backup.txt")) {
+        println("PASS: copy(src, dst)");
+    } else {
+        println("[CRITICAL] FAIL: copy(src, dst)");
+    }
+
+    move_file("sandbox/backup.txt", "sandbox/moved.txt");
+    if (exists("sandbox/moved.txt") && !exists("sandbox/backup.txt")) {
+        println("PASS: move_file(src, dst)");
+    } else {
+        println("[CRITICAL] FAIL: move_file(src, dst)");
+    }
+
+    any files = listDir("sandbox");
+    if (length(files) > 0) {
+        println("PASS: listDir(path)");
+    } else {
+        println("[CRITICAL] FAIL: listDir(path)");
+    }
+
+    // Cleanup
+    remove("sandbox/temp.txt");
+    remove("sandbox/moved.txt");
+    removeDir("sandbox");
+
+    if (!exists("sandbox")) {
+        println("PASS: remove(path) and removeDir(path)");
+    } else {
+        println("[CRITICAL] FAIL: Cleanup methods failed");
+    }
+}
+
+// ==========================================
+// Top-Level Script Execution
+// ==========================================
+println("==========================================");
+println("      Moksha File Builtins Test Suite     ");
+println("==========================================");
+
+test_basic_io();
+test_high_level_text();
+test_high_level_binary();
+test_structured_data();
+test_stream_navigation();
+test_csv_operations();
+test_pdf_operations();
+test_filesystem_ops();
+
+println("==========================================");
+println("            All Tests Completed           ");
+println("==========================================");
+
+// ==========================================
+// File: .\manual_memory.mox
+// ==========================================
+
+struct Point {
+    int x
+    int y
+}
+
+// Added for linked list testing
+struct Node {
+    int data
+    *mut Node next
+}
+
+void test_malloc_free() {
+    println("Running test_malloc_free...")
+    unsafe {
+        // Allocate space for a single integer and cast from *void
+        *mut int ptr = cast<*mut int>(malloc(sizeof(int)))
+
+        // Mutate the raw memory
+        *ptr = 42
+
+        if (*ptr == 42) {
+            println("  [PASS] malloc and free working as expected")
+        } else {
+            println("  [FAIL] memory read/write failed")
+        }
+
+        free(cast<*void>(ptr))
+    }
+}
+
+void test_calloc_zero_init() {
+    println("Running test_calloc_zero_init...")
+    unsafe {
+        // Allocate an array of 5 integers, zero-initialized
+        int count = 5
+        *mut int arr = cast<*mut int>(calloc(count, sizeof(int)))
+
+        // Verify zero initialization on the first element
+        if (*arr == 0) {
+            println("  [PASS] calloc successfully zero-initialized memory")
+        } else {
+            println("  [FAIL] calloc memory was not zeroed")
+        }
+
+        // Pointer arithmetic to check and mutate the second element
+        *mut int second_elem = arr + 1
+        *second_elem = 100
+
+        if (*(arr + 1) == 100) {
+            println("  [PASS] pointer arithmetic successful")
+        } else {
+            println("  [FAIL] pointer arithmetic failed")
+        }
+
+        free(cast<*void>(arr))
+    }
+}
+
+void test_realloc_growth() {
+    println("Running test_realloc_growth...")
+    unsafe {
+        // Initial allocation for 2 integers
+        *mut int ptr = cast<*mut int>(malloc(sizeof(int) * 2))
+        *ptr = 10
+        *(ptr + 1) = 20
+
+        // Reallocate to hold 4 integers
+        int new_size = sizeof(int) * 4
+        *mut int grown_ptr = cast<*mut int>(realloc(cast<*void>(ptr), new_size))
+
+        // Verify old data was preserved during the reallocation move
+        if (*grown_ptr == 10 && *(grown_ptr + 1) == 20) {
+            println("  [PASS] realloc preserved original data")
+        } else {
+            println("  [FAIL] realloc corrupted original data")
+        }
+
+        // Write to the newly expanded space
+        *(grown_ptr + 2) = 30
+        *(grown_ptr + 3) = 40
+
+        free(cast<*void>(grown_ptr))
+    }
+}
+
+void test_manual_struct_allocation() {
+    println("Running test_manual_struct_allocation...")
+    unsafe {
+        *mut Point p = cast<*mut Point>(malloc(sizeof(Point)))
+
+        // Pointer field access via dereference
+        (*p).x = 15
+        (*p).y = 25
+
+        if ((*p).x == 15 && (*p).y == 25) {
+            println("  [PASS] struct manual allocation and member access")
+        } else {
+            println("  [FAIL] struct manual allocation failed")
+        }
+
+        free(cast<*void>(p))
+    }
+}
+
+void test_struct_array_arithmetic() {
+    println("Running test_struct_array_arithmetic...")
+    unsafe {
+        // Allocate space for 3 Point structs sequentially
+        int count = 3
+        *mut Point arr = cast<*mut Point>(malloc(sizeof(Point) * count))
+
+        // Access via pointer arithmetic and initialize
+        (*(arr + 0)).x = 10
+        (*(arr + 0)).y = 20
+
+        (*(arr + 1)).x = 30
+        (*(arr + 1)).y = 40
+
+        (*(arr + 2)).x = 50
+        (*(arr + 2)).y = 60
+
+        // Verify memory bounds and layout didn't corrupt neighbors
+        if ((*(arr + 0)).x == 10 && (*(arr + 1)).x == 30 && (*(arr + 2)).y == 60) {
+            println("  [PASS] Sequential struct array allocation & arithmetic")
+        } else {
+            println("  [FAIL] Struct array memory corruption")
+        }
+
+        free(cast<*void>(arr))
+    }
+}
+
+void test_pointer_to_pointer() {
+    println("Running test_pointer_to_pointer...")
+    unsafe {
+        // Allocate a pointer that points to another pointer (double indirection)
+        *mut *mut int handle = cast<*mut *mut int>(malloc(sizeof(usize)))
+
+        // Allocate the actual integer payload
+        *handle = cast<*mut int>(malloc(sizeof(int)))
+
+        // Dereference twice to mutate the value
+        *(*handle) = 99
+
+        if (*(*handle) == 99) {
+            println("  [PASS] Double indirection (**ptr) works")
+        } else {
+            println("  [FAIL] Double indirection failed")
+        }
+
+        free(cast<*void>(*handle)) // Free inner payload
+        free(cast<*void>(handle))  // Free outer handle
+    }
+}
+
+void test_linked_list_nodes() {
+    println("Running test_linked_list_nodes...")
+    unsafe {
+        // Allocate two nodes independently
+        *mut Node head = cast<*mut Node>(malloc(sizeof(Node)))
+        *mut Node second = cast<*mut Node>(malloc(sizeof(Node)))
+
+        // Link them up
+        (*head).data = 100
+        (*head).next = second
+
+        // Terminate the list with a null pointer
+        (*second).data = 200
+        (*second).next = cast<*mut Node>(null)
+
+        // Traverse the pointer chain to check data
+        if ((*head).data == 100 && (*((*head).next)).data == 200) {
+            println("  [PASS] Linked list struct chaining and traversal")
+        } else {
+            println("  [FAIL] Linked list traversal failed")
+        }
+
+        // Clean up in reverse
+        free(cast<*void>(second))
+        free(cast<*void>(head))
+    }
+}
+
+// --- Top-Level Script Execution ---
+println("--- Starting Manual Memory Test Suite ---")
+
+test_malloc_free()
+test_calloc_zero_init()
+test_realloc_growth()
+test_manual_struct_allocation()
+test_struct_array_arithmetic()
+test_pointer_to_pointer()
+test_linked_list_nodes()
+
+println("--- Test Suite Finished ---")
+
+// ==========================================
+// File: .\map_builtins.mox
+// ==========================================
+
+table<string, int> scores = {
+    "Alice": 100,
+    "Bob": 95
+}
+
+scores["Alice"] = 98;
+    scores["Charlie"] = 69;
+    println(scores["Alice"]);
+    println(scores["Charlie"]);
+
+    println("--- Testing Map Builtins ---");
+
+    if (has(scores, "Alice")) {
+        println("PASS: has() found Alice");
+    } else {
+        println("[CRITICAL] FAIL: has() Alice");
+    }
+
+    if (!has(scores, "David")) {
+        println("PASS: has() did not find David");
+    } else {
+        println("[CRITICAL] FAIL: has() David");
+    }
+
+    if (length(scores) == 3) {
+        println("PASS: length() is 3");
+    } else {
+        println("[CRITICAL] FAIL: length() is not 3");
+    }
+
+    remove(scores, "Bob");
+    if (!has(scores, "Bob") && length(scores) == 2) {
+        println("PASS: remove() Bob");
+    } else {
+        println("[CRITICAL] FAIL: remove() Bob");
+    }
+
+    clear(scores);
+    if (length(scores) == 0 && !has(scores, "Alice")) {
+        println("PASS: clear()");
+    } else {
+        println("[CRITICAL] FAIL: clear()");
+    }
+
+// ==========================================
+// File: .\math_builtins.mox
+// ==========================================
+
+// ==========================================
+// math_builtins.mox
+// Test suite for Moksha Math Builtins
+// ==========================================
+
+void test_constants() {
+    println("--- Testing Math Constants ---");
+
+    // Using floor() to safely check irrationals
+    if (floor(PI) == 3.0) {
+        println("PASS: PI constant");
+    } else {
+        println("[CRITICAL] FAIL: PI constant");
+    }
+
+    if (floor(E) == 2.0) {
+        println("PASS: E constant");
+    } else {
+        println("[CRITICAL] FAIL: E constant");
+    }
+}
+
+void test_basic_math() {
+    println("--- Testing Basic Math ---");
+
+    // Strict equality is fine for integers/simple results
+    if (abs(-5.0) == 5.0) {
+        println("PASS: abs()");
+    } else {
+        println("[CRITICAL] FAIL: abs()");
+    }
+
+    // Use is_close for floating point calculations
+    if (is_close(sqrt(16.0), 4.0, 1e-6)) {
+        println("PASS: sqrt()");
+    } else {
+        println("[CRITICAL] FAIL: sqrt()");
+    }
+
+    if (is_close(cbrt(27.0), 3.0, 1e-6)) {
+        println("PASS: cbrt()");
+    } else {
+        println("[CRITICAL] FAIL: cbrt()");
+    }
+
+    if (is_close(hypot(3.0, 4.0), 5.0, 1e-6)) {
+        println("PASS: hypot()");
+    } else {
+        println("[CRITICAL] FAIL: hypot()");
+    }
+}
+
+void test_rounding() {
+    println("--- Testing Rounding ---");
+
+    if (floor(3.7) == 3.0) {
+        println("PASS: floor()");
+    } else {
+        println("[CRITICAL] FAIL: floor()");
+    }
+
+    if (ceil(3.2) == 4.0) {
+        println("PASS: ceil()");
+    } else {
+        println("[CRITICAL] FAIL: ceil()");
+    }
+
+    if (round(3.6) == 4.0) {
+        println("PASS: round()");
+    } else {
+        println("[CRITICAL] FAIL: round()");
+    }
+
+    if (trunc(-3.7) == -3.0) {
+        println("PASS: trunc()");
+    } else {
+        println("[CRITICAL] FAIL: trunc()");
+    }
+}
+
+void test_utils() {
+    println("--- Testing Math Utilities ---");
+
+    if (min(3.0, 5.0) == 3.0) {
+        println("PASS: min()");
+    } else {
+        println("[CRITICAL] FAIL: min()");
+    }
+
+    if (max(3.0, 5.0) == 5.0) {
+        println("PASS: max()");
+    } else {
+        println("[CRITICAL] FAIL: max()");
+    }
+
+    if (clamp(10.0, 0.0, 5.0) == 5.0) {
+        println("PASS: clamp()");
+    } else {
+        println("[CRITICAL] FAIL: clamp()");
+    }
+
+    if (sign(-42.0) == -1.0) {
+        println("PASS: sign()");
+    } else {
+        println("[CRITICAL] FAIL: sign()");
+    }
+
+    if (lerp(0.0, 10.0, 0.5) == 5.0) {
+        println("PASS: lerp()");
+    } else {
+        println("[CRITICAL] FAIL: lerp()");
+    }
+}
+
+void test_trig() {
+    println("--- Testing Trigonometry ---");
+
+    if (sin(0.0) == 0.0) {
+        println("PASS: sin()");
+    } else {
+        println("[CRITICAL] FAIL: sin()");
+    }
+
+    if (cos(0.0) == 1.0) {
+        println("PASS: cos()");
+    } else {
+        println("[CRITICAL] FAIL: cos()");
+    }
+
+    if (tan(0.0) == 0.0) {
+        println("PASS: tan()");
+    } else {
+        println("[CRITICAL] FAIL: tan()");
+    }
+}
+
+void test_exp_log() {
+    println("--- Testing Exponents & Logs ---");
+
+    if (log10(100.0) == 2.0) {
+        println("PASS: log10()");
+    } else {
+        println("[CRITICAL] FAIL: log10()");
+    }
+
+    if (log2(8.0) == 3.0) {
+        println("PASS: log2()");
+    } else {
+        println("[CRITICAL] FAIL: log2()");
+    }
+
+    if (exp(0.0) == 1.0) {
+        println("PASS: exp()");
+    } else {
+        println("[CRITICAL] FAIL: exp()");
+    }
+}
+
+void test_mod() {
+    println("--- Testing Modulo ---");
+
+    if (mod(5.0, 3.0) == 2.0) {
+        println("PASS: mod()");
+    } else {
+        println("[CRITICAL] FAIL: mod()");
+    }
+
+    if (fmod(5.0, 3.0) == 2.0) {
+        println("PASS: fmod()");
+    } else {
+        println("[CRITICAL] FAIL: fmod()");
+    }
+}
+
+void test_bitwise_and_int() {
+    println("--- Testing Bitwise & Int Utilities ---");
+
+    if (popcount(7) == 3) {
+        println("PASS: popcount()");
+    } else {
+        println("[CRITICAL] FAIL: popcount()");
+    }
+
+    if (isPowerOf2(8) == true) {
+        println("PASS: isPowerOf2() true case");
+    } else {
+        println("[CRITICAL] FAIL: isPowerOf2() true case");
+    }
+
+    if (isPowerOf2(10) == false) {
+        println("PASS: isPowerOf2() false case");
+    } else {
+        println("[CRITICAL] FAIL: isPowerOf2() false case");
+    }
+}
+
+void test_checks() {
+    println("--- Testing Infinity & NaN Checks ---");
+
+    if (isnan(NAN) == true) {
+        println("PASS: isnan()");
+    } else {
+        println("[CRITICAL] FAIL: isnan()");
+    }
+
+    if (isinf(INF) == true) {
+        println("PASS: isinf()");
+    } else {
+        println("[CRITICAL] FAIL: isinf()");
+    }
+
+    if (isfinite(5.0) == true) {
+        println("PASS: isfinite()");
+    } else {
+        println("[CRITICAL] FAIL: isfinite()");
+    }
+}
+
+void test_random() {
+    println("--- Testing Randomization ---");
+
+    seed(42);
+    println("PASS: seed() executed");
+
+    if (randint(1, 10) >= 1) {
+        println("PASS: randint() bounds check");
+    } else {
+        println("[CRITICAL] FAIL: randint() bounds check");
+    }
+}
+
+    println("==========================================");
+    println("      Moksha Math Builtins Test           ");
+    println("==========================================");
+
+    test_constants();
+    test_basic_math();
+    test_rounding();
+    test_utils();
+    test_trig();
+    test_exp_log();
+    test_mod();
+    test_bitwise_and_int();
+    test_checks();
+    test_random();
+
+    println("==========================================");
+    println("             Tests Complete               ");
+    println("==========================================");
+
+// ==========================================
+// File: .\string_builtins.mox
+// ==========================================
+
+// ==========================================
+// string_builtins.mox
+// Test suite for Moksha String & Char Builtins
+// ==========================================
+
+void test_core_utilities() {
+    println("--- Testing Core String Utilities ---");
+
+    string s = "moksha";
+
+    if (at(s, 0) == 'm') {
+        println("PASS: at() returns correct value");
+    } else {
+        println("[CRITICAL] FAIL: at() returns correct value");
+    }
+
+    if (length(s) == 6) {
+        println("PASS: length()");
+    } else {
+        println("[CRITICAL] FAIL: length()");
+    }
+
+    if (substring(s, 1, 4) == "oks") {
+        println("PASS: substring()");
+    } else {
+        println("[CRITICAL] FAIL: substring() - expected 'oks'");
+    }
+
+    if (contains("hello world", "world") == true) {
+        println("PASS: contains() true case");
+    } else {
+        println("[CRITICAL] FAIL: contains() true case");
+    }
+
+    if (contains("hello world", "moksha") == false) {
+        println("PASS: contains() false case");
+    } else {
+        println("[CRITICAL] FAIL: contains() false case");
+    }
+
+    if (index("moksha", "sh") == 3) {
+        println("PASS: index() found");
+    } else {
+        println("[CRITICAL] FAIL: index() found - expected 3");
+    }
+
+    if (index("moksha", "z") == -1) {
+        println("PASS: index() not found");
+    } else {
+        println("[CRITICAL] FAIL: index() not found - expected -1");
+    }
+
+    if (starts_with("compiler", "com") == true) {
+        println("PASS: starts_with()");
+    } else {
+        println("[CRITICAL] FAIL: starts_with()");
+    }
+
+    if (ends_with("main.mok", ".mok") == true) {
+        println("PASS: ends_with()");
+    } else {
+        println("[CRITICAL] FAIL: ends_with()");
+    }
+
+    if (slice("abcdef", 1, 4) == "bcd") {
+        println("PASS: slice()");
+    } else {
+        println("[CRITICAL] FAIL: slice() - expected 'bcd'");
+    }
+}
+
+void test_transform_utilities() {
+    println("--- Testing Mutation / Transform Utilities ---");
+
+    if (to_upper("moksha") == "MOKSHA") {
+        println("PASS: to_upper()");
+    } else {
+        println("[CRITICAL] FAIL: to_upper()");
+    }
+
+    if (to_lower("MOKSHA") == "moksha") {
+        println("PASS: to_lower()");
+    } else {
+        println("[CRITICAL] FAIL: to_lower()");
+    }
+
+    if (trim("  hello  ") == "hello") {
+        println("PASS: trim()");
+    } else {
+        println("[CRITICAL] FAIL: trim()");
+    }
+
+    if (replace("a-b-c", "-", ":") == "a:b:c") {
+        println("PASS: replace()");
+    } else {
+        println("[CRITICAL] FAIL: replace()");
+    }
+}
+
+void test_split_join() {
+    println("--- Testing Splitting / Joining ---");
+
+    string[] parts = split("a,b,c", ",");
+
+    if (length(parts) == 3) {
+        println("PASS: split() returned correct length");
+    } else {
+        println("[CRITICAL] FAIL: split() returned correct length");
+    }
+
+    if (parts[1] == "b") {
+        println("PASS: split() partitioned data correctly");
+    } else {
+        println("[CRITICAL] FAIL: split() partitioned data correctly");
+    }
+
+    // Creating a string slice to test join
+    string[] to_join = ["x", "y", "z"];
+
+    if (join(to_join, "-") == "x-y-z") {
+        println("PASS: join()");
+    } else {
+        println("[CRITICAL] FAIL: join()");
+    }
+}
+
+void test_char_utilities() {
+    println("--- Testing Character Utilities ---");
+
+    if (is_digit('7') == true) {
+        println("PASS: is_digit() on number");
+    } else {
+        println("[CRITICAL] FAIL: is_digit() on number");
+    }
+
+    if (is_digit('a') == false) {
+        println("PASS: is_digit() on letter");
+    } else {
+        println("[CRITICAL] FAIL: is_digit() on letter");
+    }
+
+    if (is_alpha('Z') == true) {
+        println("PASS: is_alpha() on letter");
+    } else {
+        println("[CRITICAL] FAIL: is_alpha() on letter");
+    }
+
+    if (is_whitespace(' ') == true) {
+        println("PASS: is_whitespace() on space");
+    } else {
+        println("[CRITICAL] FAIL: is_whitespace() on space");
+    }
+
+    if (is_whitespace('\n') == true) {
+        println("PASS: is_whitespace() on newline");
+    } else {
+        println("[CRITICAL] FAIL: is_whitespace() on newline");
+    }
+}
+
+println("==========================================");
+println("      Moksha String Builtins Test         ");
+println("==========================================");
+
+test_core_utilities();
+test_transform_utilities();
+test_split_join();
+test_char_utilities();
+
+println("==========================================");
+println("             Tests Complete               ");
+println("==========================================");

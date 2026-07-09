@@ -8,6 +8,7 @@
 #include "llvm/Support/Casting.h"
 #include <algorithm>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace moksha {
@@ -51,6 +52,19 @@ bool InliningPass::shouldInline(MIRFunction *callee) {
     return false;
   }
 
+  // [NEW]: Do not inline recursive functions!
+  for (auto &b : callee->getBlocks()) {
+    for (auto &inst : b->getInstructions()) {
+      if (auto *call = llvm::dyn_cast_or_null<CallInst>(inst.get())) {
+        if (call->getCallee() == callee)
+          return false;
+      } else if (auto *inv = llvm::dyn_cast_or_null<InvokeInst>(inst.get())) {
+        if (inv->getCallee() == callee)
+          return false;
+      }
+    }
+  }
+
   // Count instructions for heuristic limits
   size_t instCount = 0;
   for (const auto &b : callee->getBlocks()) {
@@ -70,6 +84,8 @@ bool InliningPass::runOnFunction(MIRFunction *F, MIRModule &M) {
   // [FIX 1]: Hard cap the number of inlining passes to prevent infinite loops
   int iterationLimit = 0;
 
+  std::unordered_set<MIRFunction *> alreadyInlined;
+
   while (localChanged && iterationLimit++ < 10) {
     localChanged = false;
 
@@ -86,28 +102,33 @@ bool InliningPass::runOnFunction(MIRFunction *F, MIRModule &M) {
       auto &insts = block->getInstructionsMut();
 
       for (auto it = insts.begin(); it != insts.end(); ++it) {
-        if (auto *call = llvm::dyn_cast<CallInst>(it->get())) {
+        if (auto *call = llvm::dyn_cast_or_null<CallInst>(it->get())) {
           if (auto *callee =
                   llvm::dyn_cast_or_null<MIRFunction>(call->getCallee())) {
 
-            // [FIX 3]: DO NOT inline a function into itself (Self-Recursion
-            // Check)
-            if (callee != F && shouldInline(callee)) {
+            // [FIX 3]: Prevent recursive unrolling by checking alreadyInlined
+            if (callee != F &&
+                alreadyInlined.find(callee) == alreadyInlined.end() &&
+                shouldInline(callee)) {
               localChanged = inlineCall(F, block, it, call, M);
               if (localChanged) {
+                alreadyInlined.insert(callee); // ---> ADD THIS
                 changed = true;
                 break;
               }
             }
           }
-        } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(it->get())) {
+        } else if (auto *invoke = llvm::dyn_cast_or_null<InvokeInst>(it->get())) {
           if (auto *callee =
                   llvm::dyn_cast_or_null<MIRFunction>(invoke->getCallee())) {
 
             // [FIX 3]: Same check for Invoke instructions
-            if (callee != F && shouldInline(callee)) {
+            if (callee != F &&
+                alreadyInlined.find(callee) == alreadyInlined.end() &&
+                shouldInline(callee)) {
               localChanged = inlineInvoke(F, block, it, invoke, M);
               if (localChanged) {
+                alreadyInlined.insert(callee);
                 changed = true;
                 break;
               }
@@ -165,16 +186,27 @@ bool InliningPass::inlineCall(
 
     for (const auto &oldInstPtr : oldBlockPtr->getInstructions()) {
       auto clonedInst = oldInstPtr->clone();
-      clonedInst->setParent(newBlock);
       clonedInst->setBorrowKind(oldInstPtr->getBorrowKind());
 
-      valueMap[oldInstPtr.get()] = clonedInst.get();
-      allClonedInsts.push_back(clonedInst.get());
+      // Define rawInst here before moving the unique_ptr
+      MIRInst *rawInst = clonedInst.get();
+      valueMap[oldInstPtr.get()] = rawInst;
+      allClonedInsts.push_back(rawInst);
 
-      if (auto *retInst = llvm::dyn_cast<ReturnInst>(clonedInst.get())) {
+      if (auto *retInst = llvm::dyn_cast_or_null<ReturnInst>(rawInst)) {
         returns.push_back(retInst);
       }
-      newBlock->getInstructionsMut().push_back(std::move(clonedInst));
+
+      // Hoist Allocas to the Caller's Entry Block!
+      if (llvm::isa<AllocaInst>(rawInst)) {
+        clonedInst->setParent(caller->getEntryBlock());
+        caller->getEntryBlock()->getInstructionsMut().insert(
+            caller->getEntryBlock()->getInstructionsMut().begin(),
+            std::move(clonedInst));
+      } else {
+        clonedInst->setParent(newBlock);
+        newBlock->getInstructionsMut().push_back(std::move(clonedInst));
+      }
     }
   }
 
@@ -190,24 +222,24 @@ bool InliningPass::inlineCall(
     }
 
     // Explicitly update Phi Nodes and Terminator block targets
-    if (auto *phi = llvm::dyn_cast<PhiInst>(inst)) {
+    if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst)) {
       for (auto &[val, incomingBlock] : phi->getIncomingMut()) {
         if (blockMap.count(incomingBlock)) {
           incomingBlock = blockMap[incomingBlock];
         }
       }
-    } else if (auto *br = llvm::dyn_cast<BranchInst>(inst)) {
+    } else if (auto *br = llvm::dyn_cast_or_null<BranchInst>(inst)) {
       if (blockMap.count(br->getTarget())) {
         br->setTarget(blockMap[br->getTarget()]);
       }
-    } else if (auto *condBr = llvm::dyn_cast<CondBranchInst>(inst)) {
+    } else if (auto *condBr = llvm::dyn_cast_or_null<CondBranchInst>(inst)) {
       if (blockMap.count(condBr->getTrueBlock())) {
         condBr->setTrueBlock(blockMap[condBr->getTrueBlock()]);
       }
       if (blockMap.count(condBr->getFalseBlock())) {
         condBr->setFalseBlock(blockMap[condBr->getFalseBlock()]);
       }
-    } else if (auto *sw = llvm::dyn_cast<SwitchInst>(inst)) {
+    } else if (auto *sw = llvm::dyn_cast_or_null<SwitchInst>(inst)) {
       if (blockMap.count(sw->getDefaultBlock())) {
         sw->setDefaultBlock(blockMap[sw->getDefaultBlock()]);
       }
@@ -217,14 +249,14 @@ bool InliningPass::inlineCall(
           casePair.second = blockMap[casePair.second];
         }
       }
-    } else if (auto *inv = llvm::dyn_cast<InvokeInst>(inst)) {
+    } else if (auto *inv = llvm::dyn_cast_or_null<InvokeInst>(inst)) {
       if (blockMap.count(inv->getNormalDest())) {
         inv->setNormalDest(blockMap[inv->getNormalDest()]);
       }
       if (inv->getUnwindDest() && blockMap.count(inv->getUnwindDest())) {
         inv->setUnwindDest(blockMap[inv->getUnwindDest()]);
       }
-    } else if (auto *throwInst = llvm::dyn_cast<ThrowInst>(inst)) {
+    } else if (auto *throwInst = llvm::dyn_cast_or_null<ThrowInst>(inst)) {
       if (throwInst->getUnwindDest() &&
           blockMap.count(throwInst->getUnwindDest())) {
         throwInst->setUnwindDest(blockMap[throwInst->getUnwindDest()]);
@@ -238,27 +270,27 @@ bool InliningPass::inlineCall(
       continue;
     MIRInst *term = newBlock->getInstructions().back().get();
 
-    if (auto *br = llvm::dyn_cast<BranchInst>(term)) {
+    if (auto *br = llvm::dyn_cast_or_null<BranchInst>(term)) {
       newBlock->addSuccessor(br->getTarget());
       br->getTarget()->addPredecessor(newBlock);
-    } else if (auto *condBr = llvm::dyn_cast<CondBranchInst>(term)) {
+    } else if (auto *condBr = llvm::dyn_cast_or_null<CondBranchInst>(term)) {
       newBlock->addSuccessor(condBr->getTrueBlock());
       condBr->getTrueBlock()->addPredecessor(newBlock);
       newBlock->addSuccessor(condBr->getFalseBlock());
       condBr->getFalseBlock()->addPredecessor(newBlock);
-    } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(term)) {
+    } else if (auto *invoke = llvm::dyn_cast_or_null<InvokeInst>(term)) {
       newBlock->addSuccessor(invoke->getNormalDest());
       invoke->getNormalDest()->addPredecessor(newBlock);
       if (invoke->getUnwindDest()) {
         newBlock->addSuccessor(invoke->getUnwindDest());
         invoke->getUnwindDest()->addPredecessor(newBlock);
       }
-    } else if (auto *throwInst = llvm::dyn_cast<ThrowInst>(term)) {
+    } else if (auto *throwInst = llvm::dyn_cast_or_null<ThrowInst>(term)) {
       if (throwInst->getUnwindDest()) {
         newBlock->addSuccessor(throwInst->getUnwindDest());
         throwInst->getUnwindDest()->addPredecessor(newBlock);
       }
-    } else if (auto *switchInst = llvm::dyn_cast<SwitchInst>(term)) {
+    } else if (auto *switchInst = llvm::dyn_cast_or_null<SwitchInst>(term)) {
       newBlock->addSuccessor(switchInst->getDefaultBlock());
       switchInst->getDefaultBlock()->addPredecessor(newBlock);
       for (auto &casePair : switchInst->getCases()) {
@@ -272,10 +304,12 @@ bool InliningPass::inlineCall(
   auto returnBlock = std::make_unique<MIRBlock>(
       caller->getUniqueName("inline.return"), caller);
   MIRBlock *returnBlockPtr = returnBlock.get();
-
   auto &callBlockInsts = callBlock->getInstructionsMut();
-  auto splitStart = std::next(callIt); // Everything AFTER the call instruction
+  callIt = std::find_if(
+      callBlockInsts.begin(), callBlockInsts.end(),
+      [&](const std::unique_ptr<MIRInst> &inst) { return inst.get() == call; });
 
+  auto splitStart = std::next(callIt); // Now perfectly safe!
   // Move remaining instructions to the new return block
   for (auto it = splitStart; it != callBlockInsts.end(); ++it) {
     (*it)->setParent(returnBlockPtr);
@@ -290,7 +324,7 @@ bool InliningPass::inlineCall(
 
     // Patch Phis in successors
     for (auto &inst : succ->getInstructionsMut()) {
-      if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
+      if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst.get())) {
         for (auto &[val, incBlock] : phi->getIncomingMut()) {
           if (incBlock == callBlock)
             incBlock = returnBlockPtr;
@@ -430,22 +464,30 @@ bool InliningPass::inlineInvoke(
     MIRBlock *newBlock = blockMap[oldBlockPtr.get()];
     for (const auto &oldInstPtr : oldBlockPtr->getInstructions()) {
       auto clonedInst = oldInstPtr->clone();
-      clonedInst->setParent(newBlock);
       clonedInst->setBorrowKind(oldInstPtr->getBorrowKind());
 
-      valueMap[oldInstPtr.get()] = clonedInst.get();
-      allClonedInsts.push_back(clonedInst.get());
+      MIRInst *rawInst = clonedInst.get();
+      valueMap[oldInstPtr.get()] = rawInst;
+      allClonedInsts.push_back(rawInst);
 
-      if (auto *retInst = llvm::dyn_cast<ReturnInst>(clonedInst.get())) {
+      if (auto *retInst = llvm::dyn_cast_or_null<ReturnInst>(rawInst)) {
         returns.push_back(retInst);
-      } else if (auto *throwInst =
-                     llvm::dyn_cast<ThrowInst>(clonedInst.get())) {
+      } else if (auto *throwInst = llvm::dyn_cast_or_null<ThrowInst>(rawInst)) {
         throws.push_back(throwInst);
-      } else if (auto *resumeInst =
-                     llvm::dyn_cast<ResumeInst>(clonedInst.get())) {
+      } else if (auto *resumeInst = llvm::dyn_cast_or_null<ResumeInst>(rawInst)) {
         resumes.push_back(resumeInst);
       }
-      newBlock->getInstructionsMut().push_back(std::move(clonedInst));
+
+      // Hoist Allocas inside Invoke statements too!
+      if (llvm::isa<AllocaInst>(rawInst)) {
+        clonedInst->setParent(caller->getEntryBlock());
+        caller->getEntryBlock()->getInstructionsMut().insert(
+            caller->getEntryBlock()->getInstructionsMut().begin(),
+            std::move(clonedInst));
+      } else {
+        clonedInst->setParent(newBlock);
+        newBlock->getInstructionsMut().push_back(std::move(clonedInst));
+      }
     }
   }
 
@@ -460,24 +502,24 @@ bool InliningPass::inlineInvoke(
       inst->replaceOperand(oldBlock, newBlock);
     }
     // Explicitly update Phi Nodes and Terminator block targets
-    if (auto *phi = llvm::dyn_cast<PhiInst>(inst)) {
+    if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst)) {
       for (auto &[val, incomingBlock] : phi->getIncomingMut()) {
         if (blockMap.count(incomingBlock)) {
           incomingBlock = blockMap[incomingBlock];
         }
       }
-    } else if (auto *br = llvm::dyn_cast<BranchInst>(inst)) {
+    } else if (auto *br = llvm::dyn_cast_or_null<BranchInst>(inst)) {
       if (blockMap.count(br->getTarget())) {
         br->setTarget(blockMap[br->getTarget()]);
       }
-    } else if (auto *condBr = llvm::dyn_cast<CondBranchInst>(inst)) {
+    } else if (auto *condBr = llvm::dyn_cast_or_null<CondBranchInst>(inst)) {
       if (blockMap.count(condBr->getTrueBlock())) {
         condBr->setTrueBlock(blockMap[condBr->getTrueBlock()]);
       }
       if (blockMap.count(condBr->getFalseBlock())) {
         condBr->setFalseBlock(blockMap[condBr->getFalseBlock()]);
       }
-    } else if (auto *sw = llvm::dyn_cast<SwitchInst>(inst)) {
+    } else if (auto *sw = llvm::dyn_cast_or_null<SwitchInst>(inst)) {
       if (blockMap.count(sw->getDefaultBlock())) {
         sw->setDefaultBlock(blockMap[sw->getDefaultBlock()]);
       }
@@ -487,14 +529,14 @@ bool InliningPass::inlineInvoke(
           casePair.second = blockMap[casePair.second];
         }
       }
-    } else if (auto *inv = llvm::dyn_cast<InvokeInst>(inst)) {
+    } else if (auto *inv = llvm::dyn_cast_or_null<InvokeInst>(inst)) {
       if (blockMap.count(inv->getNormalDest())) {
         inv->setNormalDest(blockMap[inv->getNormalDest()]);
       }
       if (inv->getUnwindDest() && blockMap.count(inv->getUnwindDest())) {
         inv->setUnwindDest(blockMap[inv->getUnwindDest()]);
       }
-    } else if (auto *throwInst = llvm::dyn_cast<ThrowInst>(inst)) {
+    } else if (auto *throwInst = llvm::dyn_cast_or_null<ThrowInst>(inst)) {
       if (throwInst->getUnwindDest() &&
           blockMap.count(throwInst->getUnwindDest())) {
         throwInst->setUnwindDest(blockMap[throwInst->getUnwindDest()]);
@@ -508,27 +550,27 @@ bool InliningPass::inlineInvoke(
       continue;
     MIRInst *term = newBlock->getInstructions().back().get();
 
-    if (auto *br = llvm::dyn_cast<BranchInst>(term)) {
+    if (auto *br = llvm::dyn_cast_or_null<BranchInst>(term)) {
       newBlock->addSuccessor(br->getTarget());
       br->getTarget()->addPredecessor(newBlock);
-    } else if (auto *condBr = llvm::dyn_cast<CondBranchInst>(term)) {
+    } else if (auto *condBr = llvm::dyn_cast_or_null<CondBranchInst>(term)) {
       newBlock->addSuccessor(condBr->getTrueBlock());
       condBr->getTrueBlock()->addPredecessor(newBlock);
       newBlock->addSuccessor(condBr->getFalseBlock());
       condBr->getFalseBlock()->addPredecessor(newBlock);
-    } else if (auto *invoke = llvm::dyn_cast<InvokeInst>(term)) {
+    } else if (auto *invoke = llvm::dyn_cast_or_null<InvokeInst>(term)) {
       newBlock->addSuccessor(invoke->getNormalDest());
       invoke->getNormalDest()->addPredecessor(newBlock);
       if (invoke->getUnwindDest()) {
         newBlock->addSuccessor(invoke->getUnwindDest());
         invoke->getUnwindDest()->addPredecessor(newBlock);
       }
-    } else if (auto *throwInst = llvm::dyn_cast<ThrowInst>(term)) {
+    } else if (auto *throwInst = llvm::dyn_cast_or_null<ThrowInst>(term)) {
       if (throwInst->getUnwindDest()) {
         newBlock->addSuccessor(throwInst->getUnwindDest());
         throwInst->getUnwindDest()->addPredecessor(newBlock);
       }
-    } else if (auto *switchInst = llvm::dyn_cast<SwitchInst>(term)) {
+    } else if (auto *switchInst = llvm::dyn_cast_or_null<SwitchInst>(term)) {
       newBlock->addSuccessor(switchInst->getDefaultBlock());
       switchInst->getDefaultBlock()->addPredecessor(newBlock);
       for (auto &casePair : switchInst->getCases()) {
@@ -682,7 +724,7 @@ bool InliningPass::inlineInvoke(
 
         // Patch Phis in successors
         for (auto &inst : succ->getInstructionsMut()) {
-          if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
+          if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst.get())) {
             for (auto &[val, incBlock] : phi->getIncomingMut()) {
               if (incBlock == unwindDest)
                 incBlock = actualCleanupBlock;
@@ -756,7 +798,7 @@ bool InliningPass::inlineInvoke(
 
   // 8. Patch existing Phis in normalDest
   for (auto &inst : normalDest->getInstructionsMut()) {
-    if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
+    if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst.get())) {
       if (phi == returnValue)
         continue;
 
@@ -781,7 +823,7 @@ bool InliningPass::inlineInvoke(
 
   // 9. Patch existing Phis in phiPatchBlock
   for (auto &inst : phiPatchBlock->getInstructionsMut()) {
-    if (auto *phi = llvm::dyn_cast<PhiInst>(inst.get())) {
+    if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst.get())) {
       MIRValue *valFromCallBlock = nullptr;
       for (auto &[val, incBlock] : phi->getIncoming()) {
         if (incBlock == callBlock) {

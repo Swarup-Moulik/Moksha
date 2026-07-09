@@ -940,12 +940,7 @@ public:
     return incoming;
   }
   void dump(llvm::raw_ostream &os) const override;
-  void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override {
-    for (auto &inc : incoming) {
-      if (inc.first == oldVal)
-        inc.first = newVal;
-    }
-  }
+  void replaceOperand(MIRValue *oldVal, MIRValue *newVal) override;
 
   std::unique_ptr<MIRInst> clone() const override {
     auto cloned = std::make_unique<PhiInst>(getType(), getName(), loc);
