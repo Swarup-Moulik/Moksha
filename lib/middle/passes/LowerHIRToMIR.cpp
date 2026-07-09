@@ -11741,20 +11741,31 @@ private:
 
             if (actualIntrin != IntrinsicID::Trap) {
               unsigned idx = 0;
-              for (const auto &astArg : expr.getArgs()) {
-                const hir::HIRType *argTy = astArg->getType();
 
-                if (!argTy || argTy->getKind() == hir::TypeKind::Void) {
-                  auto *voidTy =
-                      const_cast<hir::HIRModule *>(hirModule)->getVoidType();
-                  argTy =
-                      const_cast<hir::HIRModule *>(hirModule)->getPointerType(
-                          voidTy, hir::Ownership::None);
-                }
-                argTy = getABICoercedType(argTy, true);
-
+              if (calleeName == "print" || calleeName == "println") {
+                auto *anyTy =
+                    const_cast<hir::HIRModule *>(hirModule)->getAnyType();
+                auto *anyPtrTy =
+                    const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                        anyTy, hir::Ownership::None);
                 externFunc->addArgument(std::make_unique<MIRArgument>(
-                    externFunc.get(), argTy, idx++));
+                    externFunc.get(), anyPtrTy, idx++));
+              } else if (!externFunc->isVariadic()) {
+                for (const auto &astArg : expr.getArgs()) {
+                  const hir::HIRType *argTy = astArg->getType();
+
+                  if (!argTy || argTy->getKind() == hir::TypeKind::Void) {
+                    auto *voidTy =
+                        const_cast<hir::HIRModule *>(hirModule)->getVoidType();
+                    argTy =
+                        const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                            voidTy, hir::Ownership::None);
+                  }
+                  argTy = getABICoercedType(argTy, true);
+
+                  externFunc->addArgument(std::make_unique<MIRArgument>(
+                      externFunc.get(), argTy, idx++));
+                }
               }
               if (needsZeroPoison) {
                 auto *boolTy =
