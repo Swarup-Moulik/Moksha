@@ -8,10 +8,46 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
+#include <set>
 
 namespace moksha {
 
 namespace {
+
+//   BUILT-IN SHADOWING DETECTION
+static bool isReservedBuiltin(const std::string &name, SymbolTable &symbols) {
+  static const std::set<std::string> allowedShadows = {
+      "push",  "pop",      "insert", "remove",
+      "clear", "capacity", "resize", "extend"};
+
+  if (allowedShadows.count(name) > 0) {
+    return false; // Safely allow shadowing for array methods
+  }
+
+  // 1. Dynamic check: Is it already registered by BuiltinRegistry?
+  Symbol *sym = symbols.lookup(name);
+  if (sym && sym->decl) {
+    if (auto *fn = llvm::dyn_cast<FunctionDecl>(sym->decl)) {
+      if (fn->isBuiltinFunc())
+        return true;
+    }
+    if (auto *var = llvm::dyn_cast<VariableDecl>(sym->decl)) {
+      // Constants like PI, E, READ, WRITE are Extern + Const
+      if (var->isExternVar() && var->isConstVar())
+        return true;
+    }
+  }
+
+  // 2. Hardcoded fallback for critical OS/Math functions
+  static const std::set<std::string> coreBuiltins = {
+      "seed",       "sqrt",       "log",    "cos",         "sin",
+      "tan",        "exp",        "pow",    "print",       "println",
+      "print_err",  "yield",      "sleep",  "spawn",       "join",
+      "select",     "timeout",    "cancel", "atomic_load", "atomic_store",
+      "atomic_add", "atomic_cas", "PI",     "E",           "TAU"};
+
+  return coreBuiltins.count(name) > 0;
+}
 
 static std::string getMethodSignature(const FunctionDecl *fd) {
   std::string sig = fd->getName() + "(";
@@ -195,6 +231,8 @@ static bool hasLock(const Type *t) {
 // Helpers to treat 'char' as a numeric 8-bit integer
 bool isNumericOrChar(const Type *t) {
   t = unwrapConcurrency(t);
+  if (!t)
+    return false;
   if (t->isNumeric())
     return true;
   if (auto p = llvm::dyn_cast<const PrimitiveType>(t))
@@ -204,6 +242,8 @@ bool isNumericOrChar(const Type *t) {
 
 bool isIntegerOrChar(const Type *t) {
   t = unwrapConcurrency(t);
+  if (!t)
+    return false;
   if (t->isInteger())
     return true;
   if (auto p = llvm::dyn_cast<const PrimitiveType>(t))
@@ -213,6 +253,8 @@ bool isIntegerOrChar(const Type *t) {
 
 bool isCharType(const Type *t) {
   t = unwrapConcurrency(t);
+  if (!t)
+    return false;
   if (auto p = llvm::dyn_cast<const PrimitiveType>(t)) {
     // Treat char, u8, and i8 interchangeably for C-strings
     return p->getScalar() == PrimitiveType::Scalar::Char ||
@@ -774,8 +816,14 @@ bool TypeChecker::isCompatible(const Type *expected, const Type *actual) {
 }
 
 bool TypeChecker::isCastAllowed(const Type *src, const Type *dst) {
+  if (!src || !dst)
+    return true;
+
   src = resolveAlias(unwrapConcurrency(src), context, symbols);
   dst = resolveAlias(unwrapConcurrency(dst), context, symbols);
+
+  if (!src || !dst)
+    return true;
 
   // 1. If it's implicitly compatible, the explicit cast is ALWAYS safe!
   if (isCompatible(dst, src)) {
@@ -1407,14 +1455,23 @@ void TypeChecker::visitBinaryExpr(const BinaryExpr *expr) {
   expr->getLHS()->accept(*this);
   const Type *lhsType = lastComputedType;
   isLHSOfAssignment = oldLhs;
+  if (!lhsType)
+    lhsType = context.getAnyType();
   const Type *oldRet = currentExpectedReturnType;
   if ((op == TokenKind::Equal || op == TokenKind::CaretEqual) &&
-      !lhsType->is<AnyType>()) {
+      (lhsType && !lhsType->is<AnyType>())) {
     currentExpectedReturnType = lhsType;
   }
   expr->getRHS()->accept(*this);
   const Type *rhsType = lastComputedType;
   currentExpectedReturnType = oldRet;
+  if (!rhsType)
+    rhsType = context.getAnyType();
+  if (!lhsType || !rhsType) {
+    lastComputedType = context.getAnyType();
+    const_cast<BinaryExpr *>(expr)->setType(lastComputedType);
+    return;
+  }
 
   // OPERATOR OVERLOADING DESUGARING
   if (auto *namedTy = llvm::dyn_cast_or_null<NamedType>(lhsType)) {
@@ -2079,6 +2136,12 @@ void TypeChecker::visitUnaryExpr(const UnaryExpr *expr) {
   TokenKind op = expr->getOp();
   expr->getOperand()->accept(*this);
   const Type *operandType = lastComputedType;
+
+  if (!operandType) {
+    lastComputedType = context.getAnyType();
+    const_cast<UnaryExpr *>(expr)->setType(lastComputedType);
+    return;
+  }
 
   // UNARY OPERATOR OVERLOADING
   if (auto *namedTy = llvm::dyn_cast_or_null<NamedType>(operandType)) {
@@ -4043,9 +4106,13 @@ void TypeChecker::visitCastExpr(const CastExpr *expr) {
   const Type *srcType = lastComputedType;
 
   if (!isCastAllowed(srcType, expr->getTargetType())) {
+    // Safely handle stringification of potentially null types
+    std::string srcStr = srcType ? srcType->toString() : "unknown";
+    std::string dstStr =
+        expr->getTargetType() ? expr->getTargetType()->toString() : "unknown";
+
     Diags.report(expr->getLoc(), DiagID::err_type_mismatch)
-        << "Invalid cast from " << srcType->toString() << " to "
-        << expr->getTargetType()->toString();
+        << "Invalid cast from " << srcStr << " to " << dstStr;
     hasError = true;
   }
   lastComputedType = expr->getTargetType();
@@ -4058,10 +4125,25 @@ void TypeChecker::visitBitcastExpr(const BitcastExpr *expr) {
 
   expr->getExpr()->accept(*this);
 
-  const Type *srcType =
-      resolveAlias(unwrapConcurrency(lastComputedType), context, symbols);
-  const Type *dstType =
-      resolveAlias(unwrapConcurrency(expr->getTargetType()), context, symbols);
+  const Type *srcType = lastComputedType;
+  const Type *dstType = expr->getTargetType();
+
+  // [FIX] Abort safely if AST resolution failed upstream
+  if (!srcType || !dstType) {
+    lastComputedType = dstType ? dstType : context.getAnyType();
+    const_cast<BitcastExpr *>(expr)->setType(lastComputedType);
+    return;
+  }
+
+  srcType = resolveAlias(unwrapConcurrency(srcType), context, symbols);
+  dstType = resolveAlias(unwrapConcurrency(dstType), context, symbols);
+
+  // [FIX] Double check after alias resolution
+  if (!srcType || !dstType) {
+    lastComputedType = expr->getTargetType();
+    const_cast<BitcastExpr *>(expr)->setType(lastComputedType);
+    return;
+  }
 
   // Enforce LLVM's strict bitcast rules: Pointers and Integers cannot be
   // bitcast to each other.
@@ -4076,10 +4158,6 @@ void TypeChecker::visitBitcastExpr(const BitcastExpr *expr) {
            "integer-to-pointer conversions. Use standard cast<T> instead.";
     hasError = true;
   }
-
-  // NOTE: Full byte-width validation (e.g., ensuring i32 to float works but i64
-  // to float fails) requires the TargetDataLayout during MLIR/LLVM lowering.
-  // The backend will catch size mismatches.
 
   lastComputedType = expr->getTargetType();
   const_cast<BitcastExpr *>(expr)->setType(lastComputedType);
@@ -4472,6 +4550,15 @@ void TypeChecker::visitInputExpr(const InputExpr *expr) {
 // --- ASTVisitor Overrides: Statements ---
 
 void TypeChecker::visitVariableDecl(const VariableDecl *decl) {
+  // Built-in Shadowing Ban
+  if (symbols.getCurrentScopeKind() != ScopeKind::Class &&
+      isReservedBuiltin(decl->getName(), symbols)) {
+    Diags.report(decl->getLoc(), DiagID::err_builtin_shadowing)
+        << decl->getName();
+    hasError = true;
+    return; // Abort processing this variable!
+  }
+
   if (decl->getType())
     decl->getType()->accept(*this);
 
@@ -4801,6 +4888,13 @@ void TypeChecker::visitVariableDecl(const VariableDecl *decl) {
 }
 
 void TypeChecker::visitFunctionDecl(const FunctionDecl *decl) {
+  // Built-in Shadowing Ban
+  if (!decl->isBuiltinFunc() && isReservedBuiltin(decl->getName(), symbols)) {
+    Diags.report(decl->getLoc(), DiagID::err_builtin_shadowing)
+        << decl->getName();
+    hasError = true;
+    return;
+  }
   const Type *retType = context.getVoidType();
   if (decl->getReturnType()) {
     decl->getReturnType()->accept(*this);
@@ -4864,8 +4958,14 @@ void TypeChecker::visitFunctionDecl(const FunctionDecl *decl) {
   // Register all parameters as local variables inside the function scope
   for (size_t i = 0; i < decl->getParams().size(); ++i) {
     const auto &param = decl->getParams()[i];
-    Symbol pSym(SymbolKind::Variable, param.name,
-                pTypes[i]); // Use resolved pTypes
+
+    // Parameter Shadowing Ban
+    if (!decl->isBuiltinFunc() && isReservedBuiltin(param.name, symbols)) {
+      Diags.report(decl->getLoc(), DiagID::err_builtin_shadowing) << param.name;
+      hasError = true;
+    }
+
+    Symbol pSym(SymbolKind::Variable, param.name, pTypes[i]);
     symbols.addSymbol(param.name, pSym, decl->getLoc());
   }
 
@@ -4915,6 +5015,14 @@ void TypeChecker::visitFunctionDecl(const FunctionDecl *decl) {
 }
 
 void TypeChecker::visitUsingDecl(const UsingDecl *decl) {
+  // Built-in Shadowing Ban
+  if (isReservedBuiltin(decl->getName(), symbols)) {
+    Diags.report(decl->getLoc(), DiagID::err_builtin_shadowing)
+        << decl->getName();
+    hasError = true;
+    return;
+  }
+
   // Evaluate the target type (e.g., 'int' in 'using status_t = int')
   decl->getTargetType()->accept(*this);
 
@@ -5668,6 +5776,14 @@ void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
 }
 
 void TypeChecker::visitClassDecl(const ClassDecl *decl) {
+  // Built-in Shadowing Ban
+  if (isReservedBuiltin(decl->getName(), symbols)) {
+    Diags.report(decl->getLoc(), DiagID::err_builtin_shadowing)
+        << decl->getName();
+    hasError = true;
+    return;
+  }
+
   if (!symbols.isDefinedInCurrentScope(decl->getName())) {
     symbols.addSymbol(decl->getName(),
                       Symbol(SymbolKind::Class, decl->getName(),
@@ -6194,6 +6310,13 @@ void TypeChecker::visitImportDecl(const ImportDecl *decl) {
 }
 
 void TypeChecker::visitEnumDecl(const EnumDecl *decl) {
+  // Built-in Shadowing Ban
+  if (isReservedBuiltin(decl->getName(), symbols)) {
+    Diags.report(decl->getLoc(), DiagID::err_builtin_shadowing)
+        << decl->getName();
+    hasError = true;
+    return;
+  }
   const Type *enumT = context.createNamedType(decl->getName());
   Symbol sym(SymbolKind::Type, decl->getName(), enumT, decl);
   symbols.addSymbol(decl->getName(), sym, decl->getLoc());

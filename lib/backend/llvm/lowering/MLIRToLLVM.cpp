@@ -3613,6 +3613,104 @@ struct CustomCallOpLowering
 
     llvm::StringRef callee = op.getCallee();
 
+    // === AVX SIMD VECTORIZATION INTERCEPTS ===
+    if (callee == "llvm.x86.avx.loadu.ps.256" ||
+        callee == "llvm.x86.avx.add.ps.256" ||
+        callee == "llvm.x86.avx.mul.ps.256" ||
+        callee == "llvm.x86.fma.vfmadd.ps.256" ||
+        callee == "llvm.x86.avx.storeu.ps.256") {
+
+      auto loc = op.getLoc();
+      mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
+      mlir::Type f32Ty = rewriter.getF32Type();
+
+      // MLIR VectorType represents LLVM's `<N x type>` SIMD hardware registers
+      mlir::Type vecTy = mlir::VectorType::get({8}, f32Ty);
+      mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
+          loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
+
+      // 1. Intercept LOADS
+      if (callee == "llvm.x86.avx.loadu.ps.256") {
+        mlir::Value ptr = adaptor.getOperands()[0];
+        if (ptr.getType() != llvmPtrTy)
+          ptr = rewriter.create<mlir::LLVM::BitcastOp>(loc, llvmPtrTy, ptr);
+
+        // Load memory directly into a native AVX 256-bit Vector
+        mlir::Value loadVec =
+            rewriter.create<mlir::LLVM::LoadOp>(loc, vecTy, ptr);
+
+        // Cast Vector to Array (Moksha's expected return type) via Stack Spill
+        mlir::Type resTy = typeConverter->convertType(op.getResultTypes()[0]);
+        mlir::Value alloc =
+            rewriter.create<mlir::LLVM::AllocaOp>(loc, llvmPtrTy, vecTy, one);
+        rewriter.create<mlir::LLVM::StoreOp>(loc, loadVec, alloc);
+        mlir::Value resArray =
+            rewriter.create<mlir::LLVM::LoadOp>(loc, resTy, alloc);
+
+        rewriter.replaceOp(op, resArray);
+        return mlir::success();
+      }
+
+      // 2. Intercept STORES
+      if (callee == "llvm.x86.avx.storeu.ps.256") {
+        mlir::Value ptr = adaptor.getOperands()[0];
+        if (ptr.getType() != llvmPtrTy)
+          ptr = rewriter.create<mlir::LLVM::BitcastOp>(loc, llvmPtrTy, ptr);
+        mlir::Value arrayVal = adaptor.getOperands()[1];
+
+        // Cast Array to Vector via Stack Spill
+        mlir::Value alloc = rewriter.create<mlir::LLVM::AllocaOp>(
+            loc, llvmPtrTy, arrayVal.getType(), one);
+        rewriter.create<mlir::LLVM::StoreOp>(loc, arrayVal, alloc);
+        mlir::Value vecVal =
+            rewriter.create<mlir::LLVM::LoadOp>(loc, vecTy, alloc);
+
+        // Store Vector to memory
+        rewriter.create<mlir::LLVM::StoreOp>(loc, vecVal, ptr);
+        rewriter.eraseOp(op);
+        return mlir::success();
+      }
+
+      // 3. Intercept MATH
+      if (callee == "llvm.x86.avx.add.ps.256" ||
+          callee == "llvm.x86.avx.mul.ps.256" ||
+          callee == "llvm.x86.fma.vfmadd.ps.256") {
+        // Helper to spill an Array and load it back as a Vector
+        auto toVector = [&](mlir::Value arrayVal) -> mlir::Value {
+          mlir::Value alloc = rewriter.create<mlir::LLVM::AllocaOp>(
+              loc, llvmPtrTy, arrayVal.getType(), one);
+          rewriter.create<mlir::LLVM::StoreOp>(loc, arrayVal, alloc);
+          return rewriter.create<mlir::LLVM::LoadOp>(loc, vecTy, alloc);
+        };
+
+        mlir::Value vecA = toVector(adaptor.getOperands()[0]);
+        mlir::Value vecB = toVector(adaptor.getOperands()[1]);
+
+        mlir::Value vecRes;
+
+        if (callee == "llvm.x86.fma.vfmadd.ps.256") {
+          // Extract the third parameter specifically for FMA
+          mlir::Value vecC = toVector(adaptor.getOperands()[2]);
+          vecRes =
+              rewriter.create<mlir::LLVM::FMAOp>(loc, vecTy, vecA, vecB, vecC);
+        } else if (callee == "llvm.x86.avx.add.ps.256") {
+          vecRes = rewriter.create<mlir::LLVM::FAddOp>(loc, vecTy, vecA, vecB);
+        } else {
+          vecRes = rewriter.create<mlir::LLVM::FMulOp>(loc, vecTy, vecA, vecB);
+        }
+
+        mlir::Type resTy = typeConverter->convertType(op.getResultTypes()[0]);
+        mlir::Value allocRes =
+            rewriter.create<mlir::LLVM::AllocaOp>(loc, llvmPtrTy, vecTy, one);
+        rewriter.create<mlir::LLVM::StoreOp>(loc, vecRes, allocRes);
+        mlir::Value resArray =
+            rewriter.create<mlir::LLVM::LoadOp>(loc, resTy, allocRes);
+
+        rewriter.replaceOp(op, resArray);
+        return mlir::success();
+      }
+    }
+
     // === PREVENT STACK-FREE CRASHES ===
     if (callee == "__moksha_free") {
       auto loc = op.getLoc();

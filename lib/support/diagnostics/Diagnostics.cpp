@@ -150,6 +150,8 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
     return "Decimal scale truncation";
   case DiagID::err_decimal_overflow:
     return "Possible decimal overflow";
+  case DiagID::err_builtin_shadowing:
+    return "Builtin shadowing";
 
   // --- MIR / Lowering Errors ---
   case DiagID::err_unexpanded_macro:

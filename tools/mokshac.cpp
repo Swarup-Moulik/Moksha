@@ -401,6 +401,12 @@ int main(int argc, char **argv) {
     if (pair.second) {
       for (auto &decl : pair.second->getDeclsMut()) {
         if (decl) {
+          if (auto *fnDecl =
+                  llvm::dyn_cast_or_null<FunctionDecl>(decl.get())) {
+            if (fnDecl->getName() == "main") {
+              continue; // Skip this declaration
+            }
+          }
           moduleAST->addDeclaration(std::move(decl));
         }
       }

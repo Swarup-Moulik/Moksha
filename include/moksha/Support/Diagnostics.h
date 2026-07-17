@@ -57,6 +57,7 @@ enum class DiagID {
   err_generic_constraint,
   err_generic_arity,
   err_uninitialized_var,
+  err_builtin_shadowing,
 
   // --- MIR / Lowering Errors ---
   err_unexpanded_macro,

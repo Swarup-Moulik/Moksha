@@ -322,10 +322,15 @@ public:
       return;
 
     // 2. Search the HIR Module's function list for this builtin.
-    // BuiltinRegistry already populated these during the Sema phase.
     for (const auto *hirFunc : hirModule->getFunctions()) {
       if (hirFunc->getName() == name && hirFunc->isExtern()) {
-        createFunctionDecl(hirFunc); // Reuse your existing decl logic
+        std::string abi = hirFunc->getABI();
+        if (!abi.empty() && abi != "stdcall" && abi != "fastcall" &&
+            abi != "cdecl" && abi != "C") {
+          if (mirModule->getFunction(abi))
+            return;
+        }
+        createFunctionDecl(hirFunc);
         return;
       }
     }
@@ -492,7 +497,9 @@ public:
     // 1. Process Functions
     for (const auto *func : hirModule->getFunctions()) {
       std::string funcName = func->getName();
-      createFunctionDecl(func, funcName);
+      if (!mirModule->getFunction(funcName)) {
+        createFunctionDecl(func, funcName);
+      }
     }
 
     // Process Class Method Declarations
@@ -544,8 +551,11 @@ public:
           }
           mangledName += "_ret_" + retStr;
         }
-
-        createFunctionDecl(method.get(), mangledName, thisTy);
+        const hir::HIRType *passThisTy =
+            method->isStaticFunc() ? nullptr : thisTy;
+        if (!mirModule->getFunction(mangledName)) {
+          createFunctionDecl(method.get(), mangledName, passThisTy);
+        }
       }
       generateVTable(cls);
     }
@@ -557,7 +567,6 @@ public:
       createGlobalDecl(stmt);
     }
 
-    // ✅ SAVE THE EXIT BLOCK AFTER GLOBALS ARE INITIALIZED!
     MIRBlock *initExitBlock = builder->getInsertBlock();
 
     // 3. Lower Bodies
@@ -607,8 +616,9 @@ public:
               c = '_';
           }
           mangledName += "_ret_" + retStr;
-
-          lowerFunction(*method.get(), mangledName, thisTy);
+          const hir::HIRType *passThisTy =
+              method->isStaticFunc() ? nullptr : thisTy;
+          lowerFunction(*method.get(), mangledName, passThisTy);
         }
       }
     }
@@ -2591,6 +2601,14 @@ private:
     std::string mirName =
         overrideName.empty() ? hirFunc->getName() : overrideName;
 
+    if (hirFunc->isExtern() && !hirFunc->getABI().empty()) {
+      std::string abi = hirFunc->getABI();
+      if (abi != "stdcall" && abi != "fastcall" && abi != "cdecl" &&
+          abi != "C") {
+        mirName = abi;
+      }
+    }
+
     if (hirFunc->isExtern() &&
         (mirName == "yield" || mirName == "spawn" || mirName == "cancel" ||
          mirName == "select" || mirName == "timeout" || mirName == "sleep" ||
@@ -3237,7 +3255,45 @@ private:
 
         if (!getTerminator(builder->getInsertBlock())) {
           emitScopeCleanup(scopeStack.size() - 1, func.getLoc());
-          builder->insert(std::make_unique<ReturnInst>(nullptr, func.getLoc()));
+
+          // --- [CRITICAL FIX]: Safely return a resolved promise if main is
+          // async ---
+          if (func.isAsyncFunc()) {
+            std::string funcName = "moksha_rt_make_resolved_promise";
+            ensureBuiltinMIR(funcName);
+            MIRFunction *makePromFunc = mirModule->getFunction(funcName);
+            auto *voidTy =
+                const_cast<hir::HIRModule *>(hirModule)->getVoidType();
+            auto *voidPtrTy =
+                const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                    voidTy, hir::Ownership::None);
+
+            if (!makePromFunc) {
+              auto fn = std::make_unique<MIRFunction>(voidPtrTy, funcName,
+                                                      Linkage::External);
+              fn->addArgument(
+                  std::make_unique<MIRArgument>(fn.get(), voidPtrTy, 0));
+              makePromFunc = fn.get();
+              mirModule->addFunction(std::move(fn));
+            }
+
+            MIRValue *nullArg =
+                mirModule->getOrInsertConstant<ConstantNull>(voidPtrTy);
+            MIRValue *rawProm =
+                builder->createCall(makePromFunc, {nullArg}, voidPtrTy,
+                                    "resolved.prom.def", false, func.getLoc());
+
+            // Cast the *void handle back to the expected promise<void> return
+            // type
+            MIRValue *finalRet = builder->createBitCast(
+                rawProm, currFunc->getType(), "prom.cast", func.getLoc());
+            builder->insert(
+                std::make_unique<ReturnInst>(finalRet, func.getLoc()));
+          } else {
+            // Standard synchronous void main
+            builder->insert(
+                std::make_unique<ReturnInst>(nullptr, func.getLoc()));
+          }
         }
 
         // --- Catch-All Block ---
@@ -3785,7 +3841,12 @@ private:
     // [NEW] Identify the alloca we are returning so we don't free it!
     MIRValue *retOriginAlloca = nullptr;
     if (retVal) {
-      if (auto *load = llvm::dyn_cast_or_null<LoadInst>(retVal)) {
+      MIRValue *trace = retVal;
+      while (auto *cast = llvm::dyn_cast_or_null<CastInst>(trace)) {
+        trace = cast->getValue();
+      }
+
+      if (auto *load = llvm::dyn_cast_or_null<LoadInst>(trace)) {
         retOriginAlloca =
             load->getPointer(); // This is the alloca being returned
       }
@@ -7011,10 +7072,43 @@ private:
       lastExprValue = builder->insert(std::make_unique<BinaryInst>(
           Opcode::Shr, lhs, rhs, "", expr.getLoc()));
       break;
-    case hir::BinaryOp::Pow:
-      lastExprValue = builder->insert(std::make_unique<BinaryInst>(
-          Opcode::Pow, lhs, rhs, "", expr.getLoc()));
+    case hir::BinaryOp::Pow: {
+      if (isFloat) {
+        // Determine precision width
+        bool isF64 = false;
+        if (auto *fTy = llvm::dyn_cast<hir::HIRFloatType>(lhs->getType())) {
+          if (fTy->getWidth() == 64)
+            isF64 = true;
+        } else if (lhs->getType()->getKind() == hir::TypeKind::Decimal) {
+          isF64 = true; // Decimals are backed by 64-bit floats
+        }
+
+        std::string powName = isF64 ? "llvm.pow.f64" : "llvm.pow.f32";
+        MIRFunction *powFunc = mirModule->getFunction(powName);
+
+        // Lazy-load the LLVM intrinsic signature
+        if (!powFunc) {
+          auto *fTyObj =
+              isF64 ? const_cast<hir::HIRModule *>(hirModule)->getFloatType(64)
+                    : const_cast<hir::HIRModule *>(hirModule)->getFloatType(32);
+          auto fn =
+              std::make_unique<MIRFunction>(fTyObj, powName, Linkage::External);
+          fn->addArgument(std::make_unique<MIRArgument>(fn.get(), fTyObj, 0));
+          fn->addArgument(std::make_unique<MIRArgument>(fn.get(), fTyObj, 1));
+          powFunc = fn.get();
+          mirModule->addFunction(std::move(fn));
+        }
+
+        lastExprValue =
+            builder->createCall(powFunc, {lhs, rhs}, powFunc->getType(),
+                                "pow.call", false, expr.getLoc());
+      } else {
+        // Fallback for standard integers
+        lastExprValue = builder->insert(std::make_unique<BinaryInst>(
+            Opcode::Pow, lhs, rhs, "", expr.getLoc()));
+      }
       break;
+    }
 
     // --- Comparison Operators (ICmp vs FCmp Separation) ---
     case hir::BinaryOp::Equal:
@@ -11219,8 +11313,18 @@ private:
         // If the base object isn't a known variable, it's a namespace prefix!
         if (symbolMap.find(baseName) == symbolMap.end() &&
             !mirModule->getGlobal(baseName)) {
-          isNamespaceCall = true;
-          namespaceFuncName = baseName + "." + memberExpr->getMemberName();
+          bool isClass = false;
+          for (const auto *cls : hirModule->getClasses()) {
+            if (cls->getName() == baseName) {
+              isClass = true;
+              break;
+            }
+          }
+
+          if (!isClass) {
+            isNamespaceCall = true;
+            namespaceFuncName = baseName + "." + memberExpr->getMemberName();
+          }
         }
       }
     }
@@ -11240,6 +11344,19 @@ private:
       // [NEW FIX] Ensure the original name is searched in the HIR Module first
       std::string originalName = calleeName;
       ensureBuiltinMIR(originalName);
+
+      for (const auto *hirTarget : hirModule->getFunctions()) {
+        if (hirTarget->getName() == originalName) {
+          if (hirTarget->isExtern() && !hirTarget->getABI().empty()) {
+            std::string abi = hirTarget->getABI();
+            if (abi != "stdcall" && abi != "fastcall" && abi != "cdecl" &&
+                abi != "C") {
+              calleeName = abi;
+            }
+          }
+          break;
+        }
+      }
 
       // [NEW FIX] Route calls to the C-Runtime prefixed names
       if (calleeName == "yield" || calleeName == "spawn" ||
@@ -11781,55 +11898,78 @@ private:
         }
       }
     }
-    // B. Method Call Interception (e.g., io.open())
+    // B. Method Call Interception (e.g., io.open() or Matrix.identity())
     else if (auto *memberExpr =
                  llvm::dyn_cast_or_null<hir::HIRMemberExpr>(rawCallee)) {
-      MIRValue *baseObj = evaluateAsLValue(memberExpr->getObject());
 
-      // --- [CRITICAL FIX] Unwrap Double Pointers (L-Value to R-Value) ---
-      if (baseObj && baseObj->getType() &&
-          baseObj->getType()->getKind() == hir::TypeKind::Pointer) {
-        auto *ptrTy = static_cast<const hir::PointerType *>(baseObj->getType());
-        const auto *pointee = ptrTy->getPointee();
+      MIRValue *baseObj = nullptr;
+      std::string className = "";
 
-        if (pointee &&
-            (pointee->getKind() == hir::TypeKind::Pointer ||
-             pointee->getKind() == hir::TypeKind::Reference ||
-             pointee->getKind() == hir::TypeKind::Nullable ||
-             pointee->getKind() == hir::TypeKind::Slice ||
-             pointee->getKind() == hir::TypeKind::String ||
-             pointee->getKind() == hir::TypeKind::Map ||
-             pointee->getKind() == hir::TypeKind::Any ||
-             pointee->getKind() == hir::TypeKind::Closure ||
-             pointee->toString().find("shared") != std::string::npos ||
-             pointee->toString().find("weak") != std::string::npos ||
-             pointee->toString().find("Box<") != std::string::npos ||
-             pointee->toString().find("Arc<") != std::string::npos)) {
-
-          // If it's a global or an alloca (like @d), load the actual pointer
-          // value!
-          if (llvm::isa<AllocaInst>(baseObj) ||
-              llvm::isa<GetElementPtrInst>(baseObj) ||
-              llvm::isa<MIRGlobal>(baseObj) || llvm::isa<CastInst>(baseObj) ||
-              llvm::isa<MIRArgument>(baseObj)) {
-            baseObj = builder->createLoad(baseObj, "base.load", expr.getLoc());
+      // Detect Static Class Method Calls natively
+      if (auto *ident = llvm::dyn_cast_or_null<hir::HIRIdentifierExpr>(
+              memberExpr->getObject())) {
+        std::string baseName = ident->getName();
+        for (const auto *cls : hirModule->getClasses()) {
+          if (cls->getName() == baseName) {
+            className = baseName; // It's a static call on a class!
+            break;
           }
         }
       }
 
-      std::string className = "";
-      const hir::HIRType *baseTy = baseObj ? baseObj->getType() : nullptr;
+      // If it's not a static class call, evaluate the base object normally
+      if (className.empty()) {
+        baseObj = evaluateAsLValue(memberExpr->getObject());
 
-      // Unwrap pointers/references to find the underlying class
-      if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(baseTy)) {
-        baseTy = ptrTy->getPointee();
-      } else if (auto *refTy =
-                     llvm::dyn_cast_or_null<hir::ReferenceType>(baseTy)) {
-        baseTy = refTy->getInner();
+        // --- Unwrap Double Pointers (L-Value to R-Value) ---
+        if (baseObj && baseObj->getType() &&
+            baseObj->getType()->getKind() == hir::TypeKind::Pointer) {
+          auto *ptrTy =
+              static_cast<const hir::PointerType *>(baseObj->getType());
+          const auto *pointee = ptrTy->getPointee();
+
+          bool isManaged = false;
+          if (ptrTy->getOwnership() != hir::Ownership::None &&
+              ptrTy->getOwnership() != hir::Ownership::Borrowed) {
+            isManaged = true;
+          }
+
+          if (pointee &&
+              (pointee->getKind() == hir::TypeKind::Pointer ||
+               pointee->getKind() == hir::TypeKind::Reference ||
+               pointee->getKind() == hir::TypeKind::Nullable || isManaged ||
+               pointee->toString().find("shared") != std::string::npos ||
+               pointee->toString().find("weak") != std::string::npos ||
+               pointee->toString().find("Box<") != std::string::npos ||
+               pointee->toString().find("Arc<") != std::string::npos)) {
+
+            if (llvm::isa<AllocaInst>(baseObj) ||
+                llvm::isa<GetElementPtrInst>(baseObj) ||
+                llvm::isa<MIRGlobal>(baseObj) || llvm::isa<CastInst>(baseObj) ||
+                llvm::isa<MIRArgument>(baseObj)) {
+              auto *baseLoad =
+                  builder->createLoad(baseObj, "base.load", expr.getLoc());
+              baseLoad->setBorrowKind(mir::BorrowKind::View);
+              baseObj = baseLoad;
+            } else if (auto *existingLoad = llvm::dyn_cast<LoadInst>(baseObj)) {
+              existingLoad->setBorrowKind(mir::BorrowKind::View);
+            }
+          }
+        }
+
+        const hir::HIRType *baseTy = baseObj ? baseObj->getType() : nullptr;
+
+        // Unwrap pointers/references to find the underlying class
+        if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(baseTy)) {
+          baseTy = ptrTy->getPointee();
+        } else if (auto *refTy =
+                       llvm::dyn_cast_or_null<hir::ReferenceType>(baseTy)) {
+          baseTy = refTy->getInner();
+        }
+
+        if (baseTy)
+          className = baseTy->toString();
       }
-
-      if (baseTy)
-        className = baseTy->toString();
 
       // Dynamic Generic Sanitizer
       if (!className.empty() && className[0] == '*')
@@ -13678,7 +13818,18 @@ private:
       }
     }
 
-    if (currentUnwindDest || requiresCleanup) {
+    // ---> LLVM INTRINSIC CHECK <---
+    bool isLLVMIntrinsic = false;
+    if (callee) {
+      if (auto *mirTargetF = llvm::dyn_cast_or_null<MIRFunction>(callee)) {
+        if (mirTargetF->getName().find("llvm.") == 0) {
+          isLLVMIntrinsic = true;
+        }
+      }
+    }
+
+    // ---> INVOKE VS CALL ROUTING <---
+    if (!isLLVMIntrinsic && (currentUnwindDest || requiresCleanup)) {
       MIRBlock *normalDest = newBlock("invoke.cont");
       MIRBlock *cleanupDest = newBlock("invoke.cleanup");
 
