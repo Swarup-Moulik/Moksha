@@ -10,6 +10,7 @@ namespace moksha {
 
 class ASTVisitor;
 
+/** @brief Statement kinds */
 enum class StmtKind {
   // Declarations
   ModuleDecl,
@@ -41,10 +42,13 @@ enum class StmtKind {
   LockStmt
 };
 
+/** @brief Visibility levels */
 enum class Visibility { Default, Public, Private, Protected };
 
+/** @brief Aggregate kinds */
 enum class AggregateKind { Class, Struct, Union };
 
+/** @brief Intrinsic kinds */
 enum class IntrinsicKind {
   None,
   AtomicLoad,
@@ -56,8 +60,9 @@ enum class IntrinsicKind {
   Clz
 };
 
-// --- AST Node Bases ---
+/** @brief AST Node Bases */
 
+/** @brief Base class for all declarations */
 class Decl {
 public:
   virtual ~Decl() = default;
@@ -81,6 +86,7 @@ protected:
 
 using DeclPtr = std::unique_ptr<Decl>;
 
+/** @brief Base class for all statements */
 class Stmt {
 public:
   virtual ~Stmt() = default;
@@ -100,16 +106,14 @@ protected:
 
 using StmtPtr = std::unique_ptr<Stmt>;
 
-// --- Declarations ---
+/** @brief Declarations */
 
 class ModuleDecl : public Decl {
 public:
-  // Constructor matching Parser usage (name, decls, loc)
   ModuleDecl(std::string name, std::vector<DeclPtr> decls, SourceLocation loc)
       : Decl(StmtKind::ModuleDecl, std::move(name), Visibility::Default, loc),
         decls(std::move(decls)) {}
 
-  // Full Constructor
   ModuleDecl(std::string name, std::vector<DeclPtr> decls, Visibility vis,
              SourceLocation loc)
       : Decl(StmtKind::ModuleDecl, std::move(name), vis, loc),
@@ -130,13 +134,11 @@ private:
 
 class VariableDecl : public Decl {
 public:
-  // Constructor matching Parser usage (type, name, init, loc)
   VariableDecl(TypePtr type, std::string name, ExprPtr init, SourceLocation loc)
       : Decl(StmtKind::VariableDecl, std::move(name), Visibility::Default, loc),
         type(std::move(type)), initializer(std::move(init)), isConst(false),
         isStatic(false) {}
 
-  // Full Constructor
   VariableDecl(TypePtr type, std::string name, ExprPtr init, bool isConst,
                bool isStatic, bool isShared, Visibility vis, SourceLocation loc)
       : Decl(StmtKind::VariableDecl, std::move(name), vis, loc),
@@ -222,7 +224,6 @@ public:
     }
   };
 
-  // Constructor matching Parser usage (ret, name, params, body, async, loc)
   FunctionDecl(std::string name, std::vector<Param> params, TypePtr returnType,
                StmtPtr body, bool isAsync, bool isStatic, bool isVariadic,
                bool isWeak, Visibility vis, SourceLocation loc)
@@ -315,7 +316,6 @@ private:
 
 class ClassDecl : public Decl {
 public:
-  // Updated constructor with aggKind (7 arguments total)
   ClassDecl(std::string name, std::vector<std::string> parentNames,
             std::vector<DeclPtr> members, bool isRef, AggregateKind aggKind,
             Visibility vis, SourceLocation loc)
@@ -360,7 +360,6 @@ private:
 
 class GenericDecl : public Decl {
 public:
-  // Strongly typed parameter to hold lifetime constraints
   struct GenericParam {
     std::string name;
     bool isShared;
@@ -390,7 +389,6 @@ private:
 
 class ImportDecl : public Decl {
 public:
-  // Constructor matching Parser usage (name, symbols, loc)
   ImportDecl(std::string moduleName, std::vector<std::string> symbols,
              SourceLocation loc)
       : Decl(StmtKind::ImportDecl, std::move(moduleName), Visibility::Default,
@@ -419,7 +417,6 @@ public:
     Case clone() const { return Case{name, value ? value->clone() : nullptr}; }
   };
 
-  // Constructor matching Parser usage (name, cases, loc)
   EnumDecl(std::string name, std::vector<Case> cases, SourceLocation loc)
       : Decl(StmtKind::EnumDecl, std::move(name), Visibility::Default, loc),
         cases(std::move(cases)) {}
@@ -481,7 +478,7 @@ private:
   TypePtr targetType;
 };
 
-// --- Statements (Same as before, included for completeness) ---
+/** @brief Statements */
 
 class BlockStmt : public Stmt {
 public:

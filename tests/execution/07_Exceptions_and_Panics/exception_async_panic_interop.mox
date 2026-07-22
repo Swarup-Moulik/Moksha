@@ -1,7 +1,5 @@
 println("--- [E2E] exception_async_panic_interop.mox ---")
 
-async void yield() {}
-
 // 1. ASYNC EXCEPTION PROPAGATION
 async void failing_task() {
     await yield();

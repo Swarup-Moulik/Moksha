@@ -10,9 +10,7 @@ extern void *moksha_rt_alloc(size_t payload_size, uint32_t type_id);
 extern void moksha_rt_panic(const char *message);
 extern void *moksha_mem_alloc(size_t size);
 
-// ============================================================================
-// Bare-Metal Utility Functions (Replaces <string.h> and <stdio.h>)
-// ============================================================================
+/** @brief Bare-Metal Utility Functions */
 
 static size_t internal_strlen(const char *s) {
   size_t len = 0;
@@ -55,7 +53,7 @@ static void sys_print(const char *str) {
   if (!str)
     return;
   size_t written;
-  sys_io_write(1, str, internal_strlen(str), &written); // 1 = STDOUT
+  sys_io_write(1, str, internal_strlen(str), &written);
 }
 
 static int internal_utoa64(uint64_t val, char *buf) {
@@ -321,9 +319,7 @@ void moksha_rt_close(void *any_ptr) {
   sys_io_close(fd);
 }
 
-// ============================================================================
-// Internal String Builders
-// ============================================================================
+/** @brief Internal String Builders */
 
 char *__moksha_string_concat(char *a, char *b) {
   size_t len_a = a ? internal_strlen(a) : 0;
@@ -368,9 +364,7 @@ char *__moksha_template_join_strs(int32_t count, ...) {
   return result;
 }
 
-// ============================================================================
-// Type Casting to String
-// ============================================================================
+/** @brief Type Casting to String */
 
 char *__moksha_bool_to_string(bool val) {
   char *str = (char *)moksha_rt_alloc(6, MOKSHA_TYPE_STRING);
@@ -572,9 +566,7 @@ char *__moksha_any_to_string(MokshaAny *any_val) {
   return any_val->vtable->to_string(any_val->data);
 }
 
-// ============================================================================
-// Moksha String Builtins
-// ============================================================================
+/** @brief Moksha String Builtins */
 
 // Helper for substring searching
 static char *internal_strstr(const char *haystack, const char *needle) {

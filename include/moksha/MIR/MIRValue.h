@@ -8,10 +8,13 @@
 namespace moksha {
 namespace mir {
 
+/** @brief Represents the linkage of a symbol. */
 enum class Linkage { Internal, External, Weak, LinkOnce };
 
+/** @brief Represents the calling convention of a function. */
 enum class CallingConv { C, StdCall, FastCall, Interrupt };
 
+/** @brief Represents the kind of a value. */
 enum class ValueKind {
   Instruction,
   Argument,
@@ -37,6 +40,7 @@ enum class ValueKind {
   Function
 };
 
+/** @brief Represents the borrow kind of a value. */
 enum class BorrowKind {
   None, // Standard by-value data (e.g., int, bool)
   View, // Read-only shared borrow (*view)
@@ -44,6 +48,7 @@ enum class BorrowKind {
   Lock  // Thread-safe mutex borrow (*lock)
 };
 
+/** @brief Base class for all MIR values. */
 class MIRValue {
 public:
   virtual ~MIRValue() = default;

@@ -7,10 +7,7 @@
 namespace moksha {
 namespace mir {
 
-// ============================================================================
-// [Helpers]
-// ============================================================================
-
+// Helpers
 static void printType(llvm::raw_ostream &os, const hir::HIRType *type) {
   if (type) {
     os << type->toString();
@@ -19,37 +16,23 @@ static void printType(llvm::raw_ostream &os, const hir::HIRType *type) {
   }
 }
 
-// ============================================================================
-// [Constructor & Destructor]
-// ============================================================================
-
+// Constructor & Destructor
 MIRFunction::MIRFunction(const hir::HIRType *returnType, std::string name,
                          Linkage linkage)
     : MIRValue(ValueKind::Function, returnType, std::move(name)),
       linkage(linkage) {}
 
-// Defined here because MIRBlock and MIRArgument are fully defined in this file,
-// allowing std::unique_ptr to correctly generate a deleter.
 MIRFunction::~MIRFunction() = default;
 
-// ============================================================================
-// [Attributes]
-// ============================================================================
-
+// Attributes
 bool MIRFunction::isDeclaration() const { return blocks.empty(); }
 
-// ============================================================================
-// [Block Management]
-// ============================================================================
-
+// Block Management
 void MIRFunction::addBlock(std::unique_ptr<MIRBlock> block) {
   if (!block)
     return;
 
-  // Enforce back-linkage to this function
   block->setParent(this);
-
-  // Take ownership (Move the unique_ptr into the vector)
   blocks.push_back(std::move(block));
 }
 
@@ -62,18 +45,10 @@ std::vector<MIRBlock *> MIRFunction::getRawBlocks() const {
   return raw;
 }
 
-// ============================================================================
-// [Argument Management]
-// ============================================================================
-
+// Argument Management
 void MIRFunction::addArgument(std::unique_ptr<MIRArgument> arg) {
   if (!arg)
     return;
-
-  // Note: MIRArgument sets its parent function in its constructor.
-  // We assume the caller created the argument with the correct parent.
-
-  // Take ownership (Move the unique_ptr into the vector)
   args.push_back(std::move(arg));
 }
 
@@ -98,7 +73,6 @@ void MIRFunction::numberUnnamedValues() {
 
   // 2. Number unnamed blocks and instructions
   for (auto &block : blocks) {
-    // Number the block itself (e.g., if it's not "entry" or "if.then")
     if (block->getName().empty()) {
       block->setName(std::to_string(counter++));
     }
@@ -118,24 +92,19 @@ void MIRFunction::numberUnnamedValues() {
   }
 }
 
-// ============================================================================
-// [Debug / Dump]
-// ============================================================================
-
+// Debug / Dump
 void MIRFunction::dump(llvm::raw_ostream &os) const {
-  // Check if it's just a prototype
   if (isDeclaration()) {
     os << "declare ";
   } else {
     os << "define ";
   }
-  // [FIX] Handle Linkage
+
   if (linkage == Linkage::Internal)
     os << "internal ";
   else if (linkage == Linkage::Weak)
     os << "weak ";
 
-  // [FIX] Handle Calling Convention
   switch (callingConv) {
   case CallingConv::StdCall:
     os << "x86_stdcallcc ";
@@ -152,14 +121,12 @@ void MIRFunction::dump(llvm::raw_ostream &os) const {
   printType(os, getType());
   os << " @\"" << getName() << "\"(";
 
-  // Dump Arguments
   for (size_t i = 0; i < args.size(); ++i) {
     if (i > 0)
       os << ", ";
     args[i]->dump(os);
   }
 
-  // [FIX 1] Append the variadic ellipsis to the parameters
   if (isVariadicFlag) {
     if (!args.empty())
       os << ", ";
@@ -168,7 +135,6 @@ void MIRFunction::dump(llvm::raw_ostream &os) const {
 
   os << ")";
 
-  // [FIX 2] Print the low-level system attributes
   if (isInterruptFlag)
     os << " interrupt";
   if (isNakedFlag)
@@ -200,23 +166,18 @@ void MIRFunction::dump(llvm::raw_ostream &os) const {
   os << "}\n\n";
 }
 
-// ============================================================================
-// [SSA Name Resolution]
-// ============================================================================
-
+// SSA Name Resolution
 std::string MIRFunction::getUniqueName(const std::string &baseName) {
   if (baseName.empty()) {
-    return ""; // Anonymous values don't need unique names
+    return "";
   }
 
-  // Increment the counter for this specific base name
   unsigned count = nameCounters[baseName]++;
 
   if (count == 0) {
-    return baseName; // First use gets the clean, unnumbered name
+    return baseName;
   }
 
-  // Subsequent uses get a dot-number suffix (e.g., closure.val.1)
   return baseName + "." + std::to_string(count);
 }
 

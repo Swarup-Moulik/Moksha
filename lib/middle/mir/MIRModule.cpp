@@ -42,16 +42,15 @@ MIRModule::~MIRModule() = default;
 
 // Populate the functionMap
 void MIRModule::addFunction(std::unique_ptr<MIRFunction> func) {
-  functionMap[func->getName()] = func.get(); // <-- ADD THIS LINE
+  functionMap[func->getName()] = func.get();
   functions.push_back(std::move(func));
   functionsDirty = true;
 }
 
-// Use the functionMap for O(1) lookups
 llvm::ArrayRef<MIRFunction *> MIRModule::getFunctions() const {
-  if (functionsDirty) { // [NEW] Only rebuild if the array changed
+  if (functionsDirty) {
     functionCache.clear();
-    functionCache.reserve(functions.size()); // Prevent reallocation
+    functionCache.reserve(functions.size());
     for (const auto &f : functions) {
       functionCache.push_back(f.get());
     }
@@ -66,11 +65,11 @@ void MIRModule::addGlobal(std::unique_ptr<MIRGlobal> global) {
   globals.push_back(std::move(global));
   globalsDirty = true;
 }
-// Use the globalMap for O(1) lookups
+
 llvm::ArrayRef<MIRGlobal *> MIRModule::getGlobals() const {
-  if (globalsDirty) { // [NEW] Only rebuild if the array changed
+  if (globalsDirty) {
     globalCache.clear();
-    globalCache.reserve(globals.size()); // Prevent reallocation
+    globalCache.reserve(globals.size());
     for (const auto &g : globals) {
       globalCache.push_back(g.get());
     }
@@ -79,19 +78,16 @@ llvm::ArrayRef<MIRGlobal *> MIRModule::getGlobals() const {
   return globalCache;
 }
 
-// ============================================================================
-// [Class Management]
-// ============================================================================
-
+// Class Management
 void MIRModule::addClass(std::unique_ptr<hir::HIRClass> cls) {
   classes.push_back(std::move(cls));
-  classesDirty = true; // [NEW] Mark cache as dirty
+  classesDirty = true;
 }
 
 llvm::ArrayRef<hir::HIRClass *> MIRModule::getClasses() const {
-  if (classesDirty) { // [NEW] Only rebuild if the array changed
+  if (classesDirty) {
     classCache.clear();
-    classCache.reserve(classes.size()); // Prevent reallocation
+    classCache.reserve(classes.size());
     for (const auto &c : classes) {
       classCache.push_back(c.get());
     }
@@ -126,7 +122,6 @@ const hir::HIRType *MIRModule::getPointerType(const hir::HIRType *pointeeType) {
     return it->second.get();
   }
 
-  // Otherwise, create, cache, and return
   auto newPtrTy =
       std::make_unique<hir::PointerType>(pointeeType, hir::Ownership::None);
   const hir::HIRType *rawPtr = newPtrTy.get();
@@ -141,17 +136,10 @@ const hir::HIRType *MIRModule::getArrayType(const hir::HIRType *elemTy,
   // Allocate the new array type
   auto newArrayTy = std::make_unique<hir::ArrayType>(elemTy, size);
   const hir::HIRType *rawPtr = newArrayTy.get();
-
-  // Store it in the MIRModule's derivedTypes vector so it lives as long as the
-  // module
   derivedTypes.push_back(std::move(newArrayTy));
 
   return rawPtr;
 }
-
-// ============================================================================
-// [O(1) Lookups]
-// ============================================================================
 
 MIRFunction *MIRModule::getFunction(const std::string &name) const {
   auto it = functionMap.find(name);

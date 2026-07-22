@@ -36,14 +36,11 @@ public:
   [[nodiscard]] std::unique_ptr<hir::HIRStmt> takeStmt();
   [[nodiscard]] std::unique_ptr<hir::HIRExpr> takeExpr();
 
-  // [FIX] Added Dispatch Helpers
   void visit(const Decl *d);
   void visit(const Stmt *s);
   void visit(const Expr *e);
 
-  // ========================================================================
-  // [Declarations]
-  // ========================================================================
+  // Declarations
   void visitFunctionDecl(const FunctionDecl *decl) override;
   void visitModuleDecl(const ModuleDecl *decl) override;
   void visitVariableDecl(const VariableDecl *decl) override;
@@ -54,9 +51,7 @@ public:
   void visitImportDecl(const ImportDecl *) override {}
   void visitGenericDecl(const GenericDecl *) override {}
 
-  // ========================================================================
-  // [Statements]
-  // ========================================================================
+  // Statements
   void visitBlockStmt(const BlockStmt *stmt) override;
   void visitReturnStmt(const ReturnStmt *stmt) override;
   void visitIfStmt(const IfStmt *stmt) override;
@@ -75,9 +70,7 @@ public:
   void visitDeclStmt(const DeclStmt *stmt) override;
   void visitLockStmt(const LockStmt *stmt) override;
 
-  // ========================================================================
-  // [Expressions]
-  // ========================================================================
+  // Expressions
   void visitIntegerLiteral(const IntegerLiteral *expr) override;
   void visitFloatLiteral(const FloatLiteral *expr) override;
   void visitDecimalLiteral(const DecimalLiteral *expr) override;
@@ -107,9 +100,7 @@ public:
   void visitInputExpr(const InputExpr *expr) override;
   void visitAsmExpr(const AsmExpr *expr) override;
 
-  // ========================================================================
-  // [Types] (Stubbed)
-  // ========================================================================
+  // Types
   void visitPrimitiveType(const PrimitiveType *) override {}
   void visitPointerType(const PointerType *) override {}
   void visitArrayType(const ArrayType *type) override {}

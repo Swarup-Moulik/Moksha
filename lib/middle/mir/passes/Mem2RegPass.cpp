@@ -13,14 +13,10 @@
 namespace moksha {
 namespace mir {
 
-// ============================================================================
-// [Helper] Compute Dominance Frontiers
-// ============================================================================
 static std::unordered_map<MIRBlock *, std::unordered_set<MIRBlock *>>
 computeDominanceFrontiers(MIRFunction *F, const MIRDominance &dom) {
   std::unordered_map<MIRBlock *, std::unordered_set<MIRBlock *>> DF;
 
-  // [FIX] Build a reliable predecessor map using native getSuccessors() edges
   std::unordered_map<MIRBlock *, std::vector<MIRBlock *>> truePreds;
   for (auto &blockPtr : F->getBlocks()) {
     for (auto *succ : blockPtr->getSuccessors()) {
@@ -31,7 +27,6 @@ computeDominanceFrontiers(MIRFunction *F, const MIRDominance &dom) {
   for (auto &blockPtr : F->getBlocks()) {
     MIRBlock *b = blockPtr.get();
 
-    // Use truePreds instead of the potentially broken b->getPredecessors()
     if (truePreds[b].size() >= 2) {
       for (MIRBlock *pred : truePreds[b]) {
         MIRBlock *runner = pred;
@@ -46,9 +41,7 @@ computeDominanceFrontiers(MIRFunction *F, const MIRDominance &dom) {
   return DF;
 }
 
-// ============================================================================
 // [Helper] Replace All Uses (Fallback for missing Use-Def Chains)
-// ============================================================================
 static void replaceAllUsesInFunction(MIRFunction *F, MIRValue *oldVal,
                                      MIRValue *newVal) {
   for (auto &blockPtr : F->getBlocks()) {
@@ -57,10 +50,6 @@ static void replaceAllUsesInFunction(MIRFunction *F, MIRValue *oldVal,
     }
   }
 }
-
-// ============================================================================
-// [Pass Implementation]
-// ============================================================================
 
 bool Mem2RegPass::runOnModule(MIRModule &M) {
   bool changed = false;
@@ -73,9 +62,7 @@ bool Mem2RegPass::runOnModule(MIRModule &M) {
 }
 
 bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
-  // ========================================================================
-  // [NEW] PRE-PASS: HEAL CFG BEFORE DOMINANCE ANALYSIS
-  // ========================================================================
+  // PRE-PASS: HEAL CFG BEFORE DOMINANCE ANALYSIS
   for (auto &blockPtr : F->getBlocks()) {
     blockPtr->getSuccessors().clear();
     blockPtr->getPredecessors().clear();
@@ -117,9 +104,7 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
     }
   }
 
-  // ------------------------------------------------------------------------
   // Phase 1: Identify Promotable Allocas & Record Definitions
-  // ------------------------------------------------------------------------
   std::vector<AllocaInst *> promotableAllocas;
   std::unordered_map<AllocaInst *, std::vector<MIRBlock *>> defBlocks;
   std::unordered_set<AllocaInst *> promotableSet;
@@ -147,13 +132,10 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
     for (auto &instPtr : blockPtr->getInstructions()) {
       MIRInst *i = instPtr.get();
       if (auto *load = llvm::dyn_cast_or_null<LoadInst>(i)) {
-        // [FIX] Volatile loads force the alloca to stay in memory
         if (load->isVolatile())
           markEscaped(load->getPointer());
       } else if (auto *store = llvm::dyn_cast_or_null<StoreInst>(i)) {
-        markEscaped(
-            store->getValue()); // Storing the alloca AS a value escapes it!
-        // [FIX] Volatile stores force the alloca to stay in memory
+        markEscaped(store->getValue());
         if (store->isVolatile())
           markEscaped(store->getPointer());
       } else if (auto *gep = llvm::dyn_cast_or_null<GetElementPtrInst>(i)) {
@@ -230,7 +212,7 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
             (allocTy &&
              (allocTy->getKind() == hir::TypeKind::Weak ||
               allocTy->toString().find("weak ") != std::string::npos))) {
-          continue; // Skip promotion
+          continue;
         }
         if (escapedAllocas.find(alloca) == escapedAllocas.end()) {
           promotableAllocas.push_back(alloca);
@@ -249,19 +231,15 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
   }
 
   if (promotableAllocas.empty()) {
-    return false; // Nothing to promote
+    return false;
   }
 
-  // ------------------------------------------------------------------------
   // Phase 2: Compute Dominator Tree & Dominance Frontiers
-  // ------------------------------------------------------------------------
   MIRDominance dom(F);
   dom.analyze();
   auto DF = computeDominanceFrontiers(F, dom);
 
-  // ------------------------------------------------------------------------
   // Phase 3: Insert Phi Nodes (Using Iterated Dominance Frontier)
-  // ------------------------------------------------------------------------
   std::unordered_map<MIRBlock *, std::unordered_map<AllocaInst *, PhiInst *>>
       blockPhis;
 
@@ -276,21 +254,17 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
 
       for (MIRBlock *y : DF[x]) {
         if (hasPhi.insert(y).second) {
-          // Un-wrap the pointer type to get the actual value type being stored
           const hir::HIRType *valueType = nullptr;
           if (auto *ptrTy =
                   llvm::dyn_cast_or_null<hir::PointerType>(alloca->getType())) {
             valueType = ptrTy->getPointee();
           }
 
-          // Create Phi node at the top of block 'y'
           auto phi = std::make_unique<PhiInst>(
               valueType, alloca->getName() + ".phi", alloca->getLoc());
           blockPhis[y][alloca] = phi.get();
 
           phi->setParent(y);
-
-          // Insert at the beginning of the block
           y->getInstructionsMut().insert(y->getInstructionsMut().begin(),
                                          std::move(phi));
 
@@ -302,11 +276,9 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
     }
   }
 
-  // ------------------------------------------------------------------------
   // Phase 4: Rename Variables & Wire Phi Edges (Dominator Tree DFS)
-  // ------------------------------------------------------------------------
   std::unordered_map<AllocaInst *, std::vector<MIRValue *>> valueStacks;
-  std::vector<MIRInst *> toDelete; // Track instructions to remove later
+  std::vector<MIRInst *> toDelete;
 
   // Recursive renaming function
   auto renameDFS = [&](auto &self, MIRBlock *b) -> void {
@@ -327,7 +299,7 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
       if (auto *load = llvm::dyn_cast_or_null<LoadInst>(inst)) {
         if (auto *alloca =
                 llvm::dyn_cast_or_null<AllocaInst>(load->getPointer())) {
-          if (promotableSet.count(alloca)) { // <-- Guarded
+          if (promotableSet.count(alloca)) {
             MIRValue *activeVal = valueStacks[alloca].empty()
                                       ? nullptr
                                       : valueStacks[alloca].back();
@@ -341,15 +313,14 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
       } else if (auto *store = llvm::dyn_cast_or_null<StoreInst>(inst)) {
         if (auto *alloca =
                 llvm::dyn_cast_or_null<AllocaInst>(store->getPointer())) {
-          if (promotableSet.count(alloca)) { // <-- Guarded
-            // The stored value becomes the new active definition
+          if (promotableSet.count(alloca)) {
             valueStacks[alloca].push_back(store->getValue());
             pushedCounts[alloca]++;
             toDelete.push_back(store);
           }
         }
       } else if (auto *alloca = llvm::dyn_cast_or_null<AllocaInst>(inst)) {
-        if (promotableSet.count(alloca)) { // <-- Guarded
+        if (promotableSet.count(alloca)) {
           toDelete.push_back(alloca);
         }
       }
@@ -387,17 +358,13 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
     renameDFS(renameDFS, F->getEntryBlock());
   }
 
-  // ------------------------------------------------------------------------
   // Phase 5: Cleanup Dead Instructions
-  // ------------------------------------------------------------------------
   for (auto &blockPtr : F->getBlocks()) {
     for (auto &instPtr : blockPtr->getInstructions()) {
       if (auto *load = llvm::dyn_cast_or_null<LoadInst>(instPtr.get())) {
         if (auto *alloca =
                 llvm::dyn_cast_or_null<AllocaInst>(load->getPointer())) {
           if (promotableSet.count(alloca)) {
-            // [FIX] Do NOT replace uses with undef. Phase 4 already wired the
-            // SSA graph. Just queue the dead load for garbage collection.
             toDelete.push_back(load);
           }
         }
@@ -417,8 +384,6 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
 
   for (auto &blockPtr : F->getBlocks()) {
     auto &insts = blockPtr->getInstructionsMut();
-
-    // Erase-remove idiom to sweep marked dead allocas, loads, and stores
     insts.erase(std::remove_if(insts.begin(), insts.end(),
                                [&](const std::unique_ptr<MIRInst> &inst) {
                                  return deadSet.count(inst.get()) > 0;
@@ -426,7 +391,7 @@ bool Mem2RegPass::runOnFunction(MIRFunction *F, MIRModule &M) {
                 insts.end());
   }
 
-  return true; // We modified the module!
+  return true;
 }
 
 } // namespace mir

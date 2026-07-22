@@ -20,9 +20,6 @@ namespace moksha {
 
 namespace {
 
-// ============================================================================
-// 1. Full Type Converter
-// ============================================================================
 class MokshaToLLVMTypeConverter : public mlir::LLVMTypeConverter {
 public:
   MokshaToLLVMTypeConverter(mlir::MLIRContext *ctx)
@@ -56,12 +53,9 @@ public:
     });
     addConversion([&](IR::ClosureType type) {
       return mlir::LLVM::LLVMStructType::getLiteral(
-          type.getContext(), {
-                                 mlir::LLVM::LLVMPointerType::get(
-                                     type.getContext()), // Function ptr
-                                 mlir::LLVM::LLVMPointerType::get(
-                                     type.getContext()) // Environment ptr
-                             });
+          type.getContext(),
+          {mlir::LLVM::LLVMPointerType::get(type.getContext()),
+           mlir::LLVM::LLVMPointerType::get(type.getContext())});
     });
     addConversion([&](IR::DecimalType type) {
       return mlir::LLVM::LLVMStructType::getLiteral(
@@ -110,8 +104,6 @@ public:
       if (!changed)
         return type;
 
-      // Return as a literal struct to avoid MLIR named-struct modification
-      // assertions
       return mlir::LLVM::LLVMStructType::getLiteral(type.getContext(), newBody,
                                                     type.isPacked());
     });
@@ -126,9 +118,7 @@ public:
   }
 };
 
-// ============================================================================
-// 2. Helpers for External Runtime Calls & Constants
-// ============================================================================
+// Helpers for External Runtime Calls & Constants
 static mlir::LLVM::CallOp
 createRuntimeCall(mlir::ConversionPatternRewriter &rewriter, mlir::Location loc,
                   llvm::StringRef funcName, mlir::TypeRange retTypes,
@@ -143,8 +133,7 @@ createRuntimeCall(mlir::ConversionPatternRewriter &rewriter, mlir::Location loc,
   mlir::Type retTy = retTypes.empty()
                          ? mlir::LLVM::LLVMVoidType::get(rewriter.getContext())
                          : retTypes[0];
-  auto funcType =
-      mlir::LLVM::LLVMFunctionType::get(retTy, argTypes, /*isVarArg=*/false);
+  auto funcType = mlir::LLVM::LLVMFunctionType::get(retTy, argTypes, false);
 
   if (!module.lookupSymbol(funcName)) {
     mlir::OpBuilder::InsertionGuard guard(rewriter);
@@ -155,9 +144,6 @@ createRuntimeCall(mlir::ConversionPatternRewriter &rewriter, mlir::Location loc,
   auto symRef = mlir::SymbolRefAttr::get(rewriter.getContext(), funcName);
   auto callOp =
       rewriter.create<mlir::LLVM::CallOp>(loc, retTypes, symRef, args);
-
-  // [MLIR 22 FIX] The verifier requires this property to resolve opaque
-  // pointers!
   callOp->setAttr("callee_type", mlir::TypeAttr::get(funcType));
   return callOp;
 }
@@ -173,9 +159,8 @@ static mlir::Value createRuntimeCall(mlir::ConversionPatternRewriter &rewriter,
   for (auto arg : args)
     argTypes.push_back(arg.getType());
 
-  auto funcType = mlir::LLVM::LLVMFunctionType::get(returnType, argTypes,
-                                                    /*isVarArg=*/false);
-
+  auto funcType =
+      mlir::LLVM::LLVMFunctionType::get(returnType, argTypes, false);
   if (!module.lookupSymbol(funcName)) {
     mlir::OpBuilder::InsertionGuard guard(rewriter);
     rewriter.setInsertionPointToStart(module.getBody());
@@ -186,7 +171,6 @@ static mlir::Value createRuntimeCall(mlir::ConversionPatternRewriter &rewriter,
   auto callOp =
       rewriter.create<mlir::LLVM::CallOp>(loc, returnType, symRef, args);
 
-  // [MLIR 22 FIX] Property mapping for opaque pointers
   callOp->setAttr("callee_type", mlir::TypeAttr::get(funcType));
   return callOp.getResult();
 }
@@ -226,23 +210,22 @@ static uint32_t getMokshaTypeID(mlir::Type type) {
     return 21;
   if (auto ptrTy = mlir::dyn_cast<IR::PointerType>(type)) {
     if (ptrTy.getPointee().isSignlessInteger(8))
-      return 16; // MOKSHA_TYPE_STRING
+      return 16;
   }
 
-  // [CRITICAL FIX] Use MLIR stringification to peek through Nullable Wrappers
   std::string typeStr;
   llvm::raw_string_ostream os(typeStr);
   type.print(os);
 
   if (typeStr.find("slice") != std::string::npos ||
       typeStr.find("array") != std::string::npos) {
-    return 18; // MOKSHA_TYPE_ARRAY
+    return 18;
   }
   if (typeStr.find("table") != std::string::npos) {
-    return 17; // MOKSHA_TYPE_TABLE
+    return 17;
   }
 
-  return 19; // MOKSHA_TYPE_PTR (Generic)
+  return 19;
 }
 
 static mlir::LLVM::AtomicOrdering mapAtomicOrdering(int32_t ord) {
@@ -250,7 +233,7 @@ static mlir::LLVM::AtomicOrdering mapAtomicOrdering(int32_t ord) {
   case 0:
     return mlir::LLVM::AtomicOrdering::not_atomic;
   case 1:
-    return mlir::LLVM::AtomicOrdering::monotonic; // Relaxed
+    return mlir::LLVM::AtomicOrdering::monotonic;
   case 2:
     return mlir::LLVM::AtomicOrdering::acquire;
   case 3:
@@ -283,10 +266,7 @@ static mlir::LLVM::AtomicBinOp mapAtomicBinOp(int32_t op) {
   }
 }
 
-// ============================================================================
-// 3. VTable Generation for 'any' Type
-// ============================================================================
-// --- NEW: Helper to reconstruct the Frontend's sanitized stringifier names ---
+/** @brief Reconstructs the Frontend's sanitized stringifier names for types. */
 static std::string getMangledHIRTypeName(mlir::Type type) {
   if (type.isInteger(1))
     return "bool";
@@ -311,7 +291,7 @@ static std::string getMangledHIRTypeName(mlir::Type type) {
     return "any";
   if (auto ptrTy = mlir::dyn_cast<IR::PointerType>(type)) {
     if (ptrTy.getPointee().isInteger(8))
-      return "string"; // *i8 in Moksha is string
+      return "string";
     return "_" + getMangledHIRTypeName(ptrTy.getPointee());
   }
   if (auto arrTy = mlir::dyn_cast<IR::ArrayType>(type)) {
@@ -319,16 +299,13 @@ static std::string getMangledHIRTypeName(mlir::Type type) {
            std::to_string(arrTy.getSize()) + "_";
   }
   if (auto slcTy = mlir::dyn_cast<IR::SliceType>(type)) {
-    return getMangledHIRTypeName(slcTy.getElementType()) +
-           "__"; // "[]" sanitizes to "__"
+    return getMangledHIRTypeName(slcTy.getElementType()) + "__";
   }
   if (auto mapTy = mlir::dyn_cast<IR::MapType>(type)) {
-    // "table<K, V>" sanitizes to "table_K__V_"
     return "table_" + getMangledHIRTypeName(mapTy.getKeyType()) + "__" +
            getMangledHIRTypeName(mapTy.getValueType()) + "_";
   }
   if (auto nullTy = mlir::dyn_cast<IR::NullableType>(type)) {
-    // "?" sanitizes to "_"
     return getMangledHIRTypeName(nullTy.getInnerType()) + "_";
   }
   if (auto stTy = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(type)) {
@@ -352,7 +329,6 @@ getOrCreateAnyVTable(mlir::ConversionPatternRewriter &rewriter,
   mlir::Type llvmPtrTy =
       mlir::LLVM::LLVMPointerType::get(rewriter.getContext());
   mlir::Type i32Ty = rewriter.getI32Type();
-
   mlir::Type underlyingTy = origMokshaTy;
   bool requiresDeref = false;
   if (auto ptrTy = mlir::dyn_cast<IR::PointerType>(origMokshaTy)) {
@@ -371,13 +347,9 @@ getOrCreateAnyVTable(mlir::ConversionPatternRewriter &rewriter,
   if (!globalOp) {
     mlir::OpBuilder::InsertionGuard guard(rewriter);
     rewriter.setInsertionPointToStart(module.getBody());
-
     auto vtableTy = mlir::LLVM::LLVMStructType::getLiteral(
         rewriter.getContext(), {i32Ty, llvmPtrTy, llvmPtrTy, llvmPtrTy});
-
     std::string baseToStrName;
-
-    // --- NEW LOGIC: Route Collections to Frontend Stringifiers ---
     std::string extStr;
     llvm::raw_string_ostream extOs(extStr);
     origMokshaTy.print(extOs);
@@ -390,7 +362,6 @@ getOrCreateAnyVTable(mlir::ConversionPatternRewriter &rewriter,
       baseToStrName =
           "__moksha_array_to_string_" + getMangledHIRTypeName(origMokshaTy);
     } else {
-      // Standard Primitive Fallbacks
       switch (typeId) {
       case 0:
         baseToStrName = "__moksha_bool_to_string";
@@ -450,8 +421,7 @@ getOrCreateAnyVTable(mlir::ConversionPatternRewriter &rewriter,
     }
 
     std::string finalToStrName = baseToStrName;
-
-    // --- [CRITICAL FIX] Generate a Thunk for Value Types ---
+    // Generate a Thunk for Value Types
     if (requiresDeref && typeId < 15) {
       finalToStrName = baseToStrName + "_thunk";
       if (!module.lookupSymbol(finalToStrName)) {
@@ -468,7 +438,6 @@ getOrCreateAnyVTable(mlir::ConversionPatternRewriter &rewriter,
         mlir::Value loadedVal = rewriter.create<mlir::LLVM::LoadOp>(
             loc, llvmUnderlyingTy, thunkBlock->getArgument(0));
 
-        // [FIX] C-ABI compliance for f16/f8 wrapped in 'any'
         mlir::Value argForCall = loadedVal;
         if (baseToStrName == "__moksha_half_to_string_abi" ||
             baseToStrName == "__moksha_quarter_to_string_abi") {
@@ -495,8 +464,8 @@ getOrCreateAnyVTable(mlir::ConversionPatternRewriter &rewriter,
         mlir::FlatSymbolRefAttr::get(rewriter.getContext(), finalToStrName);
 
     globalOp = rewriter.create<mlir::LLVM::GlobalOp>(
-        loc, vtableTy, /*isConstant=*/true, mlir::LLVM::Linkage::Internal,
-        vtableName, nullptr);
+        loc, vtableTy, true, mlir::LLVM::Linkage::Internal, vtableName,
+        nullptr);
 
     mlir::Region &region = globalOp.getInitializerRegion();
     mlir::Block *block = rewriter.createBlock(&region);
@@ -577,16 +546,13 @@ getOrCreateTrampoline(mlir::ConversionPatternRewriter &rewriter,
   bool hasCleanup = true;
   mlir::ArrayAttr catchClauses = nullptr;
 
-  // --- NEW: Detect Dummy Unwind Blocks ---
   bool isDummyBlock = false;
-
   for (auto &op : *unwindDest) {
     if (auto lpad = mlir::dyn_cast<IR::LandingPadOp>(&op)) {
       if (!lpad.getCleanup())
         hasCleanup = false;
       catchClauses = lpad.getCatchClausesAttr();
     }
-    // If the block contains ONLY a landingpad and a resume, it's a dummy!
     if (mlir::isa<IR::ResumeOp>(&op) &&
         unwindDest->getOperations().size() <= 2) {
       isDummyBlock = true;
@@ -611,7 +577,6 @@ getOrCreateTrampoline(mlir::ConversionPatternRewriter &rewriter,
   auto lpad = rewriter.create<mlir::LLVM::LandingpadOp>(loc, structTy,
                                                         hasCleanup, clauseVals);
 
-  // --- CRITICAL FIX: If it's a dummy block, just resume immediately! ---
   if (isDummyBlock) {
     rewriter.create<mlir::LLVM::ResumeOp>(loc, lpad.getResult());
     return trampoline;
@@ -627,7 +592,6 @@ getOrCreateTrampoline(mlir::ConversionPatternRewriter &rewriter,
   return trampoline;
 }
 
-// Extracted Constant Materialization to reuse in Global Table Init
 static mlir::Value
 materializeLLVMConstant(mlir::ConversionPatternRewriter &rewriter,
                         mlir::Operation *op, mlir::Type llvmType,
@@ -645,7 +609,6 @@ materializeLLVMConstant(mlir::ConversionPatternRewriter &rewriter,
     if (mlir::isa<mlir::LLVM::LLVMPointerType>(llvmType)) {
       mlir::ModuleOp module = op->getParentOfType<mlir::ModuleOp>();
 
-      // Append the null terminator
       std::string nullTermStr = strAttr.getValue().str() + '\0';
       std::string globalName =
           ".str.lit." + std::to_string(llvm::hash_value(strAttr.getValue()));
@@ -663,8 +626,8 @@ materializeLLVMConstant(mlir::ConversionPatternRewriter &rewriter,
             llvm::StringRef(nullTermStr.data(), nullTermStr.size()));
 
         globalOp = rewriter.create<mlir::LLVM::GlobalOp>(
-            loc, arrayTy, /*isConstant=*/true, mlir::LLVM::Linkage::Private,
-            globalName, nullTermAttr);
+            loc, arrayTy, true, mlir::LLVM::Linkage::Private, globalName,
+            nullTermAttr);
       }
       return rewriter.create<mlir::LLVM::AddressOfOp>(loc, llvmType,
                                                       globalOp.getSymName());
@@ -675,8 +638,6 @@ materializeLLVMConstant(mlir::ConversionPatternRewriter &rewriter,
       if (intAttr.getInt() == 0)
         return rewriter.create<mlir::LLVM::ZeroOp>(loc, llvmType);
       if (mlir::isa<mlir::LLVM::LLVMPointerType>(llvmType)) {
-        // [NUCLEAR FIX] Completely bypass the Pointer ConstantOp verifier!
-        // We create a strict i64 constant first, then cleanly IntToPtr it.
         mlir::Type i64Ty = rewriter.getI64Type();
         mlir::Value intVal = rewriter.create<mlir::LLVM::ConstantOp>(
             loc, i64Ty, rewriter.getI64IntegerAttr(intAttr.getInt()));
@@ -687,7 +648,6 @@ materializeLLVMConstant(mlir::ConversionPatternRewriter &rewriter,
         loc, llvmType, rewriter.getIntegerAttr(llvmType, intAttr.getInt()));
   }
   if (auto floatAttr = mlir::dyn_cast<mlir::FloatAttr>(attr)) {
-    // Safely apply semantic APFloat downcasting to f32/f16
     auto targetTy = mlir::cast<mlir::FloatType>(llvmType);
     llvm::APFloat apVal = floatAttr.getValue();
     bool losesInfo;
@@ -700,8 +660,6 @@ materializeLLVMConstant(mlir::ConversionPatternRewriter &rewriter,
   return rewriter.create<mlir::LLVM::ConstantOp>(loc, llvmType, attr);
 }
 
-// Bypasses LLVM 22's broken FPExt ConstantFolder by evaluating precision
-// extensions natively in MLIR.
 static mlir::Value safeUpcastFPExt(mlir::ConversionPatternRewriter &rewriter,
                                    mlir::Location loc, mlir::Value val,
                                    mlir::Type destTy) {
@@ -718,9 +676,7 @@ static mlir::Value safeUpcastFPExt(mlir::ConversionPatternRewriter &rewriter,
   return rewriter.create<mlir::LLVM::FPExtOp>(loc, destTy, val);
 }
 
-// ============================================================================
-// 4. Global Operations
-// ============================================================================
+// Global Operations
 struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
   using ConvertOpToLLVMPattern<IR::GlobalOp>::ConvertOpToLLVMPattern;
 
@@ -749,7 +705,6 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
     mlir::LLVM::Linkage linkage = mlir::LLVM::Linkage::External;
     mlir::Attribute initAttr = op.getInitialValueAttr();
 
-    // --- NEW: VTable Region Injection Flags ---
     bool generateVTableRegion = false;
     mlir::ArrayAttr vtableEntries;
 
@@ -773,9 +728,6 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
           }
           initAttr = nullptr;
         } else {
-          // --- [CRITICAL FIX] It IS a Struct/Array (e.g. VTable)! ---
-          // Route to the LLVM Global Initializer Region to bypass Attribute
-          // restrictions
           generateVTableRegion = true;
           vtableEntries = mlir::cast<mlir::ArrayAttr>(initAttr);
           initAttr = nullptr;
@@ -791,7 +743,7 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
           initAttr = nullptr;
         }
       } else if (mlir::isa<mlir::UnitAttr>(initAttr)) {
-        initAttr = nullptr; // standard zero initializer
+        initAttr = nullptr;
       } else if (auto intAttr = mlir::dyn_cast<mlir::IntegerAttr>(initAttr)) {
         if (!llvmType.isIntOrIndex()) {
           if (intAttr.getInt() == 0) {
@@ -840,10 +792,9 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
     }
 
     auto globalOp = rewriter.replaceOpWithNewOp<mlir::LLVM::GlobalOp>(
-        op, llvmType, isConstant, linkage, name, initAttr, alignment,
-        /*addrSpace=*/0, /*dsoLocal=*/false, /*threadLocal=*/threadLocal);
+        op, llvmType, isConstant, linkage, name, initAttr, alignment, 0, false,
+        threadLocal);
 
-    // Prevent forcing a zeroinitializer attribute if we are building a region!
     if (!initAttr && !generateVTableRegion) {
       globalOp->setAttr("moksha.zeroinit", rewriter.getUnitAttr());
     }
@@ -860,7 +811,6 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
       }
     }
 
-    // --- [NEW] Build the VTable using an Initializer Region! ---
     if (generateVTableRegion) {
       mlir::Region &region = globalOp.getInitializerRegion();
       mlir::Block *block = rewriter.createBlock(&region);
@@ -880,19 +830,12 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
         mlir::Value elemVal;
 
         if (mlir::isa<mlir::UnitAttr>(elemAttr)) {
-          // Generates `ptr null` natively!
           elemVal = rewriter.create<mlir::LLVM::ZeroOp>(loc, fieldTy);
         } else if (auto innerArr = mlir::dyn_cast<mlir::ArrayAttr>(elemAttr)) {
-          // Generates the `[1 x ptr] [ptr @Base.f]` native array block!
           elemVal = rewriter.create<mlir::LLVM::UndefOp>(loc, fieldTy);
           for (size_t j = 0; j < innerArr.size(); ++j) {
             if (auto symRef =
                     mlir::dyn_cast<mlir::FlatSymbolRefAttr>(innerArr[j])) {
-
-              // --- [CRITICAL FIX] ---
-              // The pre-pass C-ABI mangler misses deep attributes in arrays.
-              // We must manually sanitize the function reference here to match
-              // the renamed function definition!
               std::string rawName = symRef.getValue().str();
               for (char &c : rawName) {
                 if (c == '.' || c == '<' || c == '>')
@@ -904,8 +847,6 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
               mlir::Value fnPtr = rewriter.create<mlir::LLVM::AddressOfOp>(
                   loc, mlir::LLVM::LLVMPointerType::get(getContext()),
                   cleanSymRef);
-              // ----------------------
-
               elemVal = rewriter.create<mlir::LLVM::InsertValueOp>(
                   loc, elemVal, fnPtr,
                   llvm::ArrayRef<int64_t>{static_cast<int64_t>(j)});
@@ -922,7 +863,6 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
       rewriter.create<mlir::LLVM::ReturnOp>(loc, structVal);
     }
 
-    // --- Complex Initialization Injection (Strings, Maps, Decimals) ---
     if (generateMapInit || generateStrInit || generateDecInit) {
       auto module = globalOp->getParentOfType<mlir::ModuleOp>();
       mlir::Operation *initFunc = module.lookupSymbol("__moksha_module_init");
@@ -989,7 +929,7 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
                 mlir::Value mapPtr = mapNewCall.getResult();
                 rewriter.create<mlir::LLVM::StoreOp>(loc, mapPtr, globalAddr);
 
-                auto mapTy = llvm::dyn_cast<IR::MapType>(elementType);
+                auto mapTy = llvm::dyn_cast_or_null<IR::MapType>(elementType);
                 mlir::Type keyTy =
                     typeConverter->convertType(mapTy.getKeyType());
                 mlir::Type valTy =
@@ -1003,8 +943,6 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
                   mlir::Type i32Ty = rewriter.getI32Type();
 
                   mlir::Value dataPtr = val;
-
-                  // Only heap-allocate if it is a primitive value type
                   if (!mlir::isa<mlir::LLVM::LLVMPointerType>(val.getType())) {
                     mlir::Value nullPtr =
                         rewriter.create<mlir::LLVM::ZeroOp>(loc, llvmPtrTy);
@@ -1078,7 +1016,7 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
                 size_t strIdx = 0;
 
                 for (auto attr : mapEntries) {
-                  if (auto kvAttr = llvm::dyn_cast<mlir::ArrayAttr>(attr)) {
+                  if (auto kvAttr = llvm::dyn_cast_or_null<mlir::ArrayAttr>(attr)) {
                     if (kvAttr.size() == 2) {
                       mlir::Value kVal;
                       if (mlir::isa<mlir::UnitAttr>(kvAttr[0]) &&
@@ -1093,8 +1031,6 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
                       mlir::Value vVal = materializeLLVMConstant(
                           rewriter, globalOp, valTy, kvAttr[1]);
                       vVal = boxValue(vVal, mapTy.getValueType());
-
-                      // ABI Coercion! Spill the structs to pointers
                       mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(
                           rewriter.getContext());
                       mlir::Type i32Ty = rewriter.getI32Type();
@@ -1215,7 +1151,6 @@ struct ConstantOpLowering
     }
 
     if (auto floatAttr = mlir::dyn_cast<mlir::FloatAttr>(attr)) {
-      // Safely apply semantic APFloat downcasting for inline constants
       auto targetTy = mlir::cast<mlir::FloatType>(llvmType);
       llvm::APFloat apVal = floatAttr.getValue();
       bool losesInfo;
@@ -1257,7 +1192,6 @@ struct AllocaOpLowering : public mlir::ConvertOpToLLVMPattern<IR::AllocaOp> {
         op.getLoc(), typeConverter->convertType(op.getType()), allocatedTy,
         one);
 
-    // ---> THE FIX: Zero-initialize the allocated memory immediately <---
     mlir::Value zeroVal =
         rewriter.create<mlir::LLVM::ZeroOp>(op.getLoc(), allocatedTy);
     rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), zeroVal, llvmAlloca);
@@ -1275,17 +1209,12 @@ struct LoadOpLowering : public mlir::ConvertOpToLLVMPattern<IR::LoadOp> {
                   mlir::ConversionPatternRewriter &rewriter) const override {
 
     mlir::Value ptr = op.getOperand();
-
-    // === BOGUS ARRAY DECAY INTERCEPTION ===
-    // [CRITICAL FIX] Only intercept if the load EXPECTS to return a pointer!
     if (mlir::isa<IR::PointerType>(op.getType())) {
       if (auto gepOp = ptr.getDefiningOp<IR::GetElementPtrOp>()) {
         if (auto castOp = gepOp.getOperand(0).getDefiningOp<IR::CastOp>()) {
-          if (auto ptrTy = llvm::dyn_cast<IR::PointerType>(
+          if (auto ptrTy = llvm::dyn_cast_or_null<IR::PointerType>(
                   castOp.getOperand().getType())) {
             if (llvm::isa<IR::ArrayType>(ptrTy.getPointee())) {
-              // Bypass the load entirely! The GEP itself holds the correct
-              // pointer offset.
               rewriter.replaceOp(op, adaptor.getOperands()[0]);
               return mlir::success();
             }
@@ -1294,7 +1223,6 @@ struct LoadOpLowering : public mlir::ConvertOpToLLVMPattern<IR::LoadOp> {
       }
     }
 
-    // Standard load lowering...
     mlir::Type resTy = typeConverter->convertType(op.getType());
     rewriter.replaceOpWithNewOp<mlir::LLVM::LoadOp>(op, resTy,
                                                     adaptor.getOperands()[0]);
@@ -1308,17 +1236,14 @@ struct StoreOpLowering : public mlir::ConvertOpToLLVMPattern<IR::StoreOp> {
   matchAndRewrite(IR::StoreOp op, OpAdaptor adaptor,
                   mlir::ConversionPatternRewriter &rewriter) const override {
 
-    // Create the store operation
     auto llvmStore = rewriter.replaceOpWithNewOp<mlir::LLVM::StoreOp>(
         op, adaptor.getValue(), adaptor.getPtr());
-
-    // Dynamically calculate and enforce natural ABI alignment
-    unsigned alignment = 4; // Fallback default
+    unsigned alignment = 4;
     mlir::Type valTy = adaptor.getValue().getType();
     if (valTy.isIntOrFloat()) {
       alignment = std::max(1u, valTy.getIntOrFloatBitWidth() / 8);
     } else if (mlir::isa<mlir::LLVM::LLVMPointerType>(valTy)) {
-      alignment = 8; // 64-bit architecture pointers
+      alignment = 8;
     }
     llvmStore.setAlignment(alignment);
     if (op->hasAttr("moksha.volatile")) {
@@ -1328,9 +1253,7 @@ struct StoreOpLowering : public mlir::ConvertOpToLLVMPattern<IR::StoreOp> {
   }
 };
 
-// ============================================================================
 // Inline Assembly Lowering
-// ============================================================================
 struct InlineAsmOpLowering
     : public mlir::ConvertOpToLLVMPattern<IR::InlineAsmOp> {
   using ConvertOpToLLVMPattern<IR::InlineAsmOp>::ConvertOpToLLVMPattern;
@@ -1339,7 +1262,7 @@ struct InlineAsmOpLowering
   matchAndRewrite(IR::InlineAsmOp op, OpAdaptor adaptor,
                   mlir::ConversionPatternRewriter &rewriter) const override {
 
-    // 1. Determine the exact LLVM return type
+    // Determine the exact LLVM return type
     mlir::Type resultType;
     if (op.getNumResults() == 0) {
       resultType = mlir::LLVM::LLVMVoidType::get(getContext());
@@ -1354,17 +1277,14 @@ struct InlineAsmOpLowering
           mlir::LLVM::LLVMStructType::getLiteral(getContext(), resultTypes);
     }
 
-    // 2. Generate the native LLVM inline assembly operation
+    // Generate the native LLVM inline assembly operation
     rewriter.replaceOpWithNewOp<mlir::LLVM::InlineAsmOp>(
         op, resultType, adaptor.getOperands(), op.getAsmString(),
-        op.getConstraints(),
-        /*has_side_effects=*/op.getIsVolatileAttr() != nullptr,
-        /*is_align_stack=*/false,
-        /*tail_call_kind=*/mlir::LLVM::tailcallkind::TailCallKind::None,
-        /*asm_dialect=*/
+        op.getConstraints(), op.getIsVolatileAttr() != nullptr, false,
+        mlir::LLVM::tailcallkind::TailCallKind::None,
         mlir::LLVM::AsmDialectAttr::get(getContext(),
                                         mlir::LLVM::AsmDialect::AD_ATT),
-        /*operand_attrs=*/mlir::ArrayAttr());
+        mlir::ArrayAttr());
 
     return mlir::success();
   }
@@ -1383,20 +1303,16 @@ struct GetElementPtrOpLowering
     mlir::Type baseType = base.getType();
     mlir::Type origMokshaBaseTy = op->getOperand(0).getType();
 
-    // 1. JAVA-STYLE HEAP POINTER EXTRACTION
     if (llvm::isa<IR::SliceType>(origMokshaBaseTy)) {
       mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
       if (base.getType() != llvmPtrTy) {
         base = rewriter.create<mlir::LLVM::BitcastOp>(op.getLoc(), llvmPtrTy,
                                                       base);
       }
-      // Dynamically fetch the data buffer from the MokshaSlice heap object
       base = createRuntimeCall(rewriter, op.getLoc(), llvmPtrTy,
                                "moksha_rt_array_data", {base});
       baseType = base.getType();
-    }
-    // 2. AGGREGATE SPILL
-    else if (!llvm::isa<mlir::LLVM::LLVMPointerType>(baseType)) {
+    } else if (!llvm::isa<mlir::LLVM::LLVMPointerType>(baseType)) {
       mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
           op.getLoc(), rewriter.getI64Type(), rewriter.getI64IntegerAttr(1));
       mlir::Value allocaPtr = rewriter.create<mlir::LLVM::AllocaOp>(
@@ -1409,11 +1325,8 @@ struct GetElementPtrOpLowering
     auto indices = adaptor.getOperands().drop_front(1);
     mlir::Type pointeeTy;
 
-    // 3. POINTEE INFERENCE [FIX APPLIED HERE]
-    if (auto basePtrTy = llvm::dyn_cast<IR::PointerType>(origMokshaBaseTy)) {
+    if (auto basePtrTy = llvm::dyn_cast_or_null<IR::PointerType>(origMokshaBaseTy)) {
       auto pointee = basePtrTy.getPointee();
-
-      // If pointee is NoneType, treat as i8 (byte pointer)
       if (mlir::isa<mlir::NoneType>(pointee)) {
         pointeeTy = rewriter.getI8Type();
       } else {
@@ -1425,8 +1338,6 @@ struct GetElementPtrOpLowering
           pointee.print(os);
           if (typeStr.find("slice") != std::string::npos ||
               typeStr.find("array") != std::string::npos) {
-            // Force a dummy 16-byte struct so GEP correctly returns a size of
-            // 16!
             pointeeTy = mlir::LLVM::LLVMStructType::getLiteral(
                 getContext(), {rewriter.getI64Type(), rewriter.getI64Type()});
           }
@@ -1442,8 +1353,6 @@ struct GetElementPtrOpLowering
     }
 
     llvm::SmallVector<mlir::LLVM::GEPArg, 4> gepArgs;
-
-    // Fold ConstantOps into strict GEPArgs
     for (mlir::Value idxVal : indices) {
       if (auto constOp = idxVal.getDefiningOp<mlir::LLVM::ConstantOp>()) {
         if (auto intAttr =
@@ -1471,8 +1380,6 @@ struct ExtractValueOpLowering
                   mlir::ConversionPatternRewriter &rewriter) const override {
 
     mlir::Value aggVal = adaptor.getAggregate();
-
-    // [FIX] Bypass extractvalue for types lowered to flat pointers
     if (mlir::isa<mlir::LLVM::LLVMPointerType>(aggVal.getType())) {
       mlir::Value ptr = aggVal;
       mlir::Type expectedType = typeConverter->convertType(op.getType());
@@ -1486,12 +1393,9 @@ struct ExtractValueOpLowering
 
     mlir::Value ext = rewriter.create<mlir::LLVM::ExtractValueOp>(
         op.getLoc(), aggVal, op.getIndex());
-
-    // Protect against silent type mismatches triggering conversion casts
     mlir::Type expectedType = typeConverter->convertType(op.getType());
     mlir::Type extractedType = ext.getType();
 
-    // [FIX] Abort coercion logic if either type is null!
     if (expectedType && extractedType && extractedType != expectedType) {
       if (mlir::isa<mlir::IntegerType>(extractedType) &&
           mlir::isa<mlir::IntegerType>(expectedType)) {
@@ -1533,8 +1437,6 @@ struct InsertValueOpLowering
                   mlir::ConversionPatternRewriter &rewriter) const override {
 
     mlir::Type dstType = typeConverter->convertType(op.getType());
-
-    // Safely extract from the generic operand array to avoid ODS naming issues
     auto operands = adaptor.getOperands();
     if (operands.size() < 2)
       return mlir::failure();
@@ -1543,7 +1445,6 @@ struct InsertValueOpLowering
     mlir::Value val = operands[1];
     int64_t idx = op.getIndex();
 
-    // Auto-cast values to match the strict struct field types
     if (auto structTy = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(dstType)) {
       mlir::Type elemTy = structTy.getBody()[idx];
       if (val.getType() != elemTy) {
@@ -1570,9 +1471,7 @@ struct InsertValueOpLowering
   }
 };
 
-// ============================================================================
 // Casts & Address
-// ============================================================================
 struct BitcastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::BitcastOp> {
   using ConvertOpToLLVMPattern<IR::BitcastOp>::ConvertOpToLLVMPattern;
 
@@ -1603,8 +1502,6 @@ struct BitcastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::BitcastOp> {
         if (auto intAttr =
                 mlir::dyn_cast<mlir::IntegerAttr>(constOp.getValue())) {
           llvm::APInt api = intAttr.getValue();
-          // APFloat constructor from APInt performs an exact bitwise memory
-          // copy
           llvm::APFloat apf(
               mlir::cast<mlir::FloatType>(dstType).getFloatSemantics(), api);
           rewriter.replaceOpWithNewOp<mlir::LLVM::ConstantOp>(
@@ -1713,7 +1610,7 @@ struct BitcastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::BitcastOp> {
             rewriter.create<mlir::LLVM::BitcastOp>(op.getLoc(), dstType, val);
       }
 
-      // [FIX] True F8 Simulation: Masking out lower mantissa bits for f16 -> f8
+      // True F8 Simulation: Masking out lower mantissa bits for f16 -> f8
       mlir::Type origDstType = op.getResult().getType();
       if (dstW == 16 && (mlir::isa<mlir::Float8E5M2Type>(origDstType) ||
                          mlir::isa<mlir::Float8E4M3FNType>(origDstType))) {
@@ -1752,7 +1649,7 @@ struct BitcastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::BitcastOp> {
             op.getLoc(), dstType, currentVal);
       }
 
-      // [FIX] True F8 Simulation: Apply the mask after truncation
+      // True F8 Simulation: Apply the mask after truncation
       mlir::Type origDstType = op.getResult().getType();
       if (dstW == 16 && (mlir::isa<mlir::Float8E5M2Type>(origDstType) ||
                          mlir::isa<mlir::Float8E4M3FNType>(origDstType))) {
@@ -1791,8 +1688,6 @@ struct BitcastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::BitcastOp> {
       return mlir::success();
     }
 
-    // [FIX] Catch implicit numeric-to-decimal coercions improperly emitted as
-    // bitcasts
     if (srcType.isIntOrFloat() &&
         mlir::isa<moksha::IR::DecimalType>(origDstType)) {
       auto decTy = mlir::cast<moksha::IR::DecimalType>(origDstType);
@@ -1830,7 +1725,7 @@ struct BitcastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::BitcastOp> {
       return mlir::success();
     }
 
-    // [FIX] Pointer -> Aggregate (Dereference load instead of illegal bitcast)
+    // Pointer -> Aggregate (Dereference load instead of illegal bitcast)
     if (mlir::isa<mlir::LLVM::LLVMPointerType>(srcType) &&
         (mlir::isa<mlir::LLVM::LLVMStructType>(dstType) ||
          mlir::isa<mlir::LLVM::LLVMArrayType>(dstType))) {
@@ -1843,9 +1738,7 @@ struct BitcastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::BitcastOp> {
              mlir::isa<mlir::LLVM::LLVMArrayType>(t);
     };
 
-    // --- [CRITICAL FIX] Universal Aggregate Coercion ---
-    // Safely reinterprets Ints/Floats <-> Structs using the stack,
-    // bypassing the invalid LLVM bitcast verifier restrictions.
+    // Universal Aggregate Coercion
     if (isAggregate(srcType) || isAggregate(dstType)) {
       mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
       mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
@@ -1884,9 +1777,7 @@ struct CastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CastOp> {
     mlir::Type origSrcType = op.getValue().getType();
     mlir::Type origDstType = op.getType();
 
-    // ========================================================================
     // WINDOWS MINGW FPU TRAP BYPASS
-    // ========================================================================
     if (auto constOp =
             adaptor.getValue().getDefiningOp<mlir::LLVM::ConstantOp>()) {
 
@@ -1909,7 +1800,7 @@ struct CastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CastOp> {
         if (auto floatAttr =
                 mlir::dyn_cast<mlir::FloatAttr>(constOp.getValue())) {
           double fVal = floatAttr.getValue().convertToDouble();
-          int64_t intVal = static_cast<int64_t>(fVal); // Safe C++ cast
+          int64_t intVal = static_cast<int64_t>(fVal);
           rewriter.replaceOpWithNewOp<mlir::LLVM::ConstantOp>(
               op, dstType, rewriter.getIntegerAttr(dstType, intVal));
           return mlir::success();
@@ -1942,9 +1833,7 @@ struct CastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CastOp> {
       }
     }
 
-    // ========================================================================
     // AnyType Boxing (Value -> Any)
-    // ========================================================================
     if (mlir::isa<IR::AnyType>(origDstType)) {
       auto loc = op.getLoc();
       mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
@@ -1955,13 +1844,11 @@ struct CastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CastOp> {
             rewriter.create<mlir::LLVM::BitcastOp>(loc, llvmPtrTy, dataPtr);
       }
 
-      // Extract the underlying concrete MLIR type for the thunk
       mlir::Type llvmUnderlyingTy = typeConverter->convertType(origSrcType);
       if (auto ptrTy = mlir::dyn_cast<IR::PointerType>(origSrcType)) {
         llvmUnderlyingTy = typeConverter->convertType(ptrTy.getPointee());
       }
 
-      // Map the original source type to a valid VTable
       mlir::Value vtablePtr =
           getOrCreateAnyVTable(rewriter, loc, origSrcType, llvmUnderlyingTy);
 
@@ -1977,17 +1864,12 @@ struct CastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CastOp> {
       return mlir::success();
     }
 
-    // ========================================================================
     // AnyType Unboxing (Any -> Value)
-    // ========================================================================
     if (mlir::isa<IR::AnyType>(origSrcType)) {
       auto loc = op.getLoc();
 
-      // Extract the data pointer (Index 0) from the fat pointer struct
       mlir::Value dataPtr = rewriter.create<mlir::LLVM::ExtractValueOp>(
           loc, adaptor.getValue(), llvm::ArrayRef<int64_t>{0});
-
-      // Cast it back to the expected concrete type
       if (dataPtr.getType() != dstType) {
         dataPtr = rewriter.create<mlir::LLVM::BitcastOp>(loc, dstType, dataPtr);
       }
@@ -1996,9 +1878,7 @@ struct CastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CastOp> {
       return mlir::success();
     }
 
-    // ========================================================================
-    // [CRITICAL FIX]: Array to Slice Cast (Stack to Heap Migration)
-    // ========================================================================
+    // Array to Slice Cast (Stack to Heap Migration)
     if (auto arrayTy = mlir::dyn_cast<IR::ArrayType>(origSrcType)) {
       if (mlir::isa<IR::SliceType>(origDstType)) {
         auto loc = op.getLoc();
@@ -2056,7 +1936,6 @@ struct CastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CastOp> {
       }
     }
 
-    // If we are casting an integer to !moksha.ptr<i8> (the MLIR string type)
     if (origSrcType.isIntOrIndex() && mlir::isa<IR::PointerType>(origDstType)) {
       auto ptrTy = mlir::cast<IR::PointerType>(origDstType);
 
@@ -2336,13 +2215,9 @@ struct CastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CastOp> {
         mlir::isa<mlir::LLVM::LLVMStructType>(dstType)) {
       auto structTy = mlir::cast<mlir::LLVM::LLVMStructType>(dstType);
 
-      // ======================================================================
-      // [CRITICAL FIX] Ensure this is a SLICE struct {ptr, i64} and not
-      // Any/Closure!
-      // ======================================================================
       if (structTy.getBody().size() == 2 &&
           mlir::isa<mlir::LLVM::LLVMPointerType>(structTy.getBody()[0]) &&
-          structTy.getBody()[1].isInteger(64)) { // <-- Protects getIntegerAttr!
+          structTy.getBody()[1].isInteger(64)) {
 
         mlir::Value slice =
             rewriter.create<mlir::LLVM::UndefOp>(op.getLoc(), dstType);
@@ -2445,7 +2320,7 @@ struct CastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CastOp> {
                                                           adaptor.getValue());
         }
       } else {
-        rewriter.replaceOp(op, adaptor.getValue()); // No-op if same size
+        rewriter.replaceOp(op, adaptor.getValue());
       }
       return mlir::success();
     }
@@ -2492,8 +2367,6 @@ struct CastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CastOp> {
             op.getLoc(), dstType, currentVal);
       }
 
-      // [FIX] True F8 Downcast Simulation replacing the artificial NaN
-      // poisoning
       bool isTargetQuarter = mlir::isa<mlir::Float8E5M2Type>(origDstType) ||
                              mlir::isa<mlir::Float8E4M3FNType>(origDstType);
 
@@ -2570,22 +2443,16 @@ struct CastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CastOp> {
         }
       } else if (isAggregate(srcType) || isAggregate(dstType)) {
         rewriter.replaceOpWithNewOp<mlir::LLVM::ZeroOp>(op, dstType);
-      }
-      // Standard Primitive/Pointer BitCast
-      else {
+      } else {
         if (mlir::isa<mlir::LLVM::LLVMPointerType>(srcType) &&
             mlir::isa<mlir::LLVM::LLVMFunctionType>(dstType)) {
           rewriter.replaceOp(op, adaptor.getValue());
         } else {
-          // [CRITICAL FIX] Absolute zero-tolerance policy for aggregate
-          // bitcasts
           if (mlir::isa<mlir::LLVM::LLVMStructType>(srcType) ||
               mlir::isa<mlir::LLVM::LLVMArrayType>(srcType) ||
               mlir::isa<mlir::LLVM::LLVMStructType>(dstType) ||
               mlir::isa<mlir::LLVM::LLVMArrayType>(dstType)) {
 
-            // If we are forced into an aggregate bitcast, we MUST route it
-            // through memory to appease the LLVM verifier.
             mlir::Type llvmPtrTy =
                 mlir::LLVM::LLVMPointerType::get(getContext());
             mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
@@ -2596,14 +2463,12 @@ struct CastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CastOp> {
             rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(),
                                                  adaptor.getValue(), allocaSrc);
 
-            // Only bitcast the pointer, NEVER the struct!
             mlir::Value castPtr = rewriter.create<mlir::LLVM::BitcastOp>(
                 op.getLoc(), llvmPtrTy, allocaSrc);
             mlir::Value loadedDst = rewriter.create<mlir::LLVM::LoadOp>(
                 op.getLoc(), dstType, castPtr);
             rewriter.replaceOp(op, loadedDst);
           } else {
-            // Safe for primitives and pointers
             rewriter.replaceOpWithNewOp<mlir::LLVM::BitcastOp>(
                 op, dstType, adaptor.getValue());
           }
@@ -2628,14 +2493,12 @@ struct UpcastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::UpcastOp> {
     mlir::Value val = adaptor.getOperand();
     mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
 
-    // Extract the byte offset if provided by the frontend.
-    // Single inheritance or the primary parent always has an offset of 0.
     int64_t byteOffset = 0;
     if (auto offsetAttr = op->getAttrOfType<mlir::IntegerAttr>("offset")) {
       byteOffset = offsetAttr.getInt();
     }
 
-    // --- Fast Path: Single Inheritance / Primary Parent ---
+    // Fast Path: Single Inheritance / Primary Parent
     // No byte shift is required, just reinterpret the pointer type.
     if (byteOffset == 0) {
       if (val.getType() != dstType) {
@@ -2646,7 +2509,7 @@ struct UpcastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::UpcastOp> {
       return mlir::success();
     }
 
-    // --- Multiple Inheritance Path: Apply Byte Offset ---
+    // Multiple Inheritance Path: Apply Byte Offset
     // 1. Ensure the value is a standard opaque pointer
     if (val.getType() != llvmPtrTy) {
       val = rewriter.create<mlir::LLVM::BitcastOp>(loc, llvmPtrTy, val);
@@ -2674,9 +2537,7 @@ struct UpcastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::UpcastOp> {
   }
 };
 
-// ============================================================================
 // AnyCastOp Lowering (Boxing & Unboxing the Fat Pointer)
-// ============================================================================
 struct AnyCastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::AnyCastOp> {
   using ConvertOpToLLVMPattern<IR::AnyCastOp>::ConvertOpToLLVMPattern;
 
@@ -2692,7 +2553,7 @@ struct AnyCastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::AnyCastOp> {
 
     mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
 
-    // --- BOXING (Value -> Any) ---
+    // BOXING (Value -> Any)
     if (mlir::isa<IR::AnyType>(origDstType)) {
       mlir::Value dataPtr = val;
 
@@ -2724,7 +2585,7 @@ struct AnyCastOpLowering : public mlir::ConvertOpToLLVMPattern<IR::AnyCastOp> {
       return mlir::success();
     }
 
-    // --- UNBOXING (Any -> Value) ---
+    // UNBOXING (Any -> Value)
     if (mlir::isa<IR::AnyType>(origSrcType)) {
       // Extract the data pointer (Index 0) from the fat pointer struct
       mlir::Value dataPtr = rewriter.create<mlir::LLVM::ExtractValueOp>(
@@ -2749,12 +2610,8 @@ struct AddressOfOpLowering
   mlir::LogicalResult
   matchAndRewrite(IR::AddressOfOp op, OpAdaptor adaptor,
                   mlir::ConversionPatternRewriter &rewriter) const override {
-
-    // Explicitly create a FlatSymbolRefAttr instead of passing the string
-    // directly
     auto symRef =
         mlir::FlatSymbolRefAttr::get(getContext(), op.getGlobalName());
-
     rewriter.replaceOpWithNewOp<mlir::LLVM::AddressOfOp>(
         op, typeConverter->convertType(op.getType()), symRef);
     return mlir::success();
@@ -2775,7 +2632,7 @@ struct BinaryOpLowering : public mlir::ConvertOpToLLVMPattern<MokshaOp> {
           structTy.getBody()[0].isInteger(128) &&
           structTy.getBody()[1].isInteger(32)) {
 
-        llvm::StringRef rtFunc = "__moksha_dec_add"; // Fallback
+        llvm::StringRef rtFunc = "__moksha_dec_add";
         if (std::is_same_v<MokshaOp, IR::SubOp>)
           rtFunc = "__moksha_dec_sub";
         else if (std::is_same_v<MokshaOp, IR::MulOp>)
@@ -2809,9 +2666,6 @@ struct BinaryOpLowering : public mlir::ConvertOpToLLVMPattern<MokshaOp> {
       }
     }
 
-    // --- [CRITICAL FIX] LLVM 22 ConstantFold Crash Bypass ---
-    // Pre-fold constants here so the LLVM translator never sees a dual-constant
-    // math operation!
     if (auto lhsConst =
             adaptor.getLhs().template getDefiningOp<mlir::LLVM::ConstantOp>()) {
       if (auto rhsConst =
@@ -2833,7 +2687,7 @@ struct BinaryOpLowering : public mlir::ConvertOpToLLVMPattern<MokshaOp> {
                 if (!rVal.isZero())
                   lVal.divide(rVal, llvm::APFloat::rmNearestTiesToEven);
                 else
-                  return mlir::failure(); // Let runtime handle Div By Zero
+                  return mlir::failure();
               } else if constexpr (std::is_same_v<MokshaOp, IR::ModOp>) {
                 if (!rVal.isZero())
                   lVal.remainder(rVal);
@@ -2881,15 +2735,11 @@ struct BinaryOpLowering : public mlir::ConvertOpToLLVMPattern<MokshaOp> {
         }
       }
     }
-    // --------------------------------------------------------
 
     if (mlir::isa<mlir::FloatType>(resTy)) {
       unsigned width = resTy.getIntOrFloatBitWidth();
       if (width < 32) {
         mlir::Type f32Ty = rewriter.getF32Type();
-
-        // [FIX] Use the safe MLIR upcaster instead of generating FPExtOps
-        // directly
         mlir::Value lhs32 =
             safeUpcastFPExt(rewriter, op.getLoc(), adaptor.getLhs(), f32Ty);
         mlir::Value rhs32 =
@@ -2934,7 +2784,7 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
     mlir::Type ty = adaptor.getLhs().getType();
     uint32_t pred = op.getPredicate(); // 0=EQ, 1=NE, 2=LT, 3=LE, 4=GT, 5=GE
 
-    // --- [FIX] Intercept Decimal Comparisons ---
+    // Intercept Decimal Comparisons
     if (auto structTy = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(ty)) {
       if (structTy.getBody().size() == 2 &&
           structTy.getBody()[0].isInteger(128)) {
@@ -3040,8 +2890,6 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
       // Upcast f8/f16 to f32 before comparison
       if (width < 32) {
         mlir::Type f32Ty = rewriter.getF32Type();
-
-        // [FIX] Use the safe MLIR upcaster
         lhs = safeUpcastFPExt(rewriter, op.getLoc(), lhs, f32Ty);
         rhs = safeUpcastFPExt(rewriter, op.getLoc(), rhs, f32Ty);
       }
@@ -3073,9 +2921,6 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
       }
       rewriter.replaceOpWithNewOp<mlir::LLVM::FCmpOp>(op, llvmPred, lhs, rhs);
     } else if (mlir::isa<mlir::LLVM::LLVMPointerType>(ty)) {
-      // ----------------------------------------------------------------------
-      // [FIX] Pointer Equality (Reference Comparison)
-      // ----------------------------------------------------------------------
       mlir::LLVM::ICmpPredicate llvmPred;
       switch (pred) {
       case 0:
@@ -3084,9 +2929,6 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
       case 1:
         llvmPred = mlir::LLVM::ICmpPredicate::ne;
         break;
-      // Note: > and < on object pointers is generally unsafe/undefined in
-      // high-level semantics, but if emitted, we treat them as unsigned address
-      // comparisons.
       case 2:
         llvmPred = mlir::LLVM::ICmpPredicate::ult;
         break;
@@ -3108,11 +2950,7 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
 
     } else if (mlir::isa<mlir::LLVM::LLVMStructType>(ty) ||
                mlir::isa<mlir::LLVM::LLVMArrayType>(ty)) {
-      // ----------------------------------------------------------------------
-      // [FIX] Struct / Array by-value Equality (Structural Comparison)
-      // ----------------------------------------------------------------------
       if (pred != 0 && pred != 1) {
-        // We only support == and != for raw structs in LLVM IR
         op.emitError("Relational comparisons (<, >) on raw structs/arrays are "
                      "not supported natively.");
         return mlir::failure();
@@ -3123,7 +2961,6 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
       mlir::Type i32Ty = rewriter.getI32Type();
       mlir::Type i64Ty = rewriter.getI64Type();
 
-      // 1. Allocate stack space for the two structs
       mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
           loc, i32Ty, rewriter.getI32IntegerAttr(1));
       mlir::Value aPtr =
@@ -3131,23 +2968,18 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
       mlir::Value bPtr =
           rewriter.create<mlir::LLVM::AllocaOp>(loc, ptrTy, ty, one);
 
-      // 2. Store the values to the stack
       rewriter.create<mlir::LLVM::StoreOp>(loc, adaptor.getLhs(), aPtr);
       rewriter.create<mlir::LLVM::StoreOp>(loc, adaptor.getRhs(), bPtr);
 
-      // 3. Compute size using LLVM's DataLayout equivalent trick (Null GEP)
       mlir::Value nullPtr = rewriter.create<mlir::LLVM::ZeroOp>(loc, ptrTy);
       mlir::Value gep = rewriter.create<mlir::LLVM::GEPOp>(
           loc, ptrTy, ty, nullPtr, llvm::ArrayRef<mlir::LLVM::GEPArg>{1});
       mlir::Value structSize =
           rewriter.create<mlir::LLVM::PtrToIntOp>(loc, i64Ty, gep);
 
-      // 4. Call standard C memcmp (we use our internal utility if needed, but
-      // memcmp is standard)
       mlir::Value callRes = createRuntimeCall(rewriter, loc, i32Ty, "memcmp",
                                               {aPtr, bPtr, structSize});
 
-      // 5. Compare result of memcmp with 0
       mlir::Value zero = rewriter.create<mlir::LLVM::ConstantOp>(
           loc, i32Ty, rewriter.getI32IntegerAttr(0));
 
@@ -3159,9 +2991,6 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
                                                       zero);
 
     } else {
-      // ----------------------------------------------------------------------
-      // Default: Integer / Bool Comparison
-      // ----------------------------------------------------------------------
       bool isUnsigned = ty.isUnsignedInteger() || ty.isInteger(1);
       mlir::LLVM::ICmpPredicate llvmPred;
       switch (pred) {
@@ -3219,8 +3048,6 @@ struct RetainOpLowering : public mlir::ConvertOpToLLVMPattern<IR::RetainOp> {
     mlir::Value val = adaptor.getValue();
     mlir::Type origTy = op->getOperand(0).getType();
 
-    // [CRITICAL FIX]: Abort gracefully if the type isn't a heap pointer!
-    // We cannot retain primitives or stack-allocated value structs.
     if (!mlir::isa<IR::AnyType>(origTy) &&
         !mlir::isa<IR::ClosureType>(origTy) &&
         !mlir::isa<mlir::LLVM::LLVMPointerType>(val.getType())) {
@@ -3260,7 +3087,6 @@ struct ReleaseOpLowering : public mlir::ConvertOpToLLVMPattern<IR::ReleaseOp> {
     mlir::Value val = adaptor.getValue();
     mlir::Type origTy = op->getOperand(0).getType();
 
-    // [CRITICAL FIX]: Abort gracefully if the type isn't a heap pointer!
     if (!mlir::isa<IR::AnyType>(origTy) &&
         !mlir::isa<IR::ClosureType>(origTy) &&
         !mlir::isa<mlir::LLVM::LLVMPointerType>(val.getType())) {
@@ -3328,9 +3154,7 @@ struct ReleaseOpLowering : public mlir::ConvertOpToLLVMPattern<IR::ReleaseOp> {
   }
 };
 
-// ============================================================================
 // Weak ARC Lowering
-// ============================================================================
 struct StoreWeakOpLowering
     : public mlir::ConvertOpToLLVMPattern<IR::StoreWeakOp> {
   using ConvertOpToLLVMPattern<IR::StoreWeakOp>::ConvertOpToLLVMPattern;
@@ -3342,7 +3166,6 @@ struct StoreWeakOpLowering
     mlir::Value ptr = adaptor.getPtr();
     mlir::Value val = adaptor.getValue();
 
-    // Standardize to raw opaque pointers for the C runtime API (void**, void*)
     if (ptr.getType() != llvmPtrTy) {
       ptr = rewriter.create<mlir::LLVM::BitcastOp>(op.getLoc(), llvmPtrTy, ptr);
     }
@@ -3350,7 +3173,6 @@ struct StoreWeakOpLowering
       val = rewriter.create<mlir::LLVM::BitcastOp>(op.getLoc(), llvmPtrTy, val);
     }
 
-    // Call: void moksha_rt_store_weak(void **dest, void *obj)
     createRuntimeCall(rewriter, op.getLoc(), "moksha_rt_store_weak", {},
                       {ptr, val});
     rewriter.eraseOp(op);
@@ -3372,7 +3194,6 @@ struct LoadWeakOpLowering
       ptr = rewriter.create<mlir::LLVM::BitcastOp>(op.getLoc(), llvmPtrTy, ptr);
     }
 
-    // Call: void* moksha_rt_load_weak(void **src)
     mlir::Value loaded = createRuntimeCall(rewriter, op.getLoc(), llvmPtrTy,
                                            "moksha_rt_load_weak", {ptr});
 
@@ -3387,37 +3208,28 @@ struct LoadWeakOpLowering
   }
 };
 
-// ============================================================================
 // Throw Op Lowering (Exception Control Flow)
-// ============================================================================
 struct ThrowOpLowering : public mlir::ConvertOpToLLVMPattern<IR::ThrowOp> {
   using ConvertOpToLLVMPattern<IR::ThrowOp>::ConvertOpToLLVMPattern;
 
   mlir::LogicalResult
   matchAndRewrite(IR::ThrowOp op, OpAdaptor adaptor,
                   mlir::ConversionPatternRewriter &rewriter) const override {
-
     mlir::Location loc = op.getLoc();
     mlir::Type llvmVoidTy = mlir::LLVM::LLVMVoidType::get(getContext());
-
-    // [FIX 1]: Define the pointer type for the exception payload
     mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
-
     auto module = op->getParentOfType<mlir::ModuleOp>();
 
     if (!module.lookupSymbol("moksha_rt_throw")) {
       mlir::OpBuilder::InsertionGuard guard(rewriter);
       rewriter.setInsertionPointToStart(module.getBody());
 
-      // [FIX 2]: Add llvmPtrTy to the function signature
       auto fnType =
           mlir::LLVM::LLVMFunctionType::get(llvmVoidTy, {llvmPtrTy}, false);
       rewriter.create<mlir::LLVM::LLVMFuncOp>(loc, "moksha_rt_throw", fnType);
     }
 
-    // [FIX 3]: Grab the actual exception payload from the operation's operands
     mlir::Value payload = adaptor.getOperands()[0];
-
     if (op->getNumSuccessors() > 0) {
       mlir::Block *unwindDest = op.getSuccessor(0);
       mlir::Block *actualUnwindDest =
@@ -3429,8 +3241,6 @@ struct ThrowOpLowering : public mlir::ConvertOpToLLVMPattern<IR::ThrowOp> {
       rewriter.create<mlir::LLVM::UnreachableOp>(loc);
 
       rewriter.setInsertionPoint(op);
-
-      // [FIX 4]: Pass the payload into the InvokeOp's argument list
       auto invokeOp = rewriter.replaceOpWithNewOp<mlir::LLVM::InvokeOp>(
           op, mlir::TypeRange{},
           mlir::SymbolRefAttr::get(getContext(), "moksha_rt_throw"),
@@ -3440,13 +3250,8 @@ struct ThrowOpLowering : public mlir::ConvertOpToLLVMPattern<IR::ThrowOp> {
       auto fnType =
           mlir::LLVM::LLVMFunctionType::get(llvmVoidTy, {llvmPtrTy}, false);
       invokeOp->setAttr("callee_type", mlir::TypeAttr::get(fnType));
-
     } else {
-      // Escaping exception! Call the unwinder directly to propagate to the
-      // caller.
       auto symRef = mlir::SymbolRefAttr::get(getContext(), "moksha_rt_throw");
-
-      // [FIX 5]: Pass the payload into the CallOp's argument list
       auto callOp = rewriter.create<mlir::LLVM::CallOp>(
           loc, mlir::TypeRange{}, symRef, mlir::ValueRange{payload});
 
@@ -3467,18 +3272,12 @@ struct ResumeOpLowering : public mlir::ConvertOpToLLVMPattern<IR::ResumeOp> {
   matchAndRewrite(IR::ResumeOp op, OpAdaptor adaptor,
                   mlir::ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-
-    // Synthesize the {ptr, i32} struct expected by LLVM's resume instruction
     mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
     mlir::Type i32Ty = rewriter.getI32Type();
     mlir::Type structTy = mlir::LLVM::LLVMStructType::getLiteral(
         getContext(), {llvmPtrTy, i32Ty});
 
-    // Fetch the authentic landingpad result that getOrCreateTrampoline saved
     mlir::Value storage = getLpadStorage(rewriter, loc, op, structTy);
-
-    // Load and resume the actual LLVM exception object so the inliner preserves
-    // the block!
     mlir::Value authenticLpad =
         rewriter.create<mlir::LLVM::LoadOp>(loc, structTy, storage);
     rewriter.replaceOpWithNewOp<mlir::LLVM::ResumeOp>(op, authenticLpad);
@@ -3498,22 +3297,15 @@ struct LandingPadOpLowering
     mlir::Type expectedTy = typeConverter->convertType(op.getType());
     mlir::Type i8PtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
 
-    // Dynamically Inject Missing Global
     auto module = op->getParentOfType<mlir::ModuleOp>();
     if (!module.lookupSymbol("__moksha_ex_payload")) {
       mlir::OpBuilder::InsertionGuard guard(rewriter);
       rewriter.setInsertionPointToStart(module.getBody());
-
-      // Inject the thread-local exception payload variable
       rewriter.create<mlir::LLVM::GlobalOp>(
-          op.getLoc(), i8PtrTy, /*isConstant=*/false,
-          mlir::LLVM::Linkage::Internal, "__moksha_ex_payload", nullptr,
-          /*alignment=*/0, /*addrSpace=*/0,
-          /*dsoLocal=*/false, /*threadLocal=*/true);
+          op.getLoc(), i8PtrTy, false, mlir::LLVM::Linkage::Internal,
+          "__moksha_ex_payload", nullptr, 0, 0, false, true);
     }
 
-    // Extract payload directly from the global, bypassing LLVM landingpad
-    // restrictions
     auto globalAddr = rewriter.create<mlir::LLVM::AddressOfOp>(
         op.getLoc(), i8PtrTy, "__moksha_ex_payload");
     mlir::Value payload =
@@ -3526,7 +3318,6 @@ struct LandingPadOpLowering
       }
       rewriter.replaceOp(op, payload);
     } else {
-      // Pack it into the {ptr, i32} struct if something expects it
       mlir::Type i32Ty = rewriter.getI32Type();
       mlir::Type structTy = mlir::LLVM::LLVMStructType::getLiteral(
           getContext(), {i8PtrTy, i32Ty});
@@ -3545,9 +3336,7 @@ struct LandingPadOpLowering
   }
 };
 
-// ============================================================================
 // Closure Lowering
-// ============================================================================
 struct MakeClosureOpLowering
     : public mlir::ConvertOpToLLVMPattern<IR::MakeClosureOp> {
   using ConvertOpToLLVMPattern<IR::MakeClosureOp>::ConvertOpToLLVMPattern;
@@ -3559,8 +3348,7 @@ struct MakeClosureOpLowering
     mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
     mlir::Type expectedRetTy = typeConverter->convertType(op.getType());
 
-    // 1. Allocate a temporary stack slot for the struct (Bypassing UndefOp
-    // bugs)
+    // 1. Allocate a temporary stack slot for the struct
     mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
     mlir::Value closureAlloc = rewriter.create<mlir::LLVM::AllocaOp>(
@@ -3580,7 +3368,7 @@ struct MakeClosureOpLowering
     if (captures.empty()) {
       envPtr = rewriter.create<mlir::LLVM::ZeroOp>(loc, llvmPtrTy);
     } else {
-      envPtr = captures[0]; // The first capture is the Env pointer
+      envPtr = captures[0];
       if (envPtr.getType() != llvmPtrTy) {
         envPtr = rewriter.create<mlir::LLVM::BitcastOp>(loc, llvmPtrTy, envPtr);
       }
@@ -3600,9 +3388,7 @@ struct MakeClosureOpLowering
   }
 };
 
-// ============================================================================
 // Variadic Call Lowering
-// ============================================================================
 struct CustomCallOpLowering
     : public mlir::ConvertOpToLLVMPattern<mlir::func::CallOp> {
   using ConvertOpToLLVMPattern<mlir::func::CallOp>::ConvertOpToLLVMPattern;
@@ -3613,7 +3399,7 @@ struct CustomCallOpLowering
 
     llvm::StringRef callee = op.getCallee();
 
-    // === AVX SIMD VECTORIZATION INTERCEPTS ===
+    // AVX SIMD VECTORIZATION INTERCEPTS
     if (callee == "llvm.x86.avx.loadu.ps.256" ||
         callee == "llvm.x86.avx.add.ps.256" ||
         callee == "llvm.x86.avx.mul.ps.256" ||
@@ -3623,8 +3409,6 @@ struct CustomCallOpLowering
       auto loc = op.getLoc();
       mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
       mlir::Type f32Ty = rewriter.getF32Type();
-
-      // MLIR VectorType represents LLVM's `<N x type>` SIMD hardware registers
       mlir::Type vecTy = mlir::VectorType::get({8}, f32Ty);
       mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
           loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
@@ -3711,13 +3495,12 @@ struct CustomCallOpLowering
       }
     }
 
-    // === PREVENT STACK-FREE CRASHES ===
+    // PREVENT STACK-FREE CRASHES
     if (callee == "__moksha_free") {
       auto loc = op.getLoc();
       mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
       mlir::Value ptrToFree = adaptor.getOperands()[0];
 
-      // Ensure it's an opaque pointer for the runtime
       if (ptrToFree.getType() != llvmPtrTy) {
         ptrToFree =
             rewriter.create<mlir::LLVM::BitcastOp>(loc, llvmPtrTy, ptrToFree);
@@ -3732,12 +3515,10 @@ struct CustomCallOpLowering
       return mlir::success();
     }
 
-    // === DYNAMIC ARRAY SPREAD / ALLOC INTERCEPTION ===
+    // DYNAMIC ARRAY SPREAD / ALLOC INTERCEPTION
     if (callee == "__moksha_alloc") {
       auto loc = op.getLoc();
       mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
-
-      // [FIX]: Conditionally zero-extend
       mlir::Value sizeVal = adaptor.getOperands()[0];
       mlir::Value sizeInt64 = sizeVal;
       if (sizeVal.getType().getIntOrFloatBitWidth() < 64) {
@@ -3745,9 +3526,7 @@ struct CustomCallOpLowering
             loc, rewriter.getI64Type(), sizeVal);
       }
 
-      // 2. We MUST use moksha_rt_alloc so the object gets a valid ARC header!
       mlir::Value typeTag = adaptor.getOperands()[1];
-
       mlir::Value ptr = createRuntimeCall(
           rewriter, loc, llvmPtrTy, "moksha_rt_alloc", {sizeInt64, typeTag});
       rewriter.replaceOp(op, ptr);
@@ -3777,7 +3556,7 @@ struct CustomCallOpLowering
       return mlir::success();
     }
 
-    // === DYNAMIC MAP INTERCEPTION ===
+    // DYNAMIC MAP INTERCEPTION
     if (callee == "moksha_rt_map_insert" || callee == "moksha_rt_map_get" ||
         callee == "__moksha_map_insert" || callee == "__moksha_map_get") {
       auto loc = op.getLoc();
@@ -3798,13 +3577,8 @@ struct CustomCallOpLowering
         rewriter.eraseOp(op);
         return mlir::success();
       } else {
-        // Map Get requires a MokshaAny* for the key!
-        // The AST currently emits a raw pointer for the key (e.g. char*). We
-        // must box it into an Any struct on the stack.
         mlir::Value rawKey = adaptor.getOperands()[1];
         mlir::Type origKeyTy = op.getOperand(1).getType();
-
-        // 1 & 2. Detect if the frontend already boxed the key into an Any
         bool isAlreadyBoxed = false;
         if (mlir::isa<IR::AnyType>(origKeyTy)) {
           isAlreadyBoxed = true;
@@ -3815,11 +3589,8 @@ struct CustomCallOpLowering
         }
 
         mlir::Value anyPtrAlloc;
-
         if (isAlreadyBoxed) {
           anyPtrAlloc = rawKey;
-          // [FIX] Spill Any structs to the stack so we have a valid pointer to
-          // cast!
           if (!mlir::isa<mlir::LLVM::LLVMPointerType>(anyPtrAlloc.getType())) {
             mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
                 loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
@@ -3833,7 +3604,6 @@ struct CustomCallOpLowering
                                                                  anyPtrAlloc);
           }
         } else {
-          // Fallback for legacy raw keys: perform the manual boxing
           mlir::Type mlirUnderlyingTy = typeConverter->convertType(origKeyTy);
           if (auto ptrTy = mlir::dyn_cast<IR::PointerType>(origKeyTy)) {
             mlirUnderlyingTy = typeConverter->convertType(ptrTy.getPointee());
@@ -3870,29 +3640,21 @@ struct CustomCallOpLowering
           rewriter.create<mlir::LLVM::StoreOp>(loc, anyStruct, anyPtrAlloc);
         }
 
-        // 5. Call moksha_rt_map_get
         mlir::Value anyPtr =
             createRuntimeCall(rewriter, loc, llvmPtrTy, "moksha_rt_map_get",
                               {mapPtr, anyPtrAlloc});
-
-        // 6. Check for NULL and gracefully return a default value (Zero/Null)
         mlir::Value nullPtr =
             rewriter.create<mlir::LLVM::ZeroOp>(loc, llvmPtrTy);
         mlir::Value isNull = rewriter.create<mlir::LLVM::ICmpOp>(
             loc, mlir::LLVM::ICmpPredicate::eq, anyPtr, nullPtr);
 
         mlir::Block *currentBlock = rewriter.getInsertionBlock();
-
-        // [FIX] contBlock must be the split block holding the rest of the
-        // program
         mlir::Block *contBlock =
             rewriter.splitBlock(currentBlock, rewriter.getInsertionPoint());
 
-        // Create new empty blocks for the branches
         mlir::Block *nullBlock = rewriter.createBlock(contBlock);
         mlir::Block *safeBlock = rewriter.createBlock(contBlock);
 
-        // Branch from the current block
         rewriter.setInsertionPointToEnd(currentBlock);
         rewriter.create<mlir::LLVM::CondBrOp>(loc, isNull, nullBlock,
                                               safeBlock);
@@ -3900,21 +3662,12 @@ struct CustomCallOpLowering
         mlir::Type origRetTy = op.getResultTypes()[0];
         mlir::Type expectedRetTy = typeConverter->convertType(origRetTy);
 
-        // ========================================================
-        // NULL BLOCK: Key not found, return a zeroed memory struct
-        // ========================================================
         rewriter.setInsertionPointToEnd(nullBlock);
         mlir::Value nullResult =
             rewriter.create<mlir::LLVM::ZeroOp>(loc, expectedRetTy);
         rewriter.create<mlir::LLVM::BrOp>(loc, mlir::ValueRange{nullResult},
                                           contBlock);
-
-        // ========================================================
-        // SAFE BLOCK: Key found. Unbox it.
-        // ========================================================
         rewriter.setInsertionPointToEnd(safeBlock);
-
-        // 1. Detect if the frontend expects a boxed 'Any' pointer back
         bool expectsBoxedAny = false;
         if (mlir::isa<IR::AnyType>(origRetTy)) {
           expectsBoxedAny = true;
@@ -3926,33 +3679,24 @@ struct CustomCallOpLowering
 
         mlir::Value finalVal;
         if (expectsBoxedAny) {
-          // [GENERIC MAPS] Return the Boxed Any pointer directly
           finalVal = anyPtr;
           if (finalVal.getType() != expectedRetTy) {
             finalVal = rewriter.create<mlir::LLVM::BitcastOp>(
                 loc, expectedRetTy, finalVal);
           }
         } else {
-          // [TYPED MAPS] Unbox the concrete value immediately
           mlir::Type anyStructTy = mlir::LLVM::LLVMStructType::getLiteral(
               getContext(), {llvmPtrTy, llvmPtrTy});
-
-          // Load the {ptr, ptr} Any struct from the returned pointer
           mlir::Value anyVal =
               rewriter.create<mlir::LLVM::LoadOp>(loc, anyStructTy, anyPtr);
-
-          // Extract the data payload pointer (index 0)
           mlir::Value dataPtr = rewriter.create<mlir::LLVM::ExtractValueOp>(
               loc, anyVal, llvm::ArrayRef<int64_t>{0});
 
           if (dataPtr.getType() != expectedRetTy) {
             if (mlir::isa<mlir::LLVM::LLVMPointerType>(expectedRetTy)) {
-              // Expecting a pointer (e.g. string): bitcast payload directly
               finalVal = rewriter.create<mlir::LLVM::BitcastOp>(
                   loc, expectedRetTy, dataPtr);
             } else {
-              // Expecting a primitive (e.g. i32): the payload points to heap
-              // memory, load it!
               mlir::Value castPtr = rewriter.create<mlir::LLVM::BitcastOp>(
                   loc, llvmPtrTy, dataPtr);
               finalVal = rewriter.create<mlir::LLVM::LoadOp>(loc, expectedRetTy,
@@ -3965,10 +3709,6 @@ struct CustomCallOpLowering
 
         rewriter.create<mlir::LLVM::BrOp>(loc, mlir::ValueRange{finalVal},
                                           contBlock);
-
-        // ========================================================
-        // CONT BLOCK: Merge paths and push to phi
-        // ========================================================
         rewriter.setInsertionPointToStart(contBlock);
         contBlock->addArgument(expectedRetTy, loc);
         rewriter.replaceOp(op, contBlock->getArgument(0));
@@ -3977,7 +3717,7 @@ struct CustomCallOpLowering
       }
     }
 
-    // === LENGTH & IS_EMPTY INTERCEPTION (Hardware Fast-Paths) ===
+    // LENGTH & IS_EMPTY INTERCEPTION
     if (callee == "length" || callee.starts_with("length_") ||
         callee == "is_empty" || callee.starts_with("is_empty_")) {
 
@@ -4004,7 +3744,6 @@ struct CustomCallOpLowering
         if (arg.getType() != llvmPtrTy) {
           arg = rewriter.create<mlir::LLVM::BitcastOp>(loc, llvmPtrTy, arg);
         }
-        // Assumes array.c exposes int32 moksha_rt_array_length(MokshaSlice*)
         mlir::Value len32 =
             createRuntimeCall(rewriter, loc, rewriter.getI32Type(),
                               "moksha_rt_array_length", {arg});
@@ -4021,7 +3760,7 @@ struct CustomCallOpLowering
       return mlir::success();
     }
 
-    // === AT INTERCEPTION ===
+    // AT INTERCEPTION
     if (callee == "at" || callee.starts_with("at_")) {
       auto loc = op.getLoc();
       mlir::Value arg = adaptor.getOperands()[0];
@@ -4076,35 +3815,22 @@ struct CustomCallOpLowering
       return mlir::success();
     }
 
-    // === HALF & QUARTER TO STRING ABI FIX ===
+    // HALF & QUARTER TO STRING ABI FIX
     if (callee == "__moksha_half_to_string" ||
         callee == "__moksha_quarter_to_string") {
       auto loc = op.getLoc();
       mlir::Type f32Ty = rewriter.getF32Type();
       mlir::Value arg = adaptor.getOperands()[0];
-
-      // Safely upcast the f16/f8 register to a standard f32 register to satisfy
-      // the C ABI
       mlir::Value f32Val = safeUpcastFPExt(rewriter, loc, arg, f32Ty);
-
       mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
       auto module = op->getParentOfType<mlir::ModuleOp>();
-
-      // We append a suffix to avoid MLIR symbol collision with the old
-      // func.func
       std::string safeSymbolName = (callee + "_abi").str();
 
-      // Ensure the correct LLVM signature exists safely
       if (!module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(safeSymbolName)) {
         mlir::OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPointToStart(module.getBody());
-
-        // Define the expected f32 signature
-        auto funcType = mlir::LLVM::LLVMFunctionType::get(llvmPtrTy, {f32Ty},
-                                                          /*isVarArg=*/false);
-
-        // Create the new LLVM func with the safe symbol name. We will link
-        // against C wrappers in the runtime.
+        auto funcType =
+            mlir::LLVM::LLVMFunctionType::get(llvmPtrTy, {f32Ty}, false);
         rewriter.create<mlir::LLVM::LLVMFuncOp>(loc, safeSymbolName, funcType);
       }
 
@@ -4121,12 +3847,8 @@ struct CustomCallOpLowering
       auto loc = op.getLoc();
       mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
       mlir::Value decStruct = adaptor.getOperands()[0]; // Already an llvm.ptr
-
-      // [FIX]: Pass the struct pointer directly instead of allocating a
-      // double-pointer
       mlir::Value strPtr = createRuntimeCall(
           rewriter, loc, llvmPtrTy, "moksha_rt_dec_to_string", {decStruct});
-
       rewriter.replaceOp(op, strPtr);
       return mlir::success();
     }
@@ -4135,8 +3857,6 @@ struct CustomCallOpLowering
     if (mlir::failed(
             typeConverter->convertTypes(op.getResultTypes(), resultTypes)))
       return mlir::failure();
-
-    // --- [LLVM 22 FIX] Aggregate ByVal Pointer Extraction ---
     llvm::SmallVector<mlir::Value, 4> newOperands;
     llvm::SmallVector<mlir::Attribute, 4> argAttrs;
     bool hasByVal = false;
@@ -4153,7 +3873,7 @@ struct CustomCallOpLowering
             size += self(self, f);
           return size;
         }
-        return 8; // Pointer/Opaque fallback
+        return 8;
       };
       return impl(impl, t);
     };
@@ -4165,20 +3885,14 @@ struct CustomCallOpLowering
                          mlir::isa<mlir::LLVM::LLVMArrayType>(argTy);
 
       mlir::DictionaryAttr dictAttr = rewriter.getDictionaryAttr({});
-
       if (isAggregate && getByteSize(argTy) > 8) {
-        // [CRITICAL] LLVM 'byval' requires a POINTER. We must spill the value
-        // to the stack.
         mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
         mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
             op.getLoc(), rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
-
         mlir::Value stackAlloc = rewriter.create<mlir::LLVM::AllocaOp>(
             op.getLoc(), llvmPtrTy, argTy, one);
         rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), argVal, stackAlloc);
-
-        argVal = stackAlloc; // Replace the aggregate with its memory address
-
+        argVal = stackAlloc;
         auto byvalAttr =
             rewriter.getNamedAttr("llvm.byval", mlir::TypeAttr::get(argTy));
         dictAttr = rewriter.getDictionaryAttr({byvalAttr});
@@ -4191,12 +3905,10 @@ struct CustomCallOpLowering
 
     auto llvmCall = rewriter.create<mlir::LLVM::CallOp>(
         op.getLoc(), resultTypes, op.getCalleeAttr(), newOperands);
-
     if (hasByVal) {
       llvmCall->setAttr("arg_attrs", rewriter.getArrayAttr(argAttrs));
     }
 
-    // Restore the callee_type attributes using the UPDATED pointer operands!
     auto moduleOp = op->getParentOfType<mlir::ModuleOp>();
     auto funcOp = moduleOp.lookupSymbol<mlir::func::FuncOp>(op.getCallee());
     auto llvmFuncOp =
@@ -4258,7 +3970,6 @@ struct ReturnOpLowering
   }
 };
 
-// Lower 'moksha.spawn' -> call @moksha_rt_spawn_thread(closure_ptr)
 struct SpawnOpLowering : public mlir::ConvertOpToLLVMPattern<IR::SpawnOp> {
   using ConvertOpToLLVMPattern<IR::SpawnOp>::ConvertOpToLLVMPattern;
 
@@ -4269,15 +3980,9 @@ struct SpawnOpLowering : public mlir::ConvertOpToLLVMPattern<IR::SpawnOp> {
     mlir::Type opaquePtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
     mlir::Value closurePtr = adaptor.getClosure();
 
-    // If the closure is passed by value (struct), push it to the stack to get a
-    // pointer
     if (!mlir::isa<mlir::LLVM::LLVMPointerType>(closurePtr.getType())) {
-      // [FIX] Heap-allocate closures for OS threads to prevent
-      // stack-use-after-free!
       mlir::Type i32Ty = rewriter.getI32Type();
       mlir::Type i64Ty = rewriter.getI64Type();
-
-      // 16 bytes = 2 pointers (function_ptr + environment_ptr)
       mlir::Value size = rewriter.create<mlir::LLVM::ConstantOp>(
           loc, i64Ty, rewriter.getI64IntegerAttr(16));
       mlir::Value typeTag = rewriter.create<mlir::LLVM::ConstantOp>(
@@ -4285,17 +3990,14 @@ struct SpawnOpLowering : public mlir::ConvertOpToLLVMPattern<IR::SpawnOp> {
 
       mlir::Value heapAlloc = createRuntimeCall(
           rewriter, loc, opaquePtrTy, "moksha_rt_alloc", {size, typeTag});
-
       mlir::Value castedAlloc = rewriter.create<mlir::LLVM::BitcastOp>(
           loc, mlir::LLVM::LLVMPointerType::get(getContext()), heapAlloc);
       auto storeOp =
           rewriter.create<mlir::LLVM::StoreOp>(loc, closurePtr, castedAlloc);
       storeOp.setAlignment(8);
-
       closurePtr = castedAlloc;
     }
 
-    // Determine if it's a weak (detached) thread
     bool isWeak = false;
     if (auto weakAttr = op->getAttrOfType<mlir::BoolAttr>("is_weak")) {
       isWeak = weakAttr.getValue();
@@ -4305,11 +4007,8 @@ struct SpawnOpLowering : public mlir::ConvertOpToLLVMPattern<IR::SpawnOp> {
 
     llvm::StringRef rtFunc =
         isWeak ? "moksha_rt_spawn_weak_thread" : "moksha_rt_spawn_thread";
-
     mlir::Value defaultPriority = rewriter.create<mlir::LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
-
-    // Call the C runtime thread spawner, returning a Thread Handle (Promise)
     mlir::Value threadHandle = createRuntimeCall(
         rewriter, loc, opaquePtrTy, rtFunc, {closurePtr, defaultPriority});
 
@@ -4318,7 +4017,6 @@ struct SpawnOpLowering : public mlir::ConvertOpToLLVMPattern<IR::SpawnOp> {
   }
 };
 
-// Lower 'moksha.await' -> call @llvm.coro.suspend state machine
 struct AwaitOpLowering : public mlir::ConvertOpToLLVMPattern<IR::AwaitOp> {
   using ConvertOpToLLVMPattern<IR::AwaitOp>::ConvertOpToLLVMPattern;
 
@@ -4378,9 +4076,6 @@ struct AwaitOpLowering : public mlir::ConvertOpToLLVMPattern<IR::AwaitOp> {
 
     auto nullHandle = rewriter.create<mlir::LLVM::ZeroOp>(loc, llvmI8PtrTy);
 
-    // ========================================================================
-    // [CRITICAL FIX] 1. Save Coroutine State FIRST
-    // ========================================================================
     mlir::Value saveArgs[] = {nullHandle.getResult()};
     auto saveFnTy =
         mlir::LLVM::LLVMFunctionType::get(llvmTokenTy, {llvmI8PtrTy});
@@ -4389,17 +4084,10 @@ struct AwaitOpLowering : public mlir::ConvertOpToLLVMPattern<IR::AwaitOp> {
         mlir::SymbolRefAttr::get(getContext(), "llvm.coro.save"),
         mlir::ValueRange(llvm::ArrayRef<mlir::Value>(saveArgs)));
     coroSave->setAttr("callee_type", mlir::TypeAttr::get(saveFnTy));
-
-    // ========================================================================
-    // [CRITICAL FIX] 2. Register Handle AFTER state is saved
-    // ========================================================================
     createRuntimeCall(rewriter, loc, "moksha_rt_register_await",
                       mlir::TypeRange{},
                       {adaptor.getPromise(), nullHandle.getResult()});
 
-    // ========================================================================
-    // 3. Suspend
-    // ========================================================================
     auto falseVal = rewriter.create<mlir::LLVM::ConstantOp>(
         loc, rewriter.getI1Type(),
         rewriter.getIntegerAttr(rewriter.getI1Type(), 0));
@@ -4562,7 +4250,6 @@ struct InvokeOpLowering : public mlir::ConvertOpToLLVMPattern<IR::InvokeOp> {
     mlir::Block *actualUnwindDest =
         getOrCreateTrampoline(rewriter, op.getLoc(), op.getUnwindDest());
 
-    // --- [LLVM 22 FIX] Aggregate ByVal Pointer Extraction ---
     llvm::SmallVector<mlir::Value, 4> newOperands;
     llvm::SmallVector<mlir::Attribute, 4> argAttrs;
     bool hasByVal = false;
@@ -4593,16 +4280,13 @@ struct InvokeOpLowering : public mlir::ConvertOpToLLVMPattern<IR::InvokeOp> {
       mlir::DictionaryAttr dictAttr = rewriter.getDictionaryAttr({});
 
       if (isAggregate && getInvokeByteSize(argTy) > 8) {
-        // [CRITICAL] LLVM 'byval' requires a POINTER. Spill to stack.
         mlir::Type llvmPtrTy = mlir::LLVM::LLVMPointerType::get(getContext());
         mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
             op.getLoc(), rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
-
         mlir::Value stackAlloc = rewriter.create<mlir::LLVM::AllocaOp>(
             op.getLoc(), llvmPtrTy, argTy, one);
         rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), argVal, stackAlloc);
-
-        argVal = stackAlloc; // Pass the pointer
+        argVal = stackAlloc;
 
         auto byvalAttr =
             rewriter.getNamedAttr("llvm.byval", mlir::TypeAttr::get(argTy));
@@ -4623,12 +4307,10 @@ struct InvokeOpLowering : public mlir::ConvertOpToLLVMPattern<IR::InvokeOp> {
       llvmInvoke->setAttr("arg_attrs", rewriter.getArrayAttr(argAttrs));
     }
 
-    // Restore the callee_type attributes using the updated pointer operands!
     auto moduleOp = op->getParentOfType<mlir::ModuleOp>();
     auto funcOp = moduleOp.lookupSymbol<mlir::func::FuncOp>(op.getCallee());
     auto llvmFuncOp =
         moduleOp.lookupSymbol<mlir::LLVM::LLVMFuncOp>(op.getCallee());
-
     bool isVarArg = op->hasAttr("func.varargs") || op->hasAttr("vararg");
     if (funcOp) {
       isVarArg |= funcOp->hasAttr("func.varargs") || funcOp->hasAttr("vararg");
@@ -4669,10 +4351,7 @@ struct InvokeIndirectOpLowering
     mlir::Value callee = adaptor.getCallee();
     mlir::Type calleeTy = callee.getType();
 
-    // [FIX] If the callee is a Moksha 'any' or 'closure' struct, extract the fn
-    // pointer
     if (mlir::isa<mlir::LLVM::LLVMStructType>(calleeTy)) {
-      // Index 0 is the function pointer in our Closure/Any layout
       callee = rewriter.create<mlir::LLVM::ExtractValueOp>(
           loc, callee, mlir::ArrayRef<int64_t>{0});
     }
@@ -4689,24 +4368,20 @@ struct InvokeIndirectOpLowering
                            ? mlir::LLVM::LLVMVoidType::get(getContext())
                            : resultTypes[0];
 
-    // Prepare operands: callee must be the first operand for indirect invokes
     llvm::SmallVector<mlir::Value, 4> invokeOperands;
     invokeOperands.push_back(callee);
     invokeOperands.append(adaptor.getCallArgs().begin(),
                           adaptor.getCallArgs().end());
 
     auto llvmInvoke = rewriter.create<mlir::LLVM::InvokeOp>(
-        loc, resultTypes, /*callee=*/nullptr, invokeOperands,
-        op.getNormalDest(), mlir::ValueRange{}, actualUnwindDest,
-        mlir::ValueRange{});
+        loc, resultTypes, nullptr, invokeOperands, op.getNormalDest(),
+        mlir::ValueRange{}, actualUnwindDest, mlir::ValueRange{});
 
-    // Reconstruct LLVM function type for validation
     llvm::SmallVector<mlir::Type, 4> argTypes;
     for (auto arg : adaptor.getCallArgs())
       argTypes.push_back(arg.getType());
 
-    auto llvmFnTy =
-        mlir::LLVM::LLVMFunctionType::get(retTy, argTypes, /*isVarArg=*/false);
+    auto llvmFnTy = mlir::LLVM::LLVMFunctionType::get(retTy, argTypes, false);
     llvmInvoke->setAttr("callee_type", mlir::TypeAttr::get(llvmFnTy));
 
     rewriter.replaceOp(op, llvmInvoke.getResults());
@@ -4714,9 +4389,7 @@ struct InvokeIndirectOpLowering
   }
 };
 
-// ============================================================================
 // Exponentiation Lowering
-// ============================================================================
 struct PowOpLowering : public mlir::ConvertOpToLLVMPattern<IR::PowOp> {
   using ConvertOpToLLVMPattern<IR::PowOp>::ConvertOpToLLVMPattern;
 
@@ -4726,9 +4399,6 @@ struct PowOpLowering : public mlir::ConvertOpToLLVMPattern<IR::PowOp> {
 
     mlir::Type resTy = typeConverter->convertType(op.getType());
     unsigned width = resTy.getIntOrFloatBitWidth();
-
-    // Dynamically route to the correct C-runtime math function
-    // e.g., __moksha_powi32, __moksha_powi64, __moksha_powf64
     std::string funcName =
         mlir::isa<mlir::FloatType>(resTy) ? "__moksha_powf" : "__moksha_powi";
     funcName += std::to_string(width);
@@ -4741,9 +4411,7 @@ struct PowOpLowering : public mlir::ConvertOpToLLVMPattern<IR::PowOp> {
   }
 };
 
-// ============================================================================
 // Atomics Lowering
-// ============================================================================
 struct AtomicStoreOpLowering
     : public mlir::ConvertOpToLLVMPattern<IR::AtomicStoreOp> {
   using ConvertOpToLLVMPattern<IR::AtomicStoreOp>::ConvertOpToLLVMPattern;
@@ -4754,16 +4422,12 @@ struct AtomicStoreOpLowering
     auto llvmStore = rewriter.create<mlir::LLVM::StoreOp>(
         op.getLoc(), adaptor.getValue(), adaptor.getPtr());
     llvmStore.setOrdering(mapAtomicOrdering(op.getOrdering()));
-
-    // LLVM requires explicit alignment for atomic stores.
-    // Calculate natural alignment from the type's bit width (e.g., i32 -> 4
-    // bytes).
-    unsigned alignment = 4; // Fallback
+    unsigned alignment = 4;
     mlir::Type valTy = adaptor.getValue().getType();
     if (valTy.isIntOrFloat()) {
       alignment = std::max(1u, valTy.getIntOrFloatBitWidth() / 8);
     } else if (mlir::isa<mlir::LLVM::LLVMPointerType>(valTy)) {
-      alignment = 8; // Assuming 64-bit pointers
+      alignment = 8;
     }
     llvmStore.setAlignment(alignment);
 
@@ -4784,8 +4448,7 @@ struct AtomicLoadOpLowering
                                                         adaptor.getPtr());
     llvmLoad.setOrdering(mapAtomicOrdering(op.getOrdering()));
 
-    // LLVM requires explicit alignment for atomic loads.
-    unsigned alignment = 4; // Fallback
+    unsigned alignment = 4;
     if (llvmType.isIntOrFloat()) {
       alignment = std::max(1u, llvmType.getIntOrFloatBitWidth() / 8);
     } else if (mlir::isa<mlir::LLVM::LLVMPointerType>(llvmType)) {
@@ -4822,8 +4485,6 @@ struct AtomicCmpXchgOpLowering
         op.getLoc(), adaptor.getPtr(), adaptor.getExpected(),
         adaptor.getDesired(), mapAtomicOrdering(op.getSuccessOrder()),
         mapAtomicOrdering(op.getFailureOrder()));
-
-    // Extract the old value (index 0) from the returned {T, i1} struct
     auto extractOp = rewriter.create<mlir::LLVM::ExtractValueOp>(
         op.getLoc(), cmpxchgOp.getResult(), llvm::ArrayRef<int64_t>{0});
 
@@ -4844,9 +4505,7 @@ struct FenceOpLowering : public mlir::ConvertOpToLLVMPattern<IR::FenceOp> {
   }
 };
 
-// ============================================================================
 // Safe AddOp Lowering (Handles String Concatenation & Precision)
-// ============================================================================
 struct AddOpLowering : public mlir::ConvertOpToLLVMPattern<IR::AddOp> {
   using ConvertOpToLLVMPattern<IR::AddOp>::ConvertOpToLLVMPattern;
 
@@ -4893,7 +4552,6 @@ struct AddOpLowering : public mlir::ConvertOpToLLVMPattern<IR::AddOp> {
       }
     }
 
-    // --- [CRITICAL FIX] LLVM 22 ConstantFold Crash Bypass ---
     if (auto lhsConst =
             adaptor.getLhs().getDefiningOp<mlir::LLVM::ConstantOp>()) {
       if (auto rhsConst =
@@ -4926,14 +4584,11 @@ struct AddOpLowering : public mlir::ConvertOpToLLVMPattern<IR::AddOp> {
         }
       }
     }
-    // --------------------------------------------------------
 
     if (mlir::isa<mlir::FloatType>(resTy)) {
       unsigned width = resTy.getIntOrFloatBitWidth();
       if (width < 32) {
         mlir::Type f32Ty = rewriter.getF32Type();
-
-        // [FIX] Use the safe MLIR upcaster
         mlir::Value lhs32 =
             safeUpcastFPExt(rewriter, op.getLoc(), adaptor.getLhs(), f32Ty);
         mlir::Value rhs32 =
@@ -4955,9 +4610,7 @@ struct AddOpLowering : public mlir::ConvertOpToLLVMPattern<IR::AddOp> {
   }
 };
 
-// ============================================================================
 // Safe Division & Modulo (Branchless GPU-Safe Evaluation)
-// ============================================================================
 template <typename OpType, typename IntLLVMOp, typename FloatLLVMOp>
 struct SafeDivModOpLowering : public mlir::ConvertOpToLLVMPattern<OpType> {
   using mlir::ConvertOpToLLVMPattern<OpType>::ConvertOpToLLVMPattern;
@@ -4970,11 +4623,6 @@ struct SafeDivModOpLowering : public mlir::ConvertOpToLLVMPattern<OpType> {
     mlir::Value rhs = adaptor.getRhs();
     mlir::Type type = lhs.getType();
 
-    // ========================================================================
-    // [CRITICAL FIX] LLVM 22 ConstantFold Crash Bypass
-    // Pre-fold constants so the LLVM translator never sees a dual-constant
-    // division!
-    // ========================================================================
     if (auto lhsConst =
             adaptor.getLhs().template getDefiningOp<mlir::LLVM::ConstantOp>()) {
       if (auto rhsConst =
@@ -5043,9 +4691,7 @@ struct SafeDivModOpLowering : public mlir::ConvertOpToLLVMPattern<OpType> {
       }
     }
 
-    // ========================================================================
     // Decimal Div/Mod Runtime Interception
-    // ========================================================================
     if (auto structTy = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(type)) {
       if (structTy.getBody().size() == 2 &&
           structTy.getBody()[0].isInteger(128) &&
@@ -5103,33 +4749,22 @@ struct SafeDivModOpLowering : public mlir::ConvertOpToLLVMPattern<OpType> {
       mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
           loc, type, rewriter.getIntegerAttr(type, 1));
 
-      // isZero = (rhs == 0)
       mlir::Value isZero = rewriter.create<mlir::LLVM::ICmpOp>(
           loc, mlir::LLVM::ICmpPredicate::eq, rhs, zero);
-
-      // safe_rhs = isZero ? 1 : rhs
       mlir::Value safeRhs =
           rewriter.create<mlir::LLVM::SelectOp>(loc, isZero, one, rhs);
-
-      // safe_div = lhs / safe_rhs
       mlir::Value safeDiv = rewriter.create<IntLLVMOp>(loc, type, lhs, safeRhs);
-
-      // final_res = isZero ? 0 : safe_div
       mlir::Value finalRes =
           rewriter.create<mlir::LLVM::SelectOp>(loc, isZero, zero, safeDiv);
 
       rewriter.replaceOp(op, finalRes);
       return mlir::success();
     }
-
     return mlir::failure();
   }
 };
 
-// ============================================================================
-// 4. Pass Definition
-// ============================================================================
-
+// Pass Definition
 struct ConvertMokshaToLLVMPass
     : public mlir::PassWrapper<ConvertMokshaToLLVMPass,
                                mlir::OperationPass<mlir::ModuleOp>> {
@@ -5146,17 +4781,14 @@ struct ConvertMokshaToLLVMPass
 
   void runOnOperation() override {
     llvm::errs() << "[DEBUG] Starting ConvertMokshaToLLVMPass...\n";
-
-    // C-ABI NAME MANGLER FIX
     auto sanitizeName = [](llvm::StringRef name) -> std::string {
       std::string s = name.str();
-      // --- [CRITICAL FIX] Do not mangle LLVM hardware intrinsics! ---
       if (name.starts_with("llvm.")) {
         return s;
       }
       for (char &c : s) {
         if (c == '.' || c == '<' || c == '>') {
-          c = '_'; // Convert invalid chars to underscores
+          c = '_';
         }
       }
       return s;
@@ -5189,7 +4821,7 @@ struct ConvertMokshaToLLVMPass
       }
     });
 
-    // --- 1. Cache Custom Attributes before Dialect Conversion ---
+    // 1. Cache Custom Attributes before Dialect Conversion
     llvm::StringMap<bool> hasAttrNaked, hasAttrNoRet, hasAttrInline,
         hasAttrNoInline;
     llvm::StringMap<bool> hasAttrPure, hasAttrCold, hasAttrUsed,
@@ -5288,9 +4920,6 @@ struct ConvertMokshaToLLVMPass
     llvm::errs() << "[DEBUG] applyFullConversion succeeded!\n";
 
     mlir::ModuleOp module = getOperation();
-
-    // --- [LLVM 22 FIX] Align Function Signatures with Call-Site ByVal
-    // Extraction ---
     module.walk([&](mlir::LLVM::LLVMFuncOp llvmFunc) {
       auto getByteSize = [&](mlir::Type t) -> size_t {
         auto impl = [&](auto &self, mlir::Type t_) -> size_t {
@@ -5315,8 +4944,6 @@ struct ConvertMokshaToLLVMPass
       llvm::SmallVector<unsigned, 4> changedArgs;
       llvm::SmallVector<mlir::Type, 4> oldAggregateTypes;
 
-      // 1. Identify large aggregates that were lowered to pointers at call
-      // sites
       for (unsigned i = 0; i < fnTy.getNumParams(); ++i) {
         mlir::Type argTy = fnTy.getParamType(i);
         bool isAggregate = mlir::isa<mlir::LLVM::LLVMStructType>(argTy) ||
@@ -5336,12 +4963,9 @@ struct ConvertMokshaToLLVMPass
       if (!needsChange)
         return;
 
-      // 2. Safely mutate the function signature
       auto newFnTy = mlir::LLVM::LLVMFunctionType::get(
           fnTy.getReturnType(), newArgTypes, fnTy.isVarArg());
       llvmFunc.setFunctionType(newFnTy);
-
-      // 3. Inject the `llvm.byval` attribute into the function declaration
       mlir::OpBuilder builder(&getContext());
       llvm::SmallVector<mlir::Attribute, 4> newArgAttrs;
       auto existingArgAttrs =
@@ -5369,8 +4993,6 @@ struct ConvertMokshaToLLVMPass
         newArgAttrs.push_back(dict);
       }
       llvmFunc->setAttr("arg_attrs", builder.getArrayAttr(newArgAttrs));
-
-      // 4. If the function has a body, repair the entry block arguments!
       if (!llvmFunc.getBody().empty()) {
         mlir::Block &entry = llvmFunc.getBody().front();
         mlir::OpBuilder entryBuilder(&entry, entry.begin());
@@ -5379,12 +5001,7 @@ struct ConvertMokshaToLLVMPass
         for (unsigned idx : changedArgs) {
           mlir::BlockArgument blkArg = entry.getArgument(idx);
           mlir::Type oldTy = oldAggregateTypes[changedIdx++];
-
-          // Switch the argument to a pointer
           blkArg.setType(newArgTypes[idx]);
-
-          // Emit a load so the rest of the body continues using the struct
-          // by-value
           auto loadOp = entryBuilder.create<mlir::LLVM::LoadOp>(
               llvmFunc.getLoc(), oldTy, blkArg);
           blkArg.replaceAllUsesExcept(loadOp.getResult(), loadOp);
@@ -5401,8 +5018,6 @@ struct ConvertMokshaToLLVMPass
       auto loc = module.getLoc();
       auto llvmVoidTy = mlir::LLVM::LLVMVoidType::get(&getContext());
       auto llvmI8PtrTy = mlir::LLVM::LLVMPointerType::get(&getContext());
-
-      // [ADD THIS] Detect main module
       bool hasMain =
           module.lookupSymbol("main") || module.lookupSymbol("__moksha_main");
       auto resumeLinkage = hasMain ? mlir::LLVM::Linkage::External
@@ -5410,8 +5025,6 @@ struct ConvertMokshaToLLVMPass
 
       auto resumeFnTy =
           mlir::LLVM::LLVMFunctionType::get(llvmVoidTy, {llvmI8PtrTy});
-
-      // [CHANGE THIS] Use dynamic linkage instead of LinkonceODR
       auto resumeFunc = builder.create<mlir::LLVM::LLVMFuncOp>(
           loc, "moksha_rt_resume_coro", resumeFnTy, resumeLinkage);
 
@@ -5428,9 +5041,7 @@ struct ConvertMokshaToLLVMPass
           mlir::SymbolRefAttr::get(&getContext(), "llvm.coro.resume"),
           mlir::ValueRange{block->getArgument(0)});
 
-      // --- THE FIX: Attach the missing callee_type ---
       callOp->setAttr("callee_type", mlir::TypeAttr::get(resumeFnTy));
-
       funcBuilder.create<mlir::LLVM::ReturnOp>(loc, mlir::ValueRange{});
     }
 
@@ -5452,8 +5063,7 @@ struct ConvertMokshaToLLVMPass
       if (!module.lookupSymbol(persFnName)) {
         mlir::OpBuilder builder(module.getBodyRegion());
         auto i32Ty = mlir::IntegerType::get(&getContext(), 32);
-        auto fnTy =
-            mlir::LLVM::LLVMFunctionType::get(i32Ty, {}, /*isVarArg=*/true);
+        auto fnTy = mlir::LLVM::LLVMFunctionType::get(i32Ty, {}, true);
         builder.create<mlir::LLVM::LLVMFuncOp>(module.getLoc(), persFnName,
                                                fnTy);
       }
@@ -5461,13 +5071,11 @@ struct ConvertMokshaToLLVMPass
 
     auto persAttr = mlir::FlatSymbolRefAttr::get(&getContext(), persFnName);
 
-    // --- 2. Restore Custom Attributes onto the LLVMFuncOp ---
+    // 2. Restore Custom Attributes onto the LLVMFuncOp
     getOperation().walk([&](mlir::LLVM::LLVMFuncOp llvmFunc) {
       if (auto linkAttr =
               llvmFunc->getAttrOfType<mlir::StringAttr>("moksha.linkage")) {
         llvm::StringRef linkStr = linkAttr.getValue();
-
-        // --- [FIX 2] Enforce External Linkage for Declarations ---
         if (llvmFunc.getBody().empty()) {
           llvmFunc.setLinkage(mlir::LLVM::Linkage::External);
         } else if (linkStr == "internal") {
@@ -5519,8 +5127,6 @@ struct ConvertMokshaToLLVMPass
         if (!llvmFunc.getBody().empty()) {
           mlir::Block &entryBlock = llvmFunc.getBody().front();
           mlir::OpBuilder builder(&getContext());
-
-          // Force coro setup to the absolute top
           builder.setInsertionPointToStart(&entryBlock);
 
           auto loc = llvmFunc.getLoc();
@@ -5532,7 +5138,7 @@ struct ConvertMokshaToLLVMPass
           auto llvmVoidTy = mlir::LLVM::LLVMVoidType::get(&getContext());
           auto module = llvmFunc->getParentOfType<mlir::ModuleOp>();
 
-          // --- 1. Declare Intrinsics ---
+          // 1. Declare Intrinsics
           if (!module.lookupSymbol("llvm.coro.id")) {
             mlir::OpBuilder::InsertionGuard guard(builder);
             builder.setInsertionPointToStart(module.getBody());
@@ -5589,7 +5195,7 @@ struct ConvertMokshaToLLVMPass
                 mlir::LLVM::LLVMFunctionType::get(llvmVoidTy, {llvmI8PtrTy}));
           }
 
-          // --- 2. Setup Frame ---
+          // 2. Setup Frame
           auto nullPtr = builder.create<mlir::LLVM::ZeroOp>(loc, llvmI8PtrTy);
           auto zero32 = builder.create<mlir::LLVM::ConstantOp>(
               loc, llvmI32Ty, builder.getI32IntegerAttr(0));
@@ -5634,7 +5240,6 @@ struct ConvertMokshaToLLVMPass
               mlir::TypeAttr::get(mlir::LLVM::LLVMFunctionType::get(
                   llvmI8PtrTy, {llvmTokenTy, llvmI8PtrTy})));
 
-          // [NEW FIX] Set up the Moksha Promise for this coroutine
           if (!module.lookupSymbol("moksha_rt_coro_setup")) {
             mlir::OpBuilder::InsertionGuard guard(builder);
             builder.setInsertionPointToStart(module.getBody());
@@ -5654,7 +5259,7 @@ struct ConvertMokshaToLLVMPass
 
           mlir::Value promiseHandle = setupCall.getResult();
 
-          // --- 2.5 Declare the Scheduler Hook ---
+          // 2.5 Declare the Scheduler Hook
           if (!module.lookupSymbol("moksha_scheduler_schedule")) {
             mlir::OpBuilder::InsertionGuard guard(builder);
             builder.setInsertionPointToStart(module.getBody());
@@ -5663,7 +5268,7 @@ struct ConvertMokshaToLLVMPass
                 mlir::LLVM::LLVMFunctionType::get(llvmVoidTy, {llvmI8PtrTy}));
           }
 
-          // --- 3. Link Await Calls, Unify Suspend Blocks, and Inject Cleanup
+          // 3. Link Await Calls, Unify Suspend Blocks, and Inject Cleanup
           llvm::SmallVector<mlir::LLVM::CallOp, 4> callOpsToProcess;
           llvmFunc.walk([&](mlir::LLVM::CallOp callOp) {
             callOpsToProcess.push_back(callOp);
@@ -5733,9 +5338,9 @@ struct ConvertMokshaToLLVMPass
                 }
               }
             }
-          } // <-- Closes Phase 2 loop
+          }
 
-          // --- 4. Unify Returns and Inject coro.end ---
+          // 4. Unify Returns and Inject coro.end
           llvm::SmallVector<mlir::LLVM::ReturnOp, 4> finalReturns;
           llvm::SmallVector<mlir::LLVM::ReturnOp, 4> yieldReturns;
 
@@ -5747,7 +5352,6 @@ struct ConvertMokshaToLLVMPass
             }
           });
 
-          // Process intermediate yield returns
           for (auto yRet : yieldReturns) {
             if (yRet.getNumOperands() > 0 &&
                 yRet.getOperand(0).getType() == llvmI8PtrTy) {
@@ -5755,8 +5359,6 @@ struct ConvertMokshaToLLVMPass
             }
           }
 
-          // Unify multiple final returns into a single block to satisfy LLVM
-          // coro-split
           if (finalReturns.size() > 1) {
             mlir::OpBuilder builder(&getContext());
             mlir::Block *unifiedRetBlock = llvmFunc.addBlock();
@@ -5790,7 +5392,6 @@ struct ConvertMokshaToLLVMPass
             finalReturns.push_back(unifiedRet);
           }
 
-          // Inject coro.end into the single remaining final return
           for (auto retOp : finalReturns) {
             mlir::OpBuilder retBuilder(retOp);
 
@@ -5839,15 +5440,14 @@ struct ConvertMokshaToLLVMPass
 
             if (retOp.getNumOperands() > 0 &&
                 retOp.getOperand(0).getType() == llvmI8PtrTy) {
-              retOp.setOperand(
-                  0, promiseHandle); // Replace return val with promiseHandle
+              retOp.setOperand(0, promiseHandle);
             }
           }
         }
       }
     });
 
-    // --- 4. Hoist Allocas to the Entry Block (CRITICAL FOR COROUTINES & ABI)
+    // 4. Hoist Allocas to the Entry Block (CRITICAL FOR COROUTINES & ABI)
     module.walk([&](mlir::LLVM::LLVMFuncOp llvmFunc) {
       if (llvmFunc.empty())
         return;
@@ -5897,15 +5497,10 @@ struct ConvertMokshaToLLVMPass
           if (movedSizes.insert(sizeOp).second) {
             if (sizeOp->getBlock() != &entryBlock ||
                 !sizeOp->isBeforeInBlock(safeInsertBoundary)) {
-              // Move the size definition to the top
               sizeOp->moveBefore(currentInsertPoint);
             }
           }
         }
-
-        // Move the alloca BEFORE the boundary, NOT explicitly after the sizeOp.
-        // This preserves the original topological sorting of multiple allocas
-        // sharing a sizeOp!
         allocaOp->moveBefore(safeInsertBoundary);
       }
     });
@@ -5917,7 +5512,6 @@ struct ConvertMokshaToLLVMPass
     llvm::errs() << "[DEBUG] ConvertMokshaToLLVMPass Complete!\n";
   }
 };
-
 } // end anonymous namespace
 
 std::unique_ptr<mlir::Pass> createConvertMokshaToLLVMPass() {

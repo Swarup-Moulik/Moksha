@@ -23,10 +23,7 @@ HIRFunction *HIRModule::getFunction(llvm::StringRef name) const {
   }
   return nullptr;
 }
-// ============================================================================
-// [Type Interning Logic]
-// ============================================================================
-
+// Type Interning Logic
 HIRType *HIRModule::getVoidType() {
   llvm::FoldingSetNodeID ID;
   ID.AddInteger(static_cast<int>(TypeKind::Void));
@@ -100,7 +97,6 @@ HIRStringType *HIRModule::getStringType() {
   return newType;
 }
 
-// Full Type Interning Implementations:
 HIRIntType *HIRModule::getIntType(uint16_t width, bool isSigned,
                                   bool isPtrWidth) {
   llvm::FoldingSetNodeID ID;
@@ -303,21 +299,19 @@ StructType *HIRModule::getStructType(std::string name,
 
 PointerType *HIRModule::getPointerType(const HIRType *pointee, Ownership own,
                                        BorrowState state) {
-  // Enforce invariant
   assert(pointee && "Cannot create PointerType with null pointee");
 
   llvm::FoldingSetNodeID ID;
   ID.AddInteger(static_cast<int>(TypeKind::Pointer));
   ID.AddPointer(pointee);
   ID.AddInteger(static_cast<int>(own));
-  ID.AddInteger(static_cast<int>(state)); // [NEW] Hash the borrow state!
+  ID.AddInteger(static_cast<int>(state));
 
   void *insertPos = nullptr;
   if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
     return llvm::cast<PointerType>(existing);
 
-  auto *newType =
-      new (typeAllocator) PointerType(pointee, own, state); // [NEW] Pass state
+  auto *newType = new (typeAllocator) PointerType(pointee, own, state);
   uniqueTypes.InsertNode(newType, insertPos);
   return newType;
 }
@@ -325,7 +319,6 @@ PointerType *HIRModule::getPointerType(const HIRType *pointee, Ownership own,
 FunctionType *HIRModule::getFunctionType(const HIRType *ret,
                                          std::vector<const HIRType *> params,
                                          bool isVariadic, bool isInterrupt) {
-  // Enforce invariant
   assert(ret && "Cannot create FunctionType with null return type");
 
   llvm::FoldingSetNodeID ID;
@@ -336,7 +329,6 @@ FunctionType *HIRModule::getFunctionType(const HIRType *ret,
     ID.AddPointer(param);
   }
 
-  // Ensure the FFI flags are factored into the unique Type ID Hash!
   ID.AddBoolean(isVariadic);
   ID.AddBoolean(isInterrupt);
 
@@ -344,7 +336,6 @@ FunctionType *HIRModule::getFunctionType(const HIRType *ret,
   if (HIRType *existing = uniqueTypes.FindNodeOrInsertPos(ID, insertPos))
     return llvm::cast<FunctionType>(existing);
 
-  // Pass the flags into the constructor
   auto *newType = new (typeAllocator)
       FunctionType(ret, std::move(params), isVariadic, isInterrupt);
   uniqueTypes.InsertNode(newType, insertPos);
@@ -401,10 +392,7 @@ HIRWeakType *HIRModule::getWeakType(const HIRType *inner) {
   return newType;
 }
 
-// ============================================================================
-// [Debugging]
-// ============================================================================
-
+// Debugging
 void HIRModule::dump(llvm::raw_ostream &os) const {
   os << "Module: " << name << "\n";
 
@@ -417,26 +405,23 @@ void HIRModule::dump(llvm::raw_ostream &os) const {
   }
 
   if (!globals.empty()) {
-    os << "  Globals:\n"; // Indented for hierarchy
+    os << "  Globals:\n";
     for (const auto &g : globals) {
       if (g)
-        g->dump(os, 2); // Pass indent level
+        g->dump(os, 2);
     }
   }
 
   if (!functions.empty()) {
-    os << "  Functions:\n"; // Indented for hierarchy
+    os << "  Functions:\n";
     for (const auto &f : functions) {
       if (f)
-        f->dump(os, 2); // Pass indent level
+        f->dump(os, 2);
     }
   }
 }
 
-// ============================================================================
-// [Global Management]
-// ============================================================================
-
+// Global Management
 void HIRModule::addGlobal(std::unique_ptr<HIRStmt> global) {
   globals.push_back(std::move(global));
 }
@@ -449,7 +434,6 @@ llvm::ArrayRef<HIRStmt *> HIRModule::getGlobals() const {
   return globalCache;
 }
 
-// Ensure you also have the implementation for getFunctions()
 llvm::ArrayRef<HIRFunction *> HIRModule::getFunctions() const {
   functionCache.clear();
   for (const auto &f : functions) {
@@ -462,10 +446,7 @@ void HIRModule::addFunction(std::unique_ptr<HIRFunction> func) {
   functions.push_back(std::move(func));
 }
 
-// ============================================================================
-// [Class Management]
-// ============================================================================
-
+// Class Management
 void HIRModule::addClass(std::unique_ptr<HIRClass> cls) {
   classes.push_back(std::move(cls));
 }

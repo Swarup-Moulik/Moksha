@@ -21,6 +21,7 @@ struct HIRGenericParam {
   bool isShared;
 };
 
+/** Represents a function in the HIR. */
 class HIRFunction {
 public:
   HIRFunction(std::string name, std::vector<HIRGenericParam> typeParams,
@@ -105,6 +106,7 @@ private:
   SourceLocation loc;
 };
 
+/** Represents a class in the HIR. */
 class HIRClass {
 public:
   HIRClass(std::string name, std::vector<HIRGenericParam> typeParams,

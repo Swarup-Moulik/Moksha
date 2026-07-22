@@ -9,6 +9,7 @@ namespace mir {
 
 class MIRModule;
 
+/** @brief Manages a collection of MIR passes to be run on a module. */
 class PassManager {
 public:
   void addPass(std::unique_ptr<MIRPass> pass);

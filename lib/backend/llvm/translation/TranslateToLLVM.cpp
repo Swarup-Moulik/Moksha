@@ -49,7 +49,7 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
       ->addInterfaces<MokshaDialectLLVMIRTranslationInterface>();
 
   std::string tripleStr = llvm::sys::getDefaultTargetTriple();
-  llvm::Triple targetTriple(tripleStr); // Create the LLVM Triple object!
+  llvm::Triple targetTriple(tripleStr);
 
   mlirModule->setAttr(
       "llvm.target_triple",
@@ -76,7 +76,6 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
   std::string error;
   if (auto target = llvm::TargetRegistry::lookupTarget(tripleStr, error)) {
     llvm::TargetOptions opt;
-    // [FIX] Pass 'cpu' and 'featureStr' instead of "generic" and ""
     if (auto tm = target->createTargetMachine(targetTriple, cpu, featureStr,
                                               opt, std::nullopt)) {
       std::string dl = tm->createDataLayout().getStringRepresentation();
@@ -109,10 +108,9 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
     }
   }
 
-  // --- [FIX 1] Define the standard C/C++ personality function ---
+  // Define the standard C/C++ personality function
   llvm::Type *i32Ty = llvm::Type::getInt32Ty(llvmContext);
-  llvm::FunctionType *persType =
-      llvm::FunctionType::get(i32Ty, true); // Variadic
+  llvm::FunctionType *persType = llvm::FunctionType::get(i32Ty, true);
   llvm::FunctionCallee persFuncCallee =
       llvmModule->getOrInsertFunction(persFnName, persType);
   llvm::Constant *persFunc =
@@ -129,25 +127,19 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
     llvmFunc->addFnAttr("target-cpu", cpu);
     llvmFunc->addFnAttr("target-features", featureStr);
 
-    // --- Standard LLVM Keyword Bindings ---
+    // Standard LLVM Keyword Bindings
     if (mlirFunc->hasAttr("moksha.async")) {
       llvmFunc->addFnAttr(llvm::Attribute::PresplitCoroutine);
 
-      // ====================================================================
-      // [FIX] SINK ALLOCAS BELOW COROUTINE SETUP
-      // MLIR translation aggressively hoists allocas to the top of the block.
-      // We must manually sink them below `coro.begin` so CoroSplit tracks them.
-      // ====================================================================
       if (!llvmFunc->empty()) {
         llvm::BasicBlock &entryBlock = llvmFunc->getEntryBlock();
         llvm::Instruction *coroBoundary = nullptr;
 
         // 1. Find the bottom of the coroutine header
         for (llvm::Instruction &I : entryBlock) {
-          if (auto *call = llvm::dyn_cast<llvm::CallInst>(&I)) {
+          if (auto *call = llvm::dyn_cast_or_null<llvm::CallInst>(&I)) {
             if (llvm::Function *callee = call->getCalledFunction()) {
               llvm::StringRef name = callee->getName();
-              // Sink below your custom setup (or coro.begin as a fallback)
               if (name == "moksha_rt_coro_setup" ||
                   name.starts_with("llvm.coro.begin")) {
                 coroBoundary = &I;
@@ -163,7 +155,7 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
           for (llvm::Instruction &I : entryBlock) {
             if (&I == coroBoundary)
               break; // Stop at the boundary
-            if (auto *allocaInst = llvm::dyn_cast<llvm::AllocaInst>(&I)) {
+            if (auto *allocaInst = llvm::dyn_cast_or_null<llvm::AllocaInst>(&I)) {
               allocasToSink.push_back(allocaInst);
             }
           }
@@ -177,7 +169,7 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
       }
     }
     if (mlirFunc->hasAttr("moksha.interrupt")) {
-      llvmFunc->addFnAttr("interrupt"); // Arch-specific string attr
+      llvmFunc->addFnAttr("interrupt");
     }
     if (mlirFunc->hasAttr("moksha.naked")) {
       llvmFunc->addFnAttr(llvm::Attribute::Naked);
@@ -193,8 +185,7 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
     }
     if (mlirFunc->hasAttr("moksha.pure")) {
       llvmFunc->addFnAttr(llvm::Attribute::ReadNone);
-      llvmFunc->addFnAttr(
-          llvm::Attribute::NoUnwind); // Pure implies it cannot throw
+      llvmFunc->addFnAttr(llvm::Attribute::NoUnwind);
     }
     if (mlirFunc->hasAttr("moksha.cold")) {
       llvmFunc->addFnAttr(llvm::Attribute::Cold);
@@ -213,8 +204,6 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
       } else if (cc == "interrupt") {
         llvmFunc->setCallingConv(llvm::CallingConv::X86_INTR);
         if (llvmFunc->arg_size() > 0) {
-          // Construct a generic 40-byte x86_64 interrupt frame type for the
-          // byval payload
           llvm::Type *i64Ty = llvm::Type::getInt64Ty(llvmContext);
           llvm::Type *frameTy = llvm::ArrayType::get(i64Ty, 5);
           llvmFunc->addParamAttr(
@@ -226,12 +215,9 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
     if (auto linkageAttr =
             mlirFunc->getAttrOfType<mlir::StringAttr>("moksha.linkage")) {
       llvm::StringRef linkage = linkageAttr.getValue();
-
       if (linkage == "weak") {
-        // [FIX] WeakAny allows strong C overrides without COMDAT collisions
         llvmFunc->setLinkage(llvm::GlobalValue::WeakAnyLinkage);
       } else if (linkage == "linkonce") {
-        // LinkOnce requires COMDATs on Windows
         llvmFunc->setLinkage(llvm::GlobalValue::LinkOnceODRLinkage);
         if (targetTriple.isOSWindows()) {
           llvm::Comdat *comdat =
@@ -251,19 +237,16 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
       llvmFunc->setSection(secAttr.getValue());
     }
 
-    // --- [FIX 2] Automatically detect and attach the Personality Function! ---
     bool hasLandingPad = false;
     mlirFunc.walk([&](mlir::LLVM::LandingpadOp op) { hasLandingPad = true; });
 
     if (hasLandingPad) {
       llvmFunc->setPersonalityFn(persFunc);
-
       llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(llvmContext);
       llvm::Constant *nullPtr = llvm::ConstantPointerNull::get(ptrTy);
-
       for (llvm::BasicBlock &bb : *llvmFunc) {
         if (auto *lpad =
-                llvm::dyn_cast<llvm::LandingPadInst>(bb.getFirstNonPHI())) {
+                llvm::dyn_cast_or_null<llvm::LandingPadInst>(bb.getFirstNonPHI())) {
           bool hasCatchAll = false;
           for (unsigned i = 0; i < lpad->getNumClauses(); ++i) {
             if (lpad->isCatch(i) && lpad->getClause(i)->isNullValue()) {
@@ -271,7 +254,6 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
               break;
             }
           }
-          // If it's a bare cleanup pad, inject the catch-all
           if (!hasCatchAll) {
             lpad->addClause(nullPtr);
           }
@@ -287,7 +269,6 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
     if (!llvmGlob)
       return;
 
-    // --- FIX 1: Convert 'undef' to strict 'zeroinitializer' ---
     if (mlirGlob->hasAttr("moksha.zeroinit")) {
       llvmGlob->setInitializer(
           llvm::Constant::getNullValue(llvmGlob->getValueType()));
@@ -305,10 +286,8 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
       llvm::StringRef linkage = linkAttr.getValue();
 
       if (linkage == "weak") {
-        // [FIX] WeakAny allows strong C overrides without COMDAT collisions
         llvmGlob->setLinkage(llvm::GlobalValue::WeakAnyLinkage);
       } else if (linkage == "linkonce") {
-        // LinkOnce requires COMDATs on Windows
         llvmGlob->setLinkage(llvm::GlobalValue::LinkOnceODRLinkage);
         if (targetTriple.isOSWindows()) {
           llvm::Comdat *comdat =
@@ -328,7 +307,6 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
       llvmGlob->setThreadLocalMode(llvm::GlobalValue::GeneralDynamicTLSModel);
     }
 
-    // Route 'used' globals to the LLVM used array
     if (mlirGlob->hasAttr("moksha.used")) {
       usedValues.push_back(llvmGlob);
     }

@@ -1,46 +1,23 @@
-/**
- * @file Diagnostics.cpp
- * @brief Implementation of the Moksha Diagnostic Engine.
- * * This file implements the RAII-based diagnostic builder and the mapping
- * of internal diagnostic IDs to user-facing strings and severity levels.
- * It interfaces directly with LLVM's SourceMgr for console rendering.
- */
-
 #include "moksha/Support/Diagnostics.h"
 #include "llvm/ADT/Twine.h"
 
 namespace moksha {
 
-// === Diagnostic Builder ===
+// Diagnostic Builder
 
 DiagnosticBuilder::DiagnosticBuilder(DiagnosticEngine &Engine,
                                      SourceLocation Loc, DiagID ID,
                                      llvm::SourceMgr::DiagKind Kind)
     : Engine(Engine), Loc(Loc), ID(ID), Kind(Kind) {}
 
-/**
- * @brief Destructor acts as the emission trigger (RAII pattern).
- * * When the DiagnosticBuilder goes out of scope (typically at the end of the
- * statement where `report()` was called), it finalizes the streamed message
- * and pushes it to the DiagnosticEngine.
- */
 DiagnosticBuilder::~DiagnosticBuilder() { Engine.emit(Loc, ID, Kind, Message); }
 
-// === Diagnostic Engine ===
+// Diagnostic Engine
 
 DiagnosticBuilder DiagnosticEngine::report(SourceLocation Loc, DiagID ID) {
   return DiagnosticBuilder(*this, Loc, ID, getDiagnosticKind(ID));
 }
 
-/**
- * @brief Constructs and prints the final diagnostic message.
- * @details This method performs the following pipeline:
- * 1. Fetches the static base message for the DiagID.
- * 2. Appends any dynamically streamed context (ExtraMsg).
- * 3. Tracks error states to prevent compilation from proceeding if errors
- * exist.
- * 4. Delegates the actual rendering (with carets and source snippets) to LLVM.
- */
 void DiagnosticEngine::emit(SourceLocation Loc, DiagID ID,
                             llvm::SourceMgr::DiagKind Kind,
                             const std::string &ExtraMsg) {
@@ -59,8 +36,7 @@ void DiagnosticEngine::emit(SourceLocation Loc, DiagID ID,
   SrcMgr.PrintMessage(Loc, Kind, llvm::Twine(FinalMsg));
 }
 
-// === Diagnostic Registry ===
-
+// Diagnostic Registry
 llvm::SourceMgr::DiagKind DiagnosticEngine::getDiagnosticKind(DiagID ID) {
   switch (ID) {
   case DiagID::note_previous_definition:
@@ -77,7 +53,7 @@ llvm::SourceMgr::DiagKind DiagnosticEngine::getDiagnosticKind(DiagID ID) {
 
 const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
   switch (ID) {
-  // --- Parser ---
+  // Parser errors
   case DiagID::err_unexpected_char:
     return "Unexpected character";
   case DiagID::err_unexpected_token:
@@ -87,7 +63,7 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
   case DiagID::err_expected_token:
     return "Expected token";
 
-  // --- Sema & Symbol Table ---
+  // Sema & Symbol Table errors
   case DiagID::err_symbol_redefinition:
     return "Redefinition of symbol";
   case DiagID::err_undeclared_identifier:
@@ -99,7 +75,7 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
   case DiagID::err_internal:
     return "Internal compiler error";
 
-  // --- Type Checking ---
+  // Type checking errors
   case DiagID::err_type_mismatch:
     return "Type mismatch";
   case DiagID::err_const_violation:
@@ -153,7 +129,7 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
   case DiagID::err_builtin_shadowing:
     return "Builtin shadowing";
 
-  // --- MIR / Lowering Errors ---
+  // MIR / Lowering Errors
   case DiagID::err_unexpanded_macro:
     return "Unexpanded macro reached MIR lowering phase";
   case DiagID::err_invalid_type:
@@ -161,7 +137,7 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
   case DiagID::err_not_implemented:
     return "Feature not yet implemented";
 
-  // --- Borrow Checker Errors ---
+  // Borrow checker errors
   case DiagID::err_borrow_violation:
     return "Borrow checker violation";
   case DiagID::err_mutation_while_borrowed:
@@ -175,7 +151,7 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
   case DiagID::note_borrow_occurred_here:
     return "Borrow occurred here";
 
-  // --- Warnings ---
+  // Warnings
   case DiagID::warn_switch_not_exhaustive:
     return "Switch statement is not exhaustive";
   case DiagID::warn_not_implemented:
@@ -185,7 +161,7 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
   case DiagID::err_missing_builtin:
     return "Missing required compiler builtin or runtime function";
 
-  // --- Concurrency & Async Errors ---
+  // Concurrency & Async errors
   case DiagID::err_await_in_sync_lock:
     return "Cannot use 'await' inside a synchronous 'lock' block (causes OS "
            "thread deadlock)";
@@ -195,7 +171,7 @@ const char *DiagnosticEngine::getDiagnosticText(DiagID ID) {
   case DiagID::err_async_lock_target:
     return "Target of 'async lock' must be an 'AsyncMutex'";
 
-  // --- General Notes ---
+  // General notes
   case DiagID::note_previous_definition:
     return "Previous definition is here";
   case DiagID::err_no_member:

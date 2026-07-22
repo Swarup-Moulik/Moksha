@@ -10,10 +10,7 @@ namespace moksha {
 using llvm::dyn_cast;
 using llvm::isa;
 
-// ===========================================================================
-// Helper: MacroSubstituter
-// ===========================================================================
-
+/** @brief Substitutes macro parameters with their corresponding arguments. */
 class MacroSubstituter {
   const std::vector<MacroParam> &params;
   const std::vector<std::unique_ptr<Expr>> &args;
@@ -102,7 +99,7 @@ public:
       return nullptr;
     SourceLocation loc = e->getLoc();
 
-    // --- Literals ---
+    // Literals
     if (auto *l = dyn_cast<IntegerLiteral>(e))
       return std::make_unique<IntegerLiteral>(l->getValue(),
                                               NumericSuffix::None, loc);
@@ -134,7 +131,7 @@ public:
       return std::make_unique<MapLiteral>(std::move(newEntries), loc);
     }
 
-    // --- Identifiers & Macro Argument Substitution ---
+    // Identifiers & Macro Argument Substitution
     if (auto *id = dyn_cast<IdentifierExpr>(e)) {
       std::string name = id->getName();
 
@@ -158,13 +155,13 @@ public:
       return std::make_unique<IdentifierExpr>(name, loc);
     }
 
-    // --- Object & Class context ---
+    // Object & Class context
     if (isa<ThisExpr>(e))
       return std::make_unique<ThisExpr>(loc);
     if (isa<SuperExpr>(e))
       return std::make_unique<SuperExpr>(loc);
 
-    // --- Core Operations ---
+    // Core Operations
     if (auto *bin = dyn_cast<BinaryExpr>(e))
       return std::make_unique<BinaryExpr>(cloneExpr(bin->getLHS()),
                                           bin->getOp(),
@@ -183,7 +180,7 @@ public:
       return std::make_unique<BitcastExpr>(cloneType(bitcast->getTargetType()),
                                            cloneExpr(bitcast->getExpr()), loc);
 
-    // --- Access & Calls ---
+    // Access & Calls
     if (auto *call = dyn_cast<CallExpr>(e)) {
       std::vector<ExprPtr> newArgs;
       for (const auto &arg : call->getArgs())
@@ -210,7 +207,7 @@ public:
                                          idx->isOptionalAccess(), loc);
     }
 
-    // --- Functions & Threads ---
+    // Functions & Threads
     if (auto *lam = dyn_cast<LambdaExpr>(e)) {
       std::vector<LambdaParam> newParams;
       for (const auto &p : lam->getParams()) {
@@ -241,7 +238,7 @@ public:
       return std::make_unique<AwaitExpr>(cloneExpr(aw->getExpr()), loc);
     }
 
-    // --- Misc ---
+    // Misc
     if (auto *ts = dyn_cast<TemplateStringExpr>(e)) {
       std::vector<ExprPtr> newParts;
       for (const auto &part : ts->getParts())
@@ -408,10 +405,7 @@ public:
   }
 };
 
-// ===========================================================================
-// Helpers
-// ===========================================================================
-
+/** @brief Helper function to expand an expression using macros. */
 namespace {
 void expandExprHelper(std::unique_ptr<Expr> &exprPtr, MacroTable &macros,
                       ASTContext &ctx, ASTVisitor *visitor,
@@ -462,7 +456,6 @@ void expandExprHelper(std::unique_ptr<Expr> &exprPtr, MacroTable &macros,
                                                std::move(emptyArgs), loc);
         }
 
-        // Pass Diags down into the recursive call
         expandExprHelper(exprPtr, macros, ctx, visitor, Diags, depth + 1);
         return;
       }
@@ -471,10 +464,7 @@ void expandExprHelper(std::unique_ptr<Expr> &exprPtr, MacroTable &macros,
 }
 } // namespace
 
-// ===========================================================================
-// Macro Implementation
-// ===========================================================================
-
+/** @brief Macro Expander for Object-like macros. */
 std::vector<std::unique_ptr<Stmt>>
 ObjectMacro::expand(const std::vector<std::unique_ptr<Expr>> &args,
                     ASTContext &ctx) const {
@@ -502,10 +492,6 @@ FunctionMacro::expand(const std::vector<std::unique_ptr<Expr>> &args,
   }
   return result;
 }
-
-// ===========================================================================
-// MacroExpander Pass
-// ===========================================================================
 
 void MacroExpander::visitModuleDecl(const ModuleDecl *decl) {
   for (const auto &d : decl->getDecls()) {
@@ -556,13 +542,10 @@ void MacroExpander::visitBlockStmt(const BlockStmt *stmt) {
             if (auto *id = dyn_cast<IdentifierExpr>(call->getCallee())) {
               if (const Macro *m = macros.lookup(id->getName())) {
 
-                // Pass Diags here
                 for (auto &arg : const_cast<CallExpr *>(call)->getArgsMut()) {
                   expandExprHelper(arg, macros, ctx, this, Diags);
                 }
-
                 auto ex = m->expand(call->getArgs(), ctx);
-
                 for (auto &es : ex) {
                   processStmt(es, depth + 1);
                 }
@@ -717,7 +700,6 @@ void MacroExpander::visitThrowStmt(const ThrowStmt *stmt) {
     stmt->getExpr()->accept(*this);
 }
 
-// --- Traversals for Types ---
 void MacroExpander::visitPointerType(const PointerType *type) {
   if (type->getPointee())
     type->getPointee()->accept(*this);
@@ -797,7 +779,7 @@ void MacroExpander::visitPromiseType(const PromiseType *type) {
     type->getInner()->accept(*this);
 }
 
-// --- Traversals for Expressions ---
+// Traversals for Expressions
 void MacroExpander::visitArrayLiteral(const ArrayLiteral *expr) {
   auto &elements = const_cast<std::vector<ExprPtr> &>(expr->getElements());
   for (auto &el : elements)

@@ -1,7 +1,5 @@
 println("--- [E2E] exception_async_and_pipelines.mox ---")
 
-async void yield() {}
-
 // 1. ASYNC + FINALLY
 async void async_thrower() {
     await yield();

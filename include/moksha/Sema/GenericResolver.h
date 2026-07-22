@@ -17,29 +17,22 @@ enum class GenericError {
   SharedConstraintViolation
 };
 
-/// Handles the logic for generic instantiation, substitution, and validation.
+/** @brief Handles the logic for generic instantiation, substitution, and validation. */
 class GenericResolver {
 public:
   explicit GenericResolver(ASTContext &ctx);
 
-  /// Validates that provided generic arguments match the declaration's
-  /// parameters. Checks for: Argument count mismatch, 'any' type constraint.
-  /// \return std::nullopt if valid, or a GenericError if invalid.
+  /** @brief Validates that provided generic arguments match the declaration's parameters. */
   [[nodiscard]] std::optional<GenericError>
   validateGenericArgs(const std::vector<GenericDecl::GenericParam> &typeParams,
                       const std::vector<NamedType::GenericArg> &args);
 
-  /// Creates a new Type with generic parameters substituted by concrete
-  /// arguments. E.g., substitutes 'T' with 'int' in 'Box<T>'.
-  /// This performs a deep recursive traversal of the type structure (including
-  /// nested Arrays, Maps, and Function types) to ensure all occurrences of
-  /// the generic parameters are replaced with their concrete counterparts.
+  /** @brief Creates a new Type with generic parameters substituted by concrete arguments. */
   [[nodiscard]] TypePtr
   substituteType(const Type *type,
                  const llvm::StringMap<const Type *> &substitutions);
 
-  /// Resolves a generic function signature into a concrete one.
-  /// Used when calling 'update(T val)' on 'Box<int>'.
+  /** @brief Resolves a generic function signature into a concrete one. */
   struct [[nodiscard]] ConcreteSignature {
     const FunctionDecl *decl;
     TypePtr returnType;
@@ -50,7 +43,6 @@ public:
   resolveFunctionSignature(const FunctionDecl *funcDecl,
                            const llvm::StringMap<const Type *> &substitutions);
 
-  /// Generates a mangled name for a concrete instantiation
   std::string getMangledName(llvm::StringRef baseName,
                              const std::vector<const Type *> &typeArgs);
 

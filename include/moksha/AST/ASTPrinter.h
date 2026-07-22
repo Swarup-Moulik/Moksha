@@ -12,18 +12,18 @@ class Stmt;
 class Expr;
 class Type;
 
-/// \brief A visitor that pretty-prints the AST back to source code.
+/** @brief A visitor that pretty-prints the AST back to source code. */
 class ASTPrinter : public ASTVisitor {
 public:
   explicit ASTPrinter(llvm::raw_ostream &OS);
 
-  // --- Public Entry Points ---
+  // Public Entry Points
   void print(const Decl *decl);
   void print(const Stmt *stmt);
   void print(const Expr *expr);
   void print(const Type *type);
 
-  // --- Visitor Overrides ---
+  // Visitor Overrides
 
   // Types
   void visitPrimitiveType(const PrimitiveType *type) override;
@@ -117,7 +117,7 @@ private:
   void printVisibility(Visibility v);
 };
 
-/// \brief Helper function to print an AST declaration to a stream.
+/** @brief Helper function to print an AST declaration to a stream. */
 void printAST(const Decl *decl, llvm::raw_ostream &OS);
 
 } // namespace moksha

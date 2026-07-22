@@ -1,43 +1,28 @@
 #include "moksha/MIR/MIRBlock.h"
-#include "moksha/MIR/MIRFunction.h" // Required to access parent Function if needed
-#include "moksha/MIR/MIRInst.h"     // Required for MIRInst definitions
+#include "moksha/MIR/MIRFunction.h"
+#include "moksha/MIR/MIRInst.h"
 #include <algorithm>
 #include <iostream>
 
 namespace moksha {
 namespace mir {
 
-// ============================================================================
-// [Constructor]
-// ============================================================================
-
 MIRBlock::MIRBlock(std::string name, MIRFunction *parent)
     : MIRValue(ValueKind::BasicBlock, nullptr, std::move(name)),
-      parent(parent) {
-  // Note: We don't automatically add ourselves to the parent here.
-  // The parent (MIRFunction) is responsible for adding/owning the block
-  // via MIRFunction::addBlock().
-}
+      parent(parent) {}
 
-// ============================================================================
-// [Instruction Management]
-// ============================================================================
-
+// Instruction Management
 void MIRBlock::addInstruction(std::unique_ptr<MIRInst> inst) {
   if (!inst)
     return;
 
-  // Set the parent of the instruction to this block
-  // This ensures back-linkage is always valid upon insertion.
   inst->setParent(this);
-
-  // Auto-wire the explicit CFG edges for all terminators!
-  if (auto *throwInst = llvm::dyn_cast<ThrowInst>(inst.get())) {
+  if (auto *throwInst = llvm::dyn_cast_or_null<ThrowInst>(inst.get())) {
     if (MIRBlock *dest = throwInst->getUnwindDest()) {
       this->addSuccessor(dest);
       dest->addPredecessor(this);
     }
-  } else if (auto *invokeInst = llvm::dyn_cast<InvokeInst>(inst.get())) {
+  } else if (auto *invokeInst = llvm::dyn_cast_or_null<InvokeInst>(inst.get())) {
     // 1. Wire the normal continuation block
     if (MIRBlock *normalDest = invokeInst->getNormalDest()) {
       this->addSuccessor(normalDest);
@@ -48,12 +33,12 @@ void MIRBlock::addInstruction(std::unique_ptr<MIRInst> inst) {
       this->addSuccessor(unwindDest);
       unwindDest->addPredecessor(this);
     }
-  } else if (auto *br = llvm::dyn_cast<BranchInst>(inst.get())) {
+  } else if (auto *br = llvm::dyn_cast_or_null<BranchInst>(inst.get())) {
     if (MIRBlock *dest = br->getTarget()) {
       this->addSuccessor(dest);
       dest->addPredecessor(this);
     }
-  } else if (auto *cbr = llvm::dyn_cast<CondBranchInst>(inst.get())) {
+  } else if (auto *cbr = llvm::dyn_cast_or_null<CondBranchInst>(inst.get())) {
     if (MIRBlock *tBlock = cbr->getTrueBlock()) {
       this->addSuccessor(tBlock);
       tBlock->addPredecessor(this);
@@ -62,7 +47,7 @@ void MIRBlock::addInstruction(std::unique_ptr<MIRInst> inst) {
       this->addSuccessor(fBlock);
       fBlock->addPredecessor(this);
     }
-  } else if (auto *sw = llvm::dyn_cast<SwitchInst>(inst.get())) {
+  } else if (auto *sw = llvm::dyn_cast_or_null<SwitchInst>(inst.get())) {
     if (MIRBlock *defBlock = sw->getDefaultBlock()) {
       this->addSuccessor(defBlock);
       defBlock->addPredecessor(this);
@@ -123,10 +108,7 @@ void MIRBlock::removeSuccessor(MIRBlock *succ) {
                    successors.end());
 }
 
-// ============================================================================
-// [Debug / Dump]
-// ============================================================================
-
+// Debug / Dump
 void MIRBlock::dump(llvm::raw_ostream &os) const {
   os << getName() << ":\n";
   if (instructions.empty()) {

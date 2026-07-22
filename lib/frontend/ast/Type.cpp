@@ -5,17 +5,15 @@
 
 namespace moksha {
 
-// === Null Type ===
+// Null Type
 void NullType::accept(ASTVisitor &v) const { v.visitNullType(this); }
 
 bool NullType::isEquivalent(const Type &other) const {
   return llvm::isa<NullType>(other);
 }
 
-// === Primitive Type ===
+// Primitive Type
 void PrimitiveType::accept(ASTVisitor &v) const { v.visitPrimitiveType(this); }
-
-// isEquivalent is INLINE in header, so we DO NOT implement it here.
 
 bool PrimitiveType::isInteger() const {
   switch (scalar) {
@@ -91,7 +89,6 @@ std::string PrimitiveType::toString() const {
   }
 }
 
-// === Any Type ===
 void AnyType::accept(ASTVisitor &v) const { v.visitAnyType(this); }
 
 bool AnyType::isEquivalent(const Type &other) const {
@@ -100,14 +97,10 @@ bool AnyType::isEquivalent(const Type &other) const {
 
 std::string AnyType::toString() const { return "any"; }
 
-// === Pointer Type ===
 void PointerType::accept(ASTVisitor &v) const { v.visitPointerType(this); }
 
-// === Reference Type ===
 void ReferenceType::accept(ASTVisitor &v) const { v.visitReferenceType(this); }
 
-// === Array Type ===
-// ArrayType methods are NOT inline in Type.h
 ArrayType::ArrayType(TypePtr element, std::unique_ptr<Expr> sizeExpr,
                      SourceLocation loc)
     : Type(TypeKind::Array, loc), elementType(std::move(element)),
@@ -120,7 +113,6 @@ void ArrayType::accept(ASTVisitor &v) const { v.visitArrayType(this); }
 std::unique_ptr<Type> ArrayType::clone() const {
   std::unique_ptr<Expr> clonedSize = nullptr;
   if (sizeExpr) {
-    // Now safely clones ANY expression (BinaryExpr, SizeOfExpr, etc.)
     clonedSize = sizeExpr->clone();
   }
   return std::make_unique<ArrayType>(elementType->clone(),
@@ -129,24 +121,21 @@ std::unique_ptr<Type> ArrayType::clone() const {
 
 bool ArrayType::isEquivalent(const Type &other) const {
   if (const auto *otherArr = llvm::dyn_cast<ArrayType>(&other)) {
-    // 1. Check element types
     if (!elementType->isEquivalent(*otherArr->elementType))
       return false;
 
     bool thisHasSize = (sizeExpr != nullptr);
     bool otherHasSize = (otherArr->sizeExpr != nullptr);
 
-    // 2. If one has a size and the other doesn't, they are not equivalent
     if (thisHasSize != otherHasSize)
       return false;
 
-    // 3. If both have sizes, the numbers MUST match exactly
     if (thisHasSize && otherHasSize) {
       auto thisInt = llvm::dyn_cast<IntegerLiteral>(sizeExpr.get());
       auto otherInt = llvm::dyn_cast<IntegerLiteral>(otherArr->sizeExpr.get());
       if (thisInt && otherInt) {
         if (thisInt->getValue() != otherInt->getValue()) {
-          return false; // The literal sizes are different
+          return false;
         }
       } else {
         return false;
@@ -161,8 +150,6 @@ std::string ArrayType::toString() const {
   std::string s = elementType->toString() + "[";
 
   if (sizeExpr) {
-    // Dynamically cast to an IntegerLiteral to print the exact number (e.g.,
-    // [2])
     if (auto intLit = llvm::dyn_cast<IntegerLiteral>(sizeExpr.get())) {
       s += std::to_string(intLit->getValue());
     } else {
@@ -174,10 +161,8 @@ std::string ArrayType::toString() const {
   return s;
 }
 
-// === Slice Type ===
 void SliceType::accept(ASTVisitor &v) const { v.visitSliceType(this); }
 
-// === Map Type ===
 void MapType::accept(ASTVisitor &v) const { v.visitMapType(this); }
 
 bool MapType::isEquivalent(const Type &other) const {
@@ -192,23 +177,18 @@ std::string MapType::toString() const {
   return "table<" + keyType->toString() + ", " + valueType->toString() + ">";
 }
 
-// === Function Type ===
 void FunctionType::accept(ASTVisitor &v) const { v.visitFunctionType(this); }
 
-// === Named Type ===
 void NamedType::accept(ASTVisitor &v) const { v.visitNamedType(this); }
 
 bool NamedType::isEquivalent(const Type &other) const {
   if (const auto *otherNamed = llvm::dyn_cast<NamedType>(&other)) {
-    // 1. Names must match
     if (name != otherNamed->name)
       return false;
 
-    // 2. Argument counts must match
     if (genericArgs.size() != otherNamed->genericArgs.size())
       return false;
 
-    // 3. Arguments must be recursively equivalent AND match variance
     for (size_t i = 0; i < genericArgs.size(); ++i) {
       if (genericArgs[i].variance != otherNamed->genericArgs[i].variance)
         return false;
@@ -234,10 +214,8 @@ std::string NamedType::toString() const {
   return s;
 }
 
-// === Nullable Type ===
 void NullableType::accept(ASTVisitor &v) const { v.visitNullableType(this); }
 
-// === Enum Type ===
 void EnumType::accept(ASTVisitor &v) const { v.visitEnumType(this); }
 
 bool EnumType::isEquivalent(const Type &other) const {
@@ -249,7 +227,6 @@ bool EnumType::isEquivalent(const Type &other) const {
 
 std::string EnumType::toString() const { return "enum " + name; }
 
-// === Lock Type ===
 void LockType::accept(ASTVisitor &v) const { v.visitLockType(this); }
 
 bool LockType::isEquivalent(const Type &other) const {
@@ -261,7 +238,6 @@ bool LockType::isEquivalent(const Type &other) const {
 
 std::string LockType::toString() const { return "lock " + inner->toString(); }
 
-// === View Type ===
 void ViewType::accept(ASTVisitor &v) const { v.visitViewType(this); }
 
 bool ViewType::isEquivalent(const Type &other) const {
@@ -273,7 +249,6 @@ bool ViewType::isEquivalent(const Type &other) const {
 
 std::string ViewType::toString() const { return "view " + inner->toString(); }
 
-// === Mut Type ===
 void MutType::accept(ASTVisitor &v) const { v.visitMutType(this); }
 
 bool MutType::isEquivalent(const Type &other) const {
@@ -285,10 +260,8 @@ bool MutType::isEquivalent(const Type &other) const {
 
 std::string MutType::toString() const { return "mut " + inner->toString(); }
 
-// === Weak Type ===
 void WeakType::accept(ASTVisitor &v) const { v.visitWeakType(this); }
 
-// === Decimal Type ===
 void DecimalType::accept(ASTVisitor &v) const { v.visitDecimalType(this); }
 
 void VolatileType::accept(ASTVisitor &v) const { v.visitVolatileType(this); }
@@ -310,23 +283,18 @@ void ClosureType::accept(ASTVisitor &v) const { v.visitClosureType(this); }
 
 void PromiseType::accept(ASTVisitor &v) const { v.visitPromiseType(this); }
 
-// === View Type ===
 bool ViewType::isImmutable() const { return true; }
 const Type *ViewType::stripModifiers() const { return inner->stripModifiers(); }
 
-// === Const Type ===
 bool ConstType::isImmutable() const { return true; }
 const Type *ConstType::stripModifiers() const {
   return inner->stripModifiers();
 }
 
-// === Mut Type ===
 const Type *MutType::stripModifiers() const { return inner->stripModifiers(); }
 
-// === Lock Type ===
 const Type *LockType::stripModifiers() const { return inner->stripModifiers(); }
 
-// === Volatile Type ===
 const Type *VolatileType::stripModifiers() const {
   return inner->stripModifiers();
 }

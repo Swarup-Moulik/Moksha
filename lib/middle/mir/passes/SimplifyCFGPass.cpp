@@ -11,9 +11,7 @@
 namespace moksha {
 namespace mir {
 
-// ============================================================================
-// [Helper] Replace All Uses
-// ============================================================================
+/** @brief Replaces all uses of `oldVal` with `newVal` in the function `F`. */
 static void replaceAllUsesInFunction(MIRFunction *F, MIRValue *oldVal,
                                      MIRValue *newVal) {
   for (auto &blockPtr : F->getBlocks()) {
@@ -25,9 +23,7 @@ static void replaceAllUsesInFunction(MIRFunction *F, MIRValue *oldVal,
   }
 }
 
-// ============================================================================
-// [Helper] Replace Target Block in Terminators
-// ============================================================================
+/** @brief Replaces the target block in the terminator `term`. */
 static void replaceTargetBlock(MIRInst *term, MIRBlock *oldTarget,
                                MIRBlock *newTarget) {
   if (auto *br = llvm::dyn_cast_or_null<BranchInst>(term)) {
@@ -56,10 +52,6 @@ static void replaceTargetBlock(MIRInst *term, MIRBlock *oldTarget,
   }
 }
 
-// ============================================================================
-// [Pass Implementation]
-// ============================================================================
-
 bool SimplifyCFGPass::runOnModule(MIRModule &M) {
   bool changed = false;
   for (auto &func : M.getFunctions()) {
@@ -71,9 +63,7 @@ bool SimplifyCFGPass::runOnModule(MIRModule &M) {
 }
 
 bool SimplifyCFGPass::runOnFunction(MIRFunction *F) {
-  // ========================================================================
   // 1. THE CFG HEALER (Must run FIRST!)
-  // ========================================================================
   for (auto &blockPtr : F->getBlocks()) {
     blockPtr->getSuccessors().clear();
     blockPtr->getPredecessors().clear();
@@ -138,8 +128,6 @@ bool SimplifyCFGPass::runOnFunction(MIRFunction *F) {
             missingCFGBlocks.push_back(cfgPred);
         }
 
-        // [FIX] If exactly 1 block was bypassed, auto-repair the Phi even if
-        // it resulted in multiple new incoming edges (1-to-N mapping).
         if (stalePhiBlocks.size() == 1 && !missingCFGBlocks.empty()) {
           MIRValue *rescuedVal = nullptr;
           for (auto &[val, predBlock] : phi->getIncoming()) {
@@ -156,14 +144,12 @@ bool SimplifyCFGPass::runOnFunction(MIRFunction *F) {
           }
         }
       } else {
-        break; // Phis are always strictly at the top of the block
+        break;
       }
     }
   }
 
-  // ========================================================================
   // 2. SIMPLIFICATION LOOP (Runs safely on a sanitized graph)
-  // ========================================================================
   bool changed = false;
   bool localChanged = true;
 
@@ -175,9 +161,7 @@ bool SimplifyCFGPass::runOnFunction(MIRFunction *F) {
     changed |= localChanged;
   }
 
-  // ========================================================================
   // 3. DEAD BLOCK SWEEP
-  // ========================================================================
   size_t beforeSize = F->getBlocks().size();
   removeDeadBlocks(F);
 
@@ -188,10 +172,7 @@ bool SimplifyCFGPass::runOnFunction(MIRFunction *F) {
   return changed;
 }
 
-// ----------------------------------------------------------------------------
 // 1. Branch Folding
-// ----------------------------------------------------------------------------
-// Converts `br bool %cond, label %X, label %X` into `br label %X`
 bool SimplifyCFGPass::foldBranches(MIRFunction *F) {
   bool changed = false;
   for (auto &blockPtr : F->getBlocks()) {
@@ -204,20 +185,16 @@ bool SimplifyCFGPass::foldBranches(MIRFunction *F) {
 
     if (condBr && condBr->getTrueBlock() == condBr->getFalseBlock()) {
       MIRBlock *target = condBr->getTrueBlock();
-
-      // Replace with unconditional branch
       auto newBr = std::make_unique<BranchInst>(target, condBr->getLoc());
       b->getInstructionsMut().pop_back();
       b->addInstruction(std::move(newBr));
 
-      // [ADD THIS]: Clean up the duplicate CFG edge and duplicate Phi entry
-      b->removeSuccessor(target); // Removes one instance of the duplicate edge
+      b->removeSuccessor(target);
       target->removePredecessor(b);
 
       for (auto &inst : target->getInstructionsMut()) {
         if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst.get())) {
           auto &incoming = phi->getIncomingMut();
-          // Find and erase exactly ONE of the duplicate incoming edges
           for (auto it = incoming.begin(); it != incoming.end(); ++it) {
             if (it->second == b) {
               incoming.erase(it);
@@ -235,22 +212,17 @@ bool SimplifyCFGPass::foldBranches(MIRFunction *F) {
   return changed;
 }
 
-// ----------------------------------------------------------------------------
 // 2. Empty Block Bypassing
-// ----------------------------------------------------------------------------
-// If Block B is empty and unconditionally jumps to C, rewrite A to jump to C.
 bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
   for (auto &blockPtr : F->getBlocks()) {
     MIRBlock *B = blockPtr.get();
 
-    // Never bypass the entry block
     if (B == F->getEntryBlock())
       continue;
 
     if (B->getPredecessors().empty())
       continue;
 
-    // An empty block has exactly one instruction: an unconditional jump
     if (B->getInstructions().size() != 1)
       continue;
 
@@ -261,11 +233,10 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
 
     MIRBlock *C = br->getTarget();
     if (B == C)
-      continue; // Ignore infinite self-loops
+      continue;
 
     bool cHasPhi = false;
     for (auto &inst : C->getInstructions()) {
-      // 1. MUST ADD THIS NULL CHECK!
       if (!inst)
         continue;
 
@@ -283,7 +254,6 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
         continue;
 
       auto *term = A->getInstructionsMut().back().get();
-      // 2. MUST ADD NULL CHECK HERE TOO!
       if (term && llvm::isa<InvokeInst>(term)) {
         canBypass = false;
         break;
@@ -292,7 +262,6 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
 
     if (cHasPhi) {
       for (MIRBlock *A : B->getPredecessors()) {
-        // If predecessor A already has a path to C, abort bypassing B!
         if (std::find(C->getPredecessors().begin(), C->getPredecessors().end(),
                       A) != C->getPredecessors().end()) {
           canBypass = false;
@@ -304,22 +273,15 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
     if (!canBypass)
       continue;
 
-    // Bypass B: Wire all of B's predecessors directly to C
-    // Copy predecessors to avoid iterator invalidation during mutation
     std::vector<MIRBlock *> preds = B->getPredecessors();
 
     for (MIRBlock *A : preds) {
-      // 1. Rewrite A's terminator to point to C instead of B.
       auto *term = A->getInstructionsMut().back().get();
       replaceTargetBlock(term, B, C);
-
-      // 2. Update CFG Edges
       A->removeSuccessor(B);
       A->addSuccessor(C);
       C->addPredecessor(A);
 
-      // 3. Update Phi Nodes in C: Inherit values coming from B, but attribute
-      // them to A
       for (auto &inst : C->getInstructionsMut()) {
         if (!inst)
           continue;
@@ -335,12 +297,11 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
             phi->addIncoming(valForB, A);
           }
         } else {
-          break; // Phis are always at the top of the block
+          break;
         }
       }
     }
 
-    // Disconnect B from C
     C->removePredecessor(B);
     for (auto &inst : C->getInstructionsMut()) {
       if (!inst)
@@ -354,16 +315,12 @@ bool SimplifyCFGPass::bypassEmptyBlocks(MIRFunction *F) {
     B->getPredecessors().clear();
     B->getSuccessors().clear();
 
-    // Return immediately to restart the scan (since the graph mutated)
     return true;
   }
   return false;
 }
 
-// ----------------------------------------------------------------------------
 // 3. Block Merging
-// ----------------------------------------------------------------------------
-// If A unconditionally jumps to B, and A is B's ONLY predecessor, merge them.
 bool SimplifyCFGPass::mergeBlocks(MIRFunction *F) {
   for (auto &blockPtr : F->getBlocks()) {
     MIRBlock *A = blockPtr.get();
@@ -377,17 +334,11 @@ bool SimplifyCFGPass::mergeBlocks(MIRFunction *F) {
 
     MIRBlock *B = br->getTarget();
 
-    // Cannot merge into the entry block, and cannot merge self-loops
     if (B == A || B == F->getEntryBlock())
       continue;
 
-    // We can only merge if A is B's EXCLUSIVE predecessor
     if (B->getPredecessors().size() == 1 && B->getPredecessors()[0] == A) {
-
-      // 1. Delete the jump from A to B
       A->getInstructionsMut().pop_back();
-
-      // 2. Move instructions from B into A
       for (auto &inst : B->getInstructionsMut()) {
         if (!inst)
           continue;
@@ -408,15 +359,11 @@ bool SimplifyCFGPass::mergeBlocks(MIRFunction *F) {
         }
       }
       B->getInstructionsMut().clear();
-
-      // 3. Update CFG Edges: A inherits B's successors
       A->removeSuccessor(B);
       for (MIRBlock *succ : B->getSuccessors()) {
         A->addSuccessor(succ);
         succ->removePredecessor(B);
         succ->addPredecessor(A);
-
-        // 4. Update Phis in the successors to expect edges from A instead of B
         for (auto &inst : succ->getInstructionsMut()) {
           if (!inst)
             continue;
@@ -441,24 +388,19 @@ bool SimplifyCFGPass::mergeBlocks(MIRFunction *F) {
       B->getSuccessors().clear();
       B->getPredecessors().clear();
 
-      return true; // Return immediately to restart scan
+      return true;
     }
   }
   return false;
 }
 
-// ----------------------------------------------------------------------------
 // 4. Dead Block Cleanup
-// ----------------------------------------------------------------------------
-// Deletes blocks that have zero predecessors (except the Entry Block)
 void SimplifyCFGPass::removeDeadBlocks(MIRFunction *F) {
   auto &blocks = F->getBlocksMut();
   bool changed = true;
 
   while (changed) {
     changed = false;
-
-    // [ADD THIS FIX] Rebuild reliable predecessors dynamically
     std::unordered_map<MIRBlock *, std::vector<MIRBlock *>> truePreds;
     for (auto &blockPtr : blocks) {
       for (MIRBlock *succ : blockPtr->getSuccessors()) {
@@ -483,7 +425,7 @@ void SimplifyCFGPass::removeDeadBlocks(MIRFunction *F) {
             if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst.get())) {
               phi->removeIncoming(block);
             } else {
-              break; // Phis are always at the top
+              break;
             }
           }
         }
@@ -492,7 +434,7 @@ void SimplifyCFGPass::removeDeadBlocks(MIRFunction *F) {
 
         // 3. Now it is safe to erase the block
         it = blocks.erase(it);
-        changed = true; // Restart the sweep to catch cascading dead blocks
+        changed = true;
       } else {
         ++it;
       }

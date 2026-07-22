@@ -8,11 +8,11 @@ void test_lock_elevation() {
         // Test: Implicit elevation allows direct mutation
         *p = 200;
 
-        // Test: Inside the lock, you can take a shared read (view) safely
+        // Test: Inside the lock, you can take a shared reed (view) safely
         *view int v = p;
-        int read = *v;
+        int reed = *v;
 
-        println(read); // Expected: 200
+        println(reed); // Expected: 200
     }
 }
 

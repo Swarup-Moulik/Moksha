@@ -34,12 +34,10 @@ extern const AnyVTable vtable_map;
 extern const AnyVTable vtable_string;
 extern const AnyVTable vtable_array;
 
-// ============================================================================
 // Internal Utilities
-// ============================================================================
 
 static char *make_mstring(const char *cstr, size_t len) {
-  char *str = (char *)moksha_rt_alloc(len + 1, 1 /* MOKSHA_TYPE_I8 */);
+  char *str = (char *)moksha_rt_alloc(len + 1, 1);
   memcpy(str, cstr, len);
   str[len] = '\0';
   return str;
@@ -79,9 +77,7 @@ int32_t moksha_rt_any_len(MokshaAny *any_val) {
   return 0;
 }
 
-// ============================================================================
-// Internal Literal Parser for Structured Data
-// ============================================================================
+/** @brief Internal Literal Parser for Structured Data */
 static MokshaAny *parse_and_box_literal(const char *val_start, int val_len,
                                         bool is_string) {
   if (is_string) {
@@ -131,9 +127,7 @@ static MokshaAny *parse_and_box_literal(const char *val_start, int val_len,
   return parse_and_box_literal(val_start, val_len, true);
 }
 
-// ============================================================================
-// Raw File Descriptor Builtins
-// ============================================================================
+/** @brief Raw File Descriptor Builtins */
 
 MokshaAnyRet moksha_file_open(char *path, int32_t mode) {
   if (!path)
@@ -258,9 +252,7 @@ void moksha_file_truncate(MokshaAny *file_any, int64_t size) {
     ftruncate(fd, (off_t)size);
 }
 
-// ============================================================================
-// High-Level Stream IO
-// ============================================================================
+/** @brief High-Level Stream IO */
 
 void moksha_file_writeLine(MokshaAny *file_any, char *text) {
   int fd = unbox_fd(file_any);
@@ -391,18 +383,15 @@ void moksha_file_appendText(char *path, char *text) {
   }
 }
 
-// ============================================================================
-// High-Level Binary IO
-// ============================================================================
+/** @brief High-Level Binary IO */
 
 void moksha_file_writeBytes(char *path, MokshaAny *data_any) {
   if (!path || !data_any || !data_any->data)
     return;
 
-  // Fix: Single unbox to match the compiler's anycast ABI
   MokshaSlice *slice = (MokshaSlice *)data_any->data;
-
   int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
+
   if (fd >= 0) {
     uint8_t *bytes = malloc(slice->length);
     int32_t *ints = (int32_t *)slice->data;
@@ -419,10 +408,9 @@ void moksha_file_appendBytes(char *path, MokshaAny *data_any) {
   if (!path || !data_any || !data_any->data)
     return;
 
-  // Fix: Single unbox to match the compiler's anycast ABI
   MokshaSlice *slice = (MokshaSlice *)data_any->data;
-
   int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_BINARY, 0666);
+
   if (fd >= 0) {
     uint8_t *bytes = malloc(slice->length);
     int32_t *ints = (int32_t *)slice->data;
@@ -463,9 +451,7 @@ MokshaAnyRet moksha_file_readBytes(char *path) {
   return moksha_pack_any(slice, &vtable_array);
 }
 
-// ============================================================================
-// Structured Data (JSON / YAML / PDF File Streamers)
-// ============================================================================
+/** @brief Structured Data (JSON / YAML / PDF File Streamers) */
 
 void moksha_file_writeJson(char *path, MokshaAny *data_any) {
   void *map_ptr = data_any ? data_any->data : NULL;
@@ -639,9 +625,7 @@ MokshaAnyRet moksha_file_readYaml(char *path) {
   return moksha_pack_any(map, &vtable_map);
 }
 
-// ============================================================================
-// CSV File Streamers (Array of Tables)
-// ============================================================================
+/** @brief CSV File Streamers (Array of Tables) */
 
 void moksha_file_writeCsv(char *path, MokshaAny *data_any) {
   if (!path || !data_any || !data_any->data)
@@ -708,7 +692,6 @@ void moksha_file_writeCsv(char *path, MokshaAny *data_any) {
       if (needs_quotes)
         write(fd, "\"", 1);
 
-      // Use ARC release safely on the allocated C-string
       if (!is_str && v) {
         moksha_rt_release(v_str);
       }
@@ -858,9 +841,7 @@ MokshaAnyRet moksha_file_readCsv(char *path) {
   return moksha_pack_any(slice, &vtable_array);
 }
 
-// ============================================================================
-// PDF endpoints
-// ============================================================================
+/** @brief PDF endpoints (Mock for demo) */
 
 MokshaAnyRet moksha_file_createPdf(char *path) {
   MokshaAnyRet ret = moksha_file_open(path, 2 | 16 | 32);
@@ -912,9 +893,8 @@ char *moksha_file_extractText(MokshaAny *pdf_any) {
   return raw_buffer;
 }
 
-// ============================================================================
-// Directory Operations
-// ============================================================================
+/** @brief Directory Operations */
+
 bool moksha_file_createDir(char *path) {
   if (!path)
     return false;

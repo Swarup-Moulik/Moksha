@@ -12,9 +12,8 @@ ASTContext::ASTContext() {
   CharTy = std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Char, loc);
   StringTy =
       std::make_unique<PrimitiveType>(PrimitiveType::Scalar::String, loc);
-  AnyTy = std::make_unique<AnyType>(loc);
 
-  // [FIX] Initialize NullTy
+  AnyTy = std::make_unique<AnyType>(loc);
   NullTy = std::make_unique<NullType>(loc);
 
   I8Ty = std::make_unique<PrimitiveType>(PrimitiveType::Scalar::I8, loc);
@@ -44,7 +43,6 @@ const Type *ASTContext::createDecimalType(unsigned int precision,
 }
 
 const Type *ASTContext::createPointerType(const Type *pointee) {
-  // Use saveType to store the unique_ptr in the context's ownedTypes vector
   return saveType(
       std::make_unique<PointerType>(pointee->clone(), pointee->getLoc()));
 }
@@ -55,8 +53,6 @@ const Type *ASTContext::createReferenceType(const Type *inner) {
 }
 
 const Type *ASTContext::createNullableType(const Type *inner) {
-  // In a real compiler, we would deduplicate (intern) types here.
-  // For now, we clone the inner type and wrap it.
   return saveType(
       std::make_unique<NullableType>(inner->clone(), inner->getLoc()));
 }
@@ -87,7 +83,7 @@ const Type *ASTContext::createMapType(const Type *key, const Type *value) {
 const Type *
 ASTContext::createFunctionType(const std::vector<const Type *> &params,
                                const Type *ret, bool isVariadic,
-                               bool isInterrupt) { // [FIX] Added parameter
+                               bool isInterrupt) {
   std::vector<TypePtr> clonedParams;
   for (const auto *p : params) {
     clonedParams.push_back(p->clone());
@@ -98,7 +94,6 @@ ASTContext::createFunctionType(const std::vector<const Type *> &params,
 }
 
 const Type *ASTContext::createNamedType(const std::string &name) {
-  // Assuming invariant for simple creation
   std::vector<TypePtr> args;
   return saveType(
       std::make_unique<NamedType>(name, std::move(args), SourceLocation()));
@@ -150,7 +145,6 @@ const ClassDecl *ASTContext::lookupClass(llvm::StringRef name) const {
 }
 
 const Type *ASTContext::getSliceType(const Type *elementType) {
-  // If you aren't interning slices yet, just return a new owned instance:
   return saveType(
       std::make_unique<SliceType>(elementType->clone(), elementType->getLoc()));
 }

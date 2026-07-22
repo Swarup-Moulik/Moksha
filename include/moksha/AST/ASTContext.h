@@ -11,6 +11,7 @@ namespace moksha {
 class Decl;
 class ClassDecl;
 
+/** @brief It holds the context for the AST, including built-in types and type registrations. */
 class ASTContext {
 public:
   ASTContext();
@@ -19,7 +20,7 @@ public:
   ASTContext(const ASTContext &) = delete;
   ASTContext &operator=(const ASTContext &) = delete;
 
-  // --- Built-in Type Accessors ---
+  // Built-in Type Accessors
   [[nodiscard]] const Type *getVoidType() const { return VoidTy.get(); }
   [[nodiscard]] const Type *getBoolType() const { return BoolTy.get(); }
   [[nodiscard]] const Type *getCharType() const { return CharTy.get(); }

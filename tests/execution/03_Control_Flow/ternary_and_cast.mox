@@ -5,8 +5,8 @@ void test_ternary() {
     int y = 20;
 
     // Ternary Operator
-    int max = (x > y) ? x : y;
-    println(max); // Expected: 20
+    int mx = (x > y) ? x : y;
+    println(mx); // Expected: 20
 
     // Nested Ternary
     string result = (x == y) ? "equal" : ((x > y) ? "greater" : "lesser");

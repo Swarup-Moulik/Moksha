@@ -15,7 +15,7 @@ void BuiltinRegistry::registerBuiltins(ASTContext &ctx, SymbolTable &sym) {
   registerFileBuiltins(ctx, sym);
   registerAllocators(ctx, sym);
 
-  // --- Register Math / Bitwise Intrinsics ---
+  // Register Intrinsics
   SourceLocation loc;
 
   // 1. bswap32(val: unsigned int) -> unsigned int
@@ -80,14 +80,10 @@ void BuiltinRegistry::registerBuiltins(ASTContext &ctx, SymbolTable &sym) {
     // message: string
     members.push_back(std::make_unique<VariableDecl>(
         std::make_unique<PrimitiveType>(PrimitiveType::Scalar::String, loc),
-        "message", nullptr, false, /* isConst */
-        false,                     /* isThreadLocal */
-        false,                     /* isStatic */
-        Visibility::Public, loc));
+        "message", nullptr, false, false, false, Visibility::Public, loc));
 
     auto classDecl = std::make_unique<ClassDecl>(
-        "Exception", std::vector<std::string>{}, std::move(members),
-        true, // isRefClass = true (heap allocated)
+        "Exception", std::vector<std::string>{}, std::move(members), true,
         AggregateKind::Class, Visibility::Public, loc);
 
     sym.addSymbol("Exception",
@@ -115,21 +111,12 @@ void BuiltinRegistry::registerMathBuiltins(ASTContext &ctx, SymbolTable &sym) {
     return std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc);
   };
 
-  // 1. Constants (Registered as Read-Only Globals)
   auto addConst = [&](const std::string &name) {
     auto decl = std::make_unique<VariableDecl>(
-        mkF64(), name,
-        nullptr, // No initial expression for a const declaration usually
-        true,    // isConst
-        true,    // isStatic
-        false,   // isShared
-        Visibility::Public, loc);
+        mkF64(), name, nullptr, true, true, false, Visibility::Public, loc);
 
-    // FIX 1: Treat builtin constants as extern so they bypass initialization
-    // checks
     decl->setExtern(true);
 
-    // FIX 2: Pass decl->getType() instead of nullptr
     sym.addSymbol(
         name, Symbol(SymbolKind::Variable, name, decl->getType(), decl.get()));
     ctx.takeOwnership(std::move(decl));
@@ -141,7 +128,6 @@ void BuiltinRegistry::registerMathBuiltins(ASTContext &ctx, SymbolTable &sym) {
   addConst("INF");
   addConst("NAN");
 
-  // 2. Function Registration Helper
   auto addMath = [&](const std::string &name,
                      std::vector<FunctionDecl::Param> params,
                      std::unique_ptr<Type> ret) {
@@ -359,9 +345,6 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
     ctx.takeOwnership(std::move(genericDecl));
   }
 
-  // =========================================================================
-  // HELPER ARRAY BUILTINS
-  // =========================================================================
   auto registerArrayBuiltin = [&](std::string name,
                                   std::vector<FunctionDecl::Param> params,
                                   std::unique_ptr<Type> retType) {
@@ -397,7 +380,7 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
     return std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc);
   };
 
-  // --- UNIVERSAL METHODS (Slice / View / Properties) ---
+  /** @brief UNIVERSAL METHODS (Slice / View / Properties) */
 
   // is_empty<T>(arr: T[]) -> bool
   {
@@ -461,7 +444,7 @@ void BuiltinRegistry::registerGenericArrayBuiltins(ASTContext &ctx,
     registerArrayBuiltin("sort", std::move(p), makeVoidT());
   }
 
-  // --- DYNAMIC-ONLY METHODS (Heap modifying) ---
+  /** @brief DYNAMIC-ONLY METHODS (Heap modifying) */
 
   // clone<T>(arr: T[]) -> T[]
   {
@@ -716,7 +699,7 @@ void BuiltinRegistry::registerMapBuiltins(ASTContext &ctx, SymbolTable &sym) {
 void BuiltinRegistry::registerStandardIO(ASTContext &ctx, SymbolTable &sym) {
   SourceLocation loc;
 
-  // --- length(str: string) -> int ---
+  // length(str: string) -> int
   {
     std::vector<FunctionDecl::Param> params;
     params.push_back(
@@ -735,7 +718,7 @@ void BuiltinRegistry::registerStandardIO(ASTContext &ctx, SymbolTable &sym) {
     ctx.takeOwnership(std::move(funcDecl));
   }
 
-  // --- at(str: string, index: i32) -> char ---
+  // at(str: string, index: i32) -> char
   {
     std::vector<FunctionDecl::Param> params;
     params.push_back(
@@ -749,8 +732,7 @@ void BuiltinRegistry::registerStandardIO(ASTContext &ctx, SymbolTable &sym) {
 
     auto funcDecl = std::make_unique<FunctionDecl>(
         "at", std::move(params),
-        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Char,
-                                        loc), // Returns a char!
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Char, loc),
         nullptr, false, false, false, false, Visibility::Public, loc);
     funcDecl->setBuiltin(true);
 
@@ -960,7 +942,7 @@ void BuiltinRegistry::registerAsyncBuiltins(ASTContext &ctx, SymbolTable &sym) {
     auto funcDecl = std::make_unique<FunctionDecl>(
         "join", std::move(params),
         std::make_unique<PromiseType>(std::move(sliceType), loc), nullptr,
-        false, false, true /* isVariadic */, false, Visibility::Public, loc);
+        false, false, true, false, Visibility::Public, loc);
     funcDecl->setBuiltin(true);
     sym.addSymbol(
         "join", Symbol(SymbolKind::Function, "join", nullptr, funcDecl.get()));
@@ -974,8 +956,7 @@ void BuiltinRegistry::registerAsyncBuiltins(ASTContext &ctx, SymbolTable &sym) {
     auto funcDecl = std::make_unique<FunctionDecl>(
         "select", std::move(params),
         std::make_unique<PromiseType>(std::make_unique<AnyType>(loc), loc),
-        nullptr, false, false, true /* isVariadic */, false, Visibility::Public,
-        loc);
+        nullptr, false, false, true, false, Visibility::Public, loc);
     funcDecl->setBuiltin(true);
     sym.addSymbol("select", Symbol(SymbolKind::Function, "select", nullptr,
                                    funcDecl.get()));
@@ -1018,8 +999,6 @@ void BuiltinRegistry::registerAsyncBuiltins(ASTContext &ctx, SymbolTable &sym) {
   // 8. Channel<T> Generic Class
   {
     std::vector<std::unique_ptr<Decl>> members;
-
-    // constructor(capacity: i32)
     std::vector<FunctionDecl::Param> ctorParams;
     ctorParams.push_back(
         {"capacity",
@@ -1139,9 +1118,7 @@ void BuiltinRegistry::registerAsyncBuiltins(ASTContext &ctx, SymbolTable &sym) {
 void BuiltinRegistry::registerFileBuiltins(ASTContext &ctx, SymbolTable &sym) {
   SourceLocation loc;
 
-  // ========================================================================
   // 1. File Mode Constants (Registered as Read-Only Extern Globals)
-  // ========================================================================
   auto addConst = [&](const std::string &name) {
     auto decl = std::make_unique<VariableDecl>(
         std::make_unique<PrimitiveType>(PrimitiveType::Scalar::I32, loc), name,
@@ -1159,10 +1136,7 @@ void BuiltinRegistry::registerFileBuiltins(ASTContext &ctx, SymbolTable &sym) {
   addConst("CREATE");
   addConst("TRUNCATE");
 
-  // ========================================================================
   // 2. Optimized Function Registration Helper
-  // ========================================================================
-  // Using an enum allows us to bypass std::unique_ptr initializer-list limits
   enum class BType { Str, I32, I64, Bool, Any, Void };
 
   auto getTy = [&](BType t) -> std::unique_ptr<Type> {
@@ -1177,8 +1151,7 @@ void BuiltinRegistry::registerFileBuiltins(ASTContext &ctx, SymbolTable &sym) {
     case BType::Bool:
       return std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Bool, loc);
     case BType::Any:
-      return std::make_unique<AnyType>(
-          loc); // FIX 1: Use AnyType instead of PrimitiveType
+      return std::make_unique<AnyType>(loc);
     case BType::Void:
       return std::make_unique<PrimitiveType>(PrimitiveType::Scalar::Void, loc);
     }
@@ -1202,34 +1175,26 @@ void BuiltinRegistry::registerFileBuiltins(ASTContext &ctx, SymbolTable &sym) {
     ctx.takeOwnership(std::move(funcDecl));
   };
 
-  // ========================================================================
   // 3. Core File Operations
-  // ========================================================================
   regFn("open", {{"path", BType::Str}, {"mode", BType::I32}}, BType::Any);
   regFn("close", {{"file", BType::Any}}, BType::Void);
   regFn("read", {{"file", BType::Any}}, BType::Any);
   regFn("write", {{"file", BType::Any}, {"data", BType::Any}}, BType::Void);
 
-  // ========================================================================
   // 4. Convenience Text I/O
-  // ========================================================================
   regFn("readText", {{"path", BType::Str}}, BType::Str);
   regFn("writeText", {{"path", BType::Str}, {"text", BType::Str}}, BType::Void);
   regFn("appendText", {{"path", BType::Str}, {"text", BType::Str}},
         BType::Void);
 
-  // ========================================================================
   // 5. Raw Byte I/O
-  // ========================================================================
   regFn("readBytes", {{"path", BType::Str}}, BType::Any);
   regFn("writeBytes", {{"path", BType::Str}, {"bytes", BType::Any}},
         BType::Void);
   regFn("appendBytes", {{"path", BType::Str}, {"bytes", BType::Any}},
         BType::Void);
 
-  // ========================================================================
   // 6. Structured Data (JSON/YAML/CSV)
-  // ========================================================================
   regFn("readJson", {{"path", BType::Str}}, BType::Any);
   regFn("writeJson", {{"path", BType::Str}, {"data", BType::Any}}, BType::Void);
   regFn("readYaml", {{"path", BType::Str}}, BType::Any);
@@ -1237,9 +1202,7 @@ void BuiltinRegistry::registerFileBuiltins(ASTContext &ctx, SymbolTable &sym) {
   regFn("readCsv", {{"path", BType::Str}}, BType::Any);
   regFn("writeCsv", {{"path", BType::Str}, {"data", BType::Any}}, BType::Void);
 
-  // ========================================================================
   // 7. PDF Utilities
-  // ========================================================================
   regFn("openPdf", {{"path", BType::Str}}, BType::Any);
   regFn("createPdf", {{"path", BType::Str}}, BType::Any);
   regFn("extractText", {{"pdf", BType::Any}}, BType::Str);
@@ -1247,16 +1210,12 @@ void BuiltinRegistry::registerFileBuiltins(ASTContext &ctx, SymbolTable &sym) {
         BType::Void);
   regFn("savePdf", {{"pdf", BType::Any}}, BType::Void);
 
-  // ========================================================================
   // 8. Line Operations
-  // ========================================================================
   regFn("readLine", {{"file", BType::Any}}, BType::Str);
   regFn("writeLine", {{"file", BType::Any}, {"text", BType::Str}}, BType::Void);
-  regFn("readLines", {{"file", BType::Any}}, BType::Any); // Returns an Array
+  regFn("readLines", {{"file", BType::Any}}, BType::Any);
 
-  // ========================================================================
   // 9. Navigation and File Metadata
-  // ========================================================================
   regFn("seek", {{"file", BType::Any}, {"position", BType::I64}}, BType::Void);
   regFn("tell", {{"file", BType::Any}}, BType::I64);
   regFn("flush", {{"file", BType::Any}}, BType::Void);
@@ -1264,9 +1223,7 @@ void BuiltinRegistry::registerFileBuiltins(ASTContext &ctx, SymbolTable &sym) {
   regFn("size", {{"file", BType::Any}}, BType::I64);
   regFn("truncate", {{"file", BType::Any}, {"size", BType::I64}}, BType::Void);
 
-  // ========================================================================
   // 10. File System & Directory Management
-  // ========================================================================
   regFn("exists", {{"path", BType::Str}}, BType::Bool);
   regFn("isFile", {{"path", BType::Str}}, BType::Bool);
   regFn("isDir", {{"path", BType::Str}}, BType::Bool);
@@ -1275,8 +1232,7 @@ void BuiltinRegistry::registerFileBuiltins(ASTContext &ctx, SymbolTable &sym) {
   regFn("removeDir", {{"path", BType::Str}}, BType::Bool);
   regFn("copy", {{"src", BType::Str}, {"dst", BType::Str}}, BType::Bool);
   regFn("move_file", {{"src", BType::Str}, {"dst", BType::Str}}, BType::Bool);
-  regFn("listDir", {{"path", BType::Str}},
-        BType::Any); // Returns Array of Strings
+  regFn("listDir", {{"path", BType::Str}}, BType::Any);
 }
 
 void BuiltinRegistry::registerAllocators(ASTContext &ctx, SymbolTable &sym) {

@@ -18,7 +18,7 @@
 namespace moksha {
 namespace mir {
 
-// [FIX] Static helpers to replace missing HIRType methods
+// Static helpers to replace missing HIRType methods
 static bool isBoolean(const hir::HIRType *t) {
   return t && t->getKind() == hir::TypeKind::Bool;
 }
@@ -31,17 +31,11 @@ static bool isPointer(const hir::HIRType *t) {
 static bool isVoid(const hir::HIRType *t) {
   return !t || t->getKind() == hir::TypeKind::Void;
 }
-// ============================================================================
-// [Constructor]
-// ============================================================================
-
+// Constructor
 MIRVerifier::MIRVerifier(llvm::raw_ostream *os, bool verbose)
     : os(os), hasError(false), verbose(verbose) {}
 
-// ============================================================================
-// [Public Entry Points]
-// ============================================================================
-
+// Public Entry Points
 bool MIRVerifier::verify(const MIRModule *module) {
   errors.clear();
   hasError = false;
@@ -54,10 +48,7 @@ bool MIRVerifier::verify(const MIRFunction *func) {
   return verifyFunction(func);
 }
 
-// ============================================================================
-// [Verification Logic]
-// ============================================================================
-
+// Verification Logic
 bool MIRVerifier::verifyModule(const MIRModule *module) {
   bool ok = true;
 
@@ -66,7 +57,6 @@ bool MIRVerifier::verifyModule(const MIRModule *module) {
     if (global->hasInitializer()) {
       const MIRConstant *init = global->getInitializer();
 
-      // [FIX] Extract the underlying type from the global's PointerType wrapper
       const hir::HIRType *expectedInitTy = nullptr;
       if (isPointer(global->getType())) {
         expectedInitTy =
@@ -84,7 +74,6 @@ bool MIRVerifier::verifyModule(const MIRModule *module) {
         }
 
         if (!isAllowed) {
-          // Pass expectedInitTy instead of global->getType()
           verifyType(init, expectedInitTy, "Global initializer type mismatch",
                      nullptr);
           ok = false;
@@ -92,7 +81,6 @@ bool MIRVerifier::verifyModule(const MIRModule *module) {
       }
     }
   }
-  // Check functions
   for (const auto &func : module->getFunctions()) {
     if (!func->isDeclaration()) {
       if (!verifyFunction(func)) {
@@ -140,7 +128,6 @@ bool MIRVerifier::checkUnreachableBlocks(const MIRFunction *func) {
   std::unordered_set<const MIRBlock *> reachable;
   std::stack<const MIRBlock *> worklist;
 
-  // Start from entry block
   const MIRBlock *entry = func->getBlocks().front().get();
   reachable.insert(entry);
   worklist.push(entry);
@@ -156,7 +143,6 @@ bool MIRVerifier::checkUnreachableBlocks(const MIRFunction *func) {
     }
   }
 
-  // Check if any blocks were not visited
   for (const auto &block : func->getBlocks()) {
     if (reachable.find(block.get()) == reachable.end()) {
       logError("Block is unreachable from entry", block.get());
@@ -355,7 +341,6 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
   // Branching
   case Opcode::CondBr: {
     const auto *br = static_cast<const CondBranchInst *>(inst);
-    // [FIX] Use static helper
     if (!isBoolean(br->getCondition()->getType())) {
       logError("CondBr condition must be boolean", inst);
     }
@@ -365,7 +350,6 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
   // Switch
   case Opcode::Switch: {
     const auto *sw = static_cast<const SwitchInst *>(inst);
-    // [FIX] Use static helper
     if (!isInteger(sw->getCondition()->getType())) {
       logError("Switch condition must be integer", inst);
     }
@@ -419,7 +403,7 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
     }
 
     // Direct Call Verification
-    if (const auto *func = llvm::dyn_cast<MIRFunction>(callee)) {
+    if (const auto *func = llvm::dyn_cast_or_null<MIRFunction>(callee)) {
       const auto &params = func->getArguments();
       const auto &args = call->getArgs();
 
@@ -446,13 +430,12 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
       // Indirect Call Verification
       const hir::HIRType *type = callee->getType();
 
-      // [FIX] Check if pointer to function
       if (!isPointer(type)) {
         logError("Indirect call operand is not a pointer", inst);
       } else {
         auto *ptrTy = llvm::cast<hir::PointerType>(type);
         if (auto *funcTy =
-                llvm::dyn_cast<hir::FunctionType>(ptrTy->getPointee())) {
+                llvm::dyn_cast_or_null<hir::FunctionType>(ptrTy->getPointee())) {
 
           const auto &pTypes = funcTy->getParamTypes();
           const auto &args = call->getArgs();
@@ -606,7 +589,6 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
   case Opcode::LandingPad: {
     const auto *lpad = static_cast<const LandingPadInst *>(inst);
 
-    // A landing pad usually returns a struct { i8*, i32 }
     if (!lpad->getType() ||
         lpad->getType()->getKind() != hir::TypeKind::Struct) {
       logError("LandingPadInst must return a struct type { i8*, i32 }", inst);
@@ -659,18 +641,16 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
   case Opcode::AnyCast:
   case Opcode::ArrayToSlice:
   case Opcode::SliceToArray: {
-    break; // Trust the frontend type-checker for these casts
+    break;
   }
   case Opcode::Spawn: {
     const auto *spawn = static_cast<const SpawnInst *>(inst);
 
-    // Check using the specific getter your class provides
     if (!spawn->getClosure()) {
       logError("SpawnInst requires a closure operand", inst);
       return false;
     }
 
-    // The crucial PromiseType check
     if (!llvm::isa<hir::HIRPromiseType>(spawn->getType())) {
       logError("SpawnInst return type MUST be a PromiseType.", inst);
       return false;
@@ -706,10 +686,7 @@ bool MIRVerifier::verifyInstruction(const MIRInst *inst) {
   return !hasError;
 }
 
-// ============================================================================
-// [Type Checking Helpers]
-// ============================================================================
-
+// Type Checking Helpers
 bool MIRVerifier::verifyTypesMatch(const MIRValue *val1, const MIRValue *val2,
                                    const std::string &msg,
                                    const MIRInst *contextInst) {
@@ -756,10 +733,7 @@ bool MIRVerifier::verifyType(const MIRValue *val, const hir::HIRType *expected,
   return true;
 }
 
-// ============================================================================
-// [Logging Helpers]
-// ============================================================================
-
+// Logging Helpers
 void MIRVerifier::logError(const std::string &msg) {
   hasError = true;
   std::string fullMsg = "Error: " + msg;

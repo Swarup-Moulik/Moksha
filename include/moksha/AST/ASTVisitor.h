@@ -9,7 +9,7 @@ class ASTVisitor {
 public:
   virtual ~ASTVisitor() = default;
 
-  // --- Types ---
+  // Types
   virtual void visitPrimitiveType(const PrimitiveType *type) = 0;
   virtual void visitPointerType(const PointerType *type) = 0;
   virtual void visitReferenceType(const ReferenceType *type) = 0;
@@ -32,7 +32,7 @@ public:
   virtual void visitWeakType(const WeakType *type) = 0;
   virtual void visitPromiseType(const PromiseType *type) = 0;
 
-  // --- Expressions ---
+  // Expressions
   virtual void visitIntegerLiteral(const IntegerLiteral *expr) = 0;
   virtual void visitFloatLiteral(const FloatLiteral *expr) = 0;
   virtual void visitDecimalLiteral(const DecimalLiteral *expr) = 0;
@@ -62,7 +62,7 @@ public:
   virtual void visitInputExpr(const InputExpr *expr) = 0;
   virtual void visitAsmExpr(const AsmExpr *expr) = 0;
 
-  // --- Declarations ---
+  // Declarations
   virtual void visitModuleDecl(const ModuleDecl *decl) = 0;
   virtual void visitVariableDecl(const VariableDecl *decl) = 0;
   virtual void visitFunctionDecl(const FunctionDecl *decl) = 0;
@@ -73,7 +73,7 @@ public:
   virtual void visitMacroDecl(const MacroDecl *decl) = 0;
   virtual void visitUsingDecl(const UsingDecl *decl) = 0;
 
-  // --- Statements ---
+  // Statements
   virtual void visitBlockStmt(const BlockStmt *stmt) = 0;
   virtual void visitExpressionStmt(const ExpressionStmt *stmt) = 0;
   virtual void visitDeclStmt(const DeclStmt *stmt) = 0;

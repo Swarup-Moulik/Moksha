@@ -25,9 +25,7 @@ class HIRVarDeclStmt;
 // Pointer alias
 using HIRStmtPtr = std::unique_ptr<HIRStmt>;
 
-// ============================================================================
-// [Base Class] HIRStmt
-// ============================================================================
+/** @brief Base class for all HIR statements */
 class HIRStmt {
 public:
   enum class Kind {
@@ -77,15 +75,11 @@ protected:
   SourceLocation loc;
 };
 
-// ============================================================================
-// [Blocks]
-// ============================================================================
-
+/** @brief Represents a block of statements */
 class BlockStmt : public HIRStmt {
 public:
-  // Standard constructor for normal blocks
   BlockStmt(std::vector<HIRStmtPtr> stmts, SourceLocation loc);
-  ~BlockStmt() override; // Defined in .cpp
+  ~BlockStmt() override;
 
   [[nodiscard]] const std::vector<HIRStmtPtr> &getStatements() const;
 
@@ -102,7 +96,7 @@ protected:
 class UnsafeBlockStmt : public BlockStmt {
 public:
   UnsafeBlockStmt(std::vector<HIRStmtPtr> stmts, SourceLocation loc);
-  ~UnsafeBlockStmt() override; // Defined in .cpp
+  ~UnsafeBlockStmt() override;
 
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
@@ -132,14 +126,11 @@ private:
   bool isAsync;
 };
 
-// ============================================================================
-// [Simple Statements]
-// ============================================================================
-
+/** @brief Represents an expression statement */
 class ExprStmt : public HIRStmt {
 public:
   ExprStmt(std::unique_ptr<HIRExpr> expr, SourceLocation loc);
-  ~ExprStmt() override; // Defined in .cpp
+  ~ExprStmt() override;
 
   [[nodiscard]] const HIRExpr *getExpr() const;
 
@@ -157,7 +148,7 @@ private:
 class ReturnStmt : public HIRStmt {
 public:
   ReturnStmt(std::unique_ptr<HIRExpr> value, SourceLocation loc);
-  ~ReturnStmt() override; // Defined in .cpp
+  ~ReturnStmt() override;
 
   [[nodiscard]] const HIRExpr *getReturnValue() const;
 
@@ -170,15 +161,12 @@ private:
   std::unique_ptr<HIRExpr> returnValue;
 };
 
-// ============================================================================
-// [Control Flow]
-// ============================================================================
-
+/** @brief Represents control flow statements */
 class IfStmt : public HIRStmt {
 public:
   IfStmt(std::unique_ptr<HIRExpr> cond, HIRStmtPtr thenBr, HIRStmtPtr elseBr,
          SourceLocation loc);
-  ~IfStmt() override; // Defined in .cpp
+  ~IfStmt() override;
 
   [[nodiscard]] const HIRExpr *getCondition() const;
   [[nodiscard]] const HIRStmt *getThenBranch() const;
@@ -198,7 +186,7 @@ private:
 class WhileStmt : public HIRStmt {
 public:
   WhileStmt(std::unique_ptr<HIRExpr> cond, HIRStmtPtr body, SourceLocation loc);
-  ~WhileStmt() override; // Defined in .cpp
+  ~WhileStmt() override;
 
   [[nodiscard]] const HIRExpr *getCondition() const;
   [[nodiscard]] const HIRStmt *getBody() const;
@@ -217,7 +205,7 @@ class DoWhileStmt : public HIRStmt {
 public:
   DoWhileStmt(HIRStmtPtr body, std::unique_ptr<HIRExpr> cond,
               SourceLocation loc);
-  ~DoWhileStmt() override; // Defined in .cpp
+  ~DoWhileStmt() override;
 
   [[nodiscard]] const HIRStmt *getBody() const;
   [[nodiscard]] const HIRExpr *getCondition() const;
@@ -238,7 +226,7 @@ class ForStmt : public HIRStmt {
 public:
   ForStmt(HIRStmtPtr init, std::unique_ptr<HIRExpr> cond,
           std::unique_ptr<HIRExpr> inc, HIRStmtPtr body, SourceLocation loc);
-  ~ForStmt() override; // Defined in .cpp
+  ~ForStmt() override;
 
   [[nodiscard]] const HIRStmt *getInit() const { return init.get(); }
   [[nodiscard]] const HIRExpr *getCondition() const { return cond.get(); }
@@ -284,7 +272,7 @@ class SwitchStmt : public HIRStmt {
 public:
   SwitchStmt(std::unique_ptr<HIRExpr> cond, std::vector<SwitchCase> cases,
              SourceLocation loc);
-  ~SwitchStmt() override; // Defined in .cpp
+  ~SwitchStmt() override;
 
   [[nodiscard]] const HIRExpr *getCondition() const;
   [[nodiscard]] const std::vector<SwitchCase> &getCases() const;
@@ -299,14 +287,10 @@ private:
   std::vector<SwitchCase> cases;
 };
 
-// ============================================================================
-// [Jumps / Misc]
-// ============================================================================
-
 class BreakStmt : public HIRStmt {
 public:
   BreakStmt(SourceLocation loc);
-  ~BreakStmt() override; // Defined in .cpp
+  ~BreakStmt() override;
 
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
@@ -317,7 +301,7 @@ public:
 class ContinueStmt : public HIRStmt {
 public:
   ContinueStmt(SourceLocation loc);
-  ~ContinueStmt() override; // Defined in .cpp
+  ~ContinueStmt() override;
 
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
   void accept(HIRVisitor &v) override;
@@ -330,7 +314,7 @@ public:
 class DeferStmt : public HIRStmt {
 public:
   DeferStmt(HIRStmtPtr stmt, SourceLocation loc);
-  ~DeferStmt() override; // Defined in .cpp
+  ~DeferStmt() override;
 
   [[nodiscard]] const HIRStmt *getDeferredStmt() const;
   void dump(llvm::raw_ostream &os, int indent = 0) const override;
@@ -403,7 +387,6 @@ public:
                  bool isStatic, bool isUsed, std::string sectionName,
                  SourceLocation loc);
 
-  // Add the explicit destructor declaration
   ~HIRVarDeclStmt() override;
 
   const HIRType *getType() const { return type; }
@@ -445,10 +428,8 @@ public:
   }
 
   [[nodiscard]] bool isConstVar() const {
-    // If it wasn't explicitly declared with 'mut', it is inherently constant
     if (!isMutable)
       return true;
-    // Fallback to checking type-level semantic capabilities ('view'/'const')
     if (type && type->isImmutable())
       return true;
     return false;
@@ -476,7 +457,7 @@ public:
             std::unique_ptr<HIRExpr> collection, HIRStmtPtr body,
             SourceLocation loc);
 
-  ~ForInStmt() override; // Defined in .cpp
+  ~ForInStmt() override;
 
   [[nodiscard]] const HIRVarDeclStmt *getVariable() const { return var.get(); }
   [[nodiscard]] const HIRVarDeclStmt *getIndexVariable() const {

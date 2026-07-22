@@ -1,4 +1,3 @@
-// runtime/src/async/channel.c
 #include "../../include/moksha_rt.h"
 #include <stdbool.h>
 
@@ -44,7 +43,6 @@ void *moksha_builtin_Channel_new(int capacity) {
   return ptr;
 }
 
-// [FIX] Prefixed recv() -> promise<T>
 void *moksha_builtin_Channel_recv(void *this_ptr) {
   MokshaChannel *chan = (MokshaChannel *)this_ptr;
   void *promise = moksha_rt_make_unresolved_promise();
@@ -86,7 +84,6 @@ void *moksha_builtin_Channel_recv(void *this_ptr) {
   return promise;
 }
 
-// [FIX] Prefixed send(val) -> promise<void>
 void *moksha_builtin_Channel_send(void *this_ptr, void *val) {
   MokshaChannel *chan = (MokshaChannel *)this_ptr;
   void *promise = moksha_rt_make_unresolved_promise();

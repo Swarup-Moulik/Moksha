@@ -32,8 +32,6 @@ public:
             module->getFunction("__moksha_module_destroy")) {
       if (!destroyFunc->getBlocks().empty()) {
         MIRBlock *entry = destroyFunc->getEntryBlock();
-
-        // Find the ReturnInst to insert cleanup code right before it
         auto retIt = entry->getInstructionsMut().end();
         for (auto it = entry->getInstructionsMut().begin();
              it != entry->getInstructionsMut().end(); ++it) {
@@ -71,14 +69,11 @@ public:
                 Opcode::Release, loadedVal, getDropFunc(loadedVal),
                 SourceLocation());
             releaseInst->setParent(entry);
-
-            // Insert them before the return statement
             retIt =
                 entry->getInstructionsMut().insert(retIt, std::move(loadInst));
-            ++retIt; // Move past the load
+            ++retIt;
             retIt = entry->getInstructionsMut().insert(retIt,
                                                        std::move(releaseInst));
-
             modified = true;
           }
         }
@@ -122,25 +117,21 @@ private:
       return false;
 
     // 1. Unwrap Nullable Optionals (e.g., Node?)
-    if (auto *nullableTy = llvm::dyn_cast<const hir::HIRNullableType>(type)) {
+    if (auto *nullableTy = llvm::dyn_cast_or_null<const hir::HIRNullableType>(type)) {
       type = nullableTy->getInner();
     }
 
     // 2. Safely capture Reference Classes and explicitly tagged pointers
-    if (auto *ptrType = llvm::dyn_cast<const hir::PointerType>(type)) {
+    if (auto *ptrType = llvm::dyn_cast_or_null<const hir::PointerType>(type)) {
       if (ptrType->getOwnership() == hir::Ownership::Borrowed ||
           ptrType->getOwnership() == hir::Ownership::None) {
         return false;
       }
 
-      // Explicit tags
       if (ptrType->getOwnership() == hir::Ownership::Shared ||
           ptrType->getOwnership() == hir::Ownership::Owned) {
         return true;
       }
-
-      // Implicit Reference Classes (ref class compiles to a pointer to a
-      // struct)
       if (ptrType->getPointee() &&
           ptrType->getPointee()->getKind() == hir::TypeKind::Struct) {
         return true;
@@ -161,8 +152,8 @@ private:
 
   // Analyzes the actual memory location rather than the loaded SSA instance.
   MIRValue *getUnderlyingObject(MIRValue *val) {
-    while (auto *inst = llvm::dyn_cast<MIRInst>(val)) {
-      if (auto *cast = llvm::dyn_cast<CastInst>(inst)) {
+    while (auto *inst = llvm::dyn_cast_or_null<MIRInst>(val)) {
+      if (auto *cast = llvm::dyn_cast_or_null<CastInst>(inst)) {
         val = cast->getValue();
         continue;
       } else if (inst->getOpcode() == Opcode::ExtractValue) {
@@ -196,31 +187,6 @@ private:
       }
     }
 
-    // 2. Insert Retains at the Entry Block
-    // if (entryBlock && !refCountedParams.empty()) {
-    //   std::vector<std::unique_ptr<MIRInst>> paramRetains;
-    //   for (auto *arg : refCountedParams) {
-    //     auto retain = std::make_unique<ARCInst>(
-    //         Opcode::Retain, arg, nullptr,
-    //         entryBlock->getInstructions().front()->getLoc());
-    //     retain->setParent(entryBlock);
-    //     paramRetains.push_back(std::move(retain));
-    //     functionModified = true;
-    //   }
-
-    //   auto &entryInsts = entryBlock->getInstructionsMut();
-
-    //   auto insertIt = entryInsts.begin();
-    //   while (insertIt != entryInsts.end() &&
-    //          llvm::isa<AllocaInst>(insertIt->get())) {
-    //     ++insertIt;
-    //   }
-
-    //   entryInsts.insert(insertIt,
-    //   std::make_move_iterator(paramRetains.begin()),
-    //                     std::make_move_iterator(paramRetains.end()));
-    // }
-
     std::unordered_set<MIRValue *> initializedPointers;
 
     for (auto &blockPtr : func->getBlocks()) {
@@ -230,13 +196,11 @@ private:
 
       bool blockModified = false;
 
-      // ---> [FIX 1] RVO: Identify the return value to apply +1 Return
-      // Convention
       MIRValue *exitVal = nullptr;
       MIRValue *baseExitVal = nullptr;
       if (!instructions.empty()) {
         if (auto *retInst =
-                llvm::dyn_cast<ReturnInst>(instructions.back().get())) {
+                llvm::dyn_cast_or_null<ReturnInst>(instructions.back().get())) {
           exitVal = retInst->getReturnValue();
           if (exitVal && exitVal->getType() &&
               isRefCounted(exitVal->getType())) {
@@ -249,20 +213,15 @@ private:
 
       for (auto &inst : instructions) {
         auto op = inst->getOpcode();
-
-        // ---> [FIX 2] Intercept and delete the frontend release for the return
-        // value
         if (op == Opcode::Release && baseExitVal) {
           auto *arcInst = static_cast<ARCInst *>(inst.get());
           if (getUnderlyingObject(arcInst->getObject()) == baseExitVal) {
             elidedFrontendRelease = true;
             blockModified = true;
-            continue; // Skip this release, transferring ownership to the caller
-                      // (+1)
+            continue;
           }
         }
 
-        // ---> [FIX 3] Guarantee +1 Return Convention if no release was elided
         if (op == Opcode::Return && baseExitVal) {
           bool isParam = false;
           for (auto *arg : refCountedParams) {
@@ -276,8 +235,7 @@ private:
           }
         }
 
-        // --- 1. Handle Assignments (Stores) ---
-        if (auto *store = llvm::dyn_cast<StoreInst>(inst.get())) {
+        if (auto *store = llvm::dyn_cast_or_null<StoreInst>(inst.get())) {
           MIRValue *newValue = store->getValue();
 
           if (newValue && newValue->getType() &&
@@ -288,31 +246,25 @@ private:
             bool isFreshAllocation = false;
             MIRValue *traceVal = newValue;
 
-            // =========================================================
-            // [FIX 2] Look through ALL cast types to find the allocator
-            // =========================================================
             while (traceVal) {
-              // CastInst handles BitCast, AnyCast, and Upcast automatically!
-              if (auto *cast = llvm::dyn_cast<CastInst>(traceVal)) {
+              if (auto *cast = llvm::dyn_cast_or_null<CastInst>(traceVal)) {
                 traceVal = cast->getValue();
               } else {
                 break;
               }
             }
 
-            // Now check if the true origin was the allocator!
-            if (auto call = llvm::dyn_cast<CallInst>(traceVal)) {
+            if (auto call = llvm::dyn_cast_or_null<CallInst>(traceVal)) {
               if (call->getCallee() &&
                   call->getCallee()->getName() == "__moksha_alloc") {
                 isFreshAllocation = true;
               }
-            } else if (auto invoke = llvm::dyn_cast<InvokeInst>(traceVal)) {
+            } else if (auto invoke = llvm::dyn_cast_or_null<InvokeInst>(traceVal)) {
               if (invoke->getCallee() &&
                   invoke->getCallee()->getName() == "__moksha_alloc") {
                 isFreshAllocation = true;
               }
             }
-            // =========================================================
 
             if (!isFreshAllocation) {
               newInstructions.push_back(std::make_unique<ARCInst>(
@@ -335,7 +287,6 @@ private:
           }
         }
 
-        // --- Standard Instructions ---
         newInstructions.push_back(std::move(inst));
       }
 

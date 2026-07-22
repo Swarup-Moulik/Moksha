@@ -10,25 +10,22 @@ extern void *moksha_mem_alloc(size_t size);
 extern void moksha_mem_free(void *ptr);
 
 #if defined(__MOKSHA_BAREMETAL__)
-// On bare metal, the linker script defines the exact start and end of the
-// stack. e.g., in your linker script: _sstack = .; . = . + 0x4000; /* 16KB
-// Stack */ _estack = .;
 extern char _sstack[];
 extern char _estack[];
 
 bool is_stack_ptr(void *ptr) {
   char *p = (char *)ptr;
-  // Stack typically grows downwards, so _sstack is the lowest address
-  // and _estack is the highest address.
+  /** @brief Stack typically grows downwards, so _sstack is the lowest address
+   * and _estack is the highest address. */
   return (p >= _sstack && p <= _estack);
 }
 
 #else
-// On a Host OS (Windows/Linux/Darwin), dynamic stacks and coroutines
-// make absolute address bounds impossible.
-// FIX: We use a 1MB proximity heuristic. If the pointer is within 1MB
-// of the current stack frame, we assume it is a stack allocation.
-#include <stddef.h> // for ptrdiff_t
+// On a Host OS (Windows/Linux/Darwin), dynamic stacks and coroutines make
+// absolute address bounds impossible. We use a 1MB proximity heuristic. If the
+// pointer is within 1MB of the current stack frame, we assume it is a stack
+// allocation.
+#include <stddef.h>
 
 bool is_stack_ptr(void *ptr) {
   if (!ptr)
@@ -58,7 +55,7 @@ void *moksha_rt_alloc(size_t payload_size, uint32_t type_id) {
   header->ref_count = 1;
   header->weak_count = 1;
   header->type_id = type_id;
-  header->capacity_bytes = (uint32_t)payload_size; // Store capacity natively!
+  header->capacity_bytes = (uint32_t)payload_size;
 
   void *payload = (void *)(header + 1);
 
@@ -131,12 +128,10 @@ void moksha_rt_release_with_dtor(void *ptr, void (*dtor)(void *)) {
       }
     } else if (header->type_id == MOKSHA_TYPE_ARRAY) {
     } else if (header->type_id == MOKSHA_TYPE_TABLE) {
-      // FIXED: Call an external cleanup function for the Map
       extern void moksha_rt_map_free_internal(void *map_ptr);
       moksha_rt_map_free_internal(ptr);
     }
 
-    // --- Final Header Cleanup ---
     uint32_t new_weak;
     if (sys_get_caps()->has_threads) {
       new_weak = __atomic_sub_fetch(&header->weak_count, 1, __ATOMIC_ACQ_REL);
@@ -150,20 +145,13 @@ void moksha_rt_release_with_dtor(void *ptr, void (*dtor)(void *)) {
   }
 }
 
-// Keep the original 1-argument version as a wrapper so we don't break
-// internal C-runtime APIs (like map.c) that blindly release objects!
 void moksha_rt_release(void *ptr) { moksha_rt_release_with_dtor(ptr, NULL); }
 
-// This ensures that raw allocations requested by the compiler
-// are compatible with the retain/release system.
 void *__moksha_alloc(uint32_t size, uint32_t type_id) {
   return moksha_rt_alloc((size_t)size, type_id);
 }
 
-void __moksha_free(void *ptr) {
-  // Instead of raw free, use release to handle the header
-  moksha_rt_release(ptr);
-}
+void __moksha_free(void *ptr) { moksha_rt_release(ptr); }
 
 void moksha_rt_store_weak(void **dest, void *obj) {
   if (!dest)
@@ -226,7 +214,7 @@ void *moksha_rt_load_weak(void **src) {
     }
 
     if (count == 0)
-      return NULL; // Object is dying or dead
+      return NULL;
 
     if (sys_get_caps()->has_threads) {
       if (__atomic_compare_exchange_n(&header->ref_count, &count, count + 1,
@@ -242,14 +230,10 @@ void *moksha_rt_load_weak(void **src) {
 }
 
 int32_t __moksha_get_type(void *ptr) {
-  // If a null pointer somehow slips through, default to the 'Any/Pointer' type
-  // (19)
   if (!ptr) {
     return 19;
   }
 
-  // Step backwards from the payload memory address to read the hidden header
   MokshaHeader *header = ((MokshaHeader *)ptr) - 1;
-
   return (int32_t)header->type_id;
 }

@@ -15,9 +15,8 @@ void moksha_trace_coro_state(void *handle, const char *state) {
   // Tracing disabled/handled by external sys_io if needed
 }
 
-// ============================================================================
-// Priority Registry
-// ============================================================================
+/** @brief Priority Registry */
+
 typedef struct PriorityNode {
   void *coro_handle;
   int32_t priority;
@@ -165,14 +164,13 @@ void moksha_scheduler_run(void) {
       queue_tail = NULL;
     }
 
-    // --- AGING LOGIC (Starvation Prevention) ---
+    // AGING LOGIC (Starvation Prevention)
     // Boost the priority of all waiting tasks so LOW tasks eventually run.
     TaskNode *curr = queue_head;
     while (curr) {
       curr->priority++;
       curr = curr->next;
     }
-    // -------------------------------------------
 
     release_sched_lock();
 

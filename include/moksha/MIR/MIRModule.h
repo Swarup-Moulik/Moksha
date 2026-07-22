@@ -18,6 +18,7 @@ namespace mir {
 class MIRGlobal;
 class MIRConstant;
 
+/** @brief Represents an intrinsic function ID. */
 enum class IntrinsicID {
   None,
   Bswap,
@@ -38,13 +39,10 @@ enum class IntrinsicID {
 
 class MIRModule {
 public:
-  // [FIX] Removed MIRContext& param
   explicit MIRModule(std::string name);
   ~MIRModule();
 
   const std::string &getName() const { return name; }
-
-  // Function Management
   void addFunction(std::unique_ptr<MIRFunction> func);
   MIRFunction *getFunction(const std::string &name) const;
   llvm::ArrayRef<MIRFunction *> getFunctions() const;
@@ -63,8 +61,6 @@ public:
   }
 
   IntrinsicID lookupIntrinsic(const std::string &name) const;
-
-  // Legacy Helpers
   MIRGlobal *findGlobalByName(const std::string &name) const {
     return getGlobal(name);
   }
@@ -73,8 +69,6 @@ public:
   }
 
   void dump(llvm::raw_ostream &os) const;
-
-  // Constant Management
   template <typename T, typename... Args>
   T *getOrInsertConstant(Args &&...args) {
     auto c = std::make_unique<T>(std::forward<Args>(args)...);

@@ -82,10 +82,7 @@ static const char *unaryOpToString(hir::UnaryOp op) {
   }
 }
 
-// ============================================================================
-// [Literals]
-// ============================================================================
-
+// Literals
 void HIRIntegerLiteral::accept(HIRVisitor &v) { v.visitIntegerLiteral(*this); }
 void HIRIntegerLiteral::accept(ConstHIRVisitor &v) const {
   v.visitIntegerLiteral(*this);
@@ -133,10 +130,7 @@ void HIRMapLiteral::accept(ConstHIRVisitor &v) const {
   v.visitMapLiteral(*this);
 }
 
-// ============================================================================
-// [Operations]
-// ============================================================================
-
+// Operations
 void HIRBinaryExpr::accept(HIRVisitor &v) { v.visitBinaryExpr(*this); }
 void HIRBinaryExpr::accept(ConstHIRVisitor &v) const {
   v.visitBinaryExpr(*this);
@@ -153,10 +147,7 @@ void HIRTernaryExpr::accept(ConstHIRVisitor &v) const {
   v.visitTernaryExpr(*this);
 }
 
-// ============================================================================
-// [Variables & Access]
-// ============================================================================
-
+// Variables & Access
 void HIRIdentifierExpr::accept(HIRVisitor &v) { v.visitIdentifierExpr(*this); }
 void HIRIdentifierExpr::accept(ConstHIRVisitor &v) const {
   v.visitIdentifierExpr(*this);
@@ -173,10 +164,7 @@ void HIRIndexExpr::accept(ConstHIRVisitor &v) const { v.visitIndexExpr(*this); }
 void HIRThisExpr::accept(HIRVisitor &v) { v.visitThisExpr(*this); }
 void HIRThisExpr::accept(ConstHIRVisitor &v) const { v.visitThisExpr(*this); }
 
-// ============================================================================
-// [High-Level Constructs]
-// ============================================================================
-
+// High-Level Constructs
 void HIRCallExpr::accept(HIRVisitor &v) { v.visitCallExpr(*this); }
 void HIRCallExpr::accept(ConstHIRVisitor &v) const { v.visitCallExpr(*this); }
 
@@ -188,10 +176,7 @@ void HIRThreadExpr::accept(ConstHIRVisitor &v) const {
   v.visitThreadExpr(*this);
 }
 
-// ============================================================================
-// [Lambda Implementation]
-// ============================================================================
-
+// Lambda Implementation
 HIRLambdaExpr::HIRLambdaExpr(std::vector<HIRLambdaParam> params,
                              std::vector<HIRCapture> captures,
                              std::unique_ptr<HIRStmt> body, const HIRType *type,
@@ -234,8 +219,6 @@ void HIRSpreadExpr::accept(ConstHIRVisitor &v) const {
 void HIRInputExpr::accept(HIRVisitor &v) { v.visitInputExpr(*this); }
 void HIRInputExpr::accept(ConstHIRVisitor &v) const { v.visitInputExpr(*this); }
 
-// Defined here because HIRStmt is fully defined in this file (via include),
-// whereas it is only forward-declared in HIRExpr.h
 const HIRStmt *HIRLambdaExpr::getBody() const { return body.get(); }
 
 void HIRIntegerLiteral::dump(llvm::raw_ostream &os, int indent) const {
@@ -317,10 +300,7 @@ void HIRInputExpr::dump(llvm::raw_ostream &os, int indent) const {
   }
 }
 
-// ============================================================================
-// [Complex Expression Dumps]
-// ============================================================================
-
+// Complex Expression Dumps
 void HIRArrayLiteral::dump(llvm::raw_ostream &os, int indent) const {
   printExprIndent(os, indent);
   os << "ArrayLiteral\n";
@@ -353,8 +333,6 @@ void HIRTemplateStringExpr::dump(llvm::raw_ostream &os, int indent) const {
 void HIRMemberExpr::dump(llvm::raw_ostream &os, int indent) const {
   printExprIndent(os, indent);
   os << "MemberExpr (Member: " << getMemberName();
-
-  // [FIX] Print bitfield metadata in the HIR Dump
   if (info.isBitfield) {
     os << " [bitfield: width=" << info.bitWidth << ", offset=" << info.bitOffset
        << "]";
@@ -465,10 +443,6 @@ void HIRSpreadExpr::dump(llvm::raw_ostream &os, int indent) const {
   if (iterable)
     iterable->dump(os, indent + 1);
 }
-
-// ============================================================================
-// [HIRSharedExpr Implementation]
-// ============================================================================
 
 void HIRSharedExpr::accept(HIRVisitor &v) { v.visitSharedExpr(*this); }
 

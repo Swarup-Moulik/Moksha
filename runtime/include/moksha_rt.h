@@ -8,19 +8,15 @@
 extern "C" {
 #endif
 
-// Forward declare the system unwinder struct
+/** @brief Forward declare the system unwinder struct */
 struct _Unwind_Exception;
 
-// ============================================================================
-// Builtin Type IDs
-// ============================================================================
-// Internal primitives don't require reflection, so 0 is safe.
+/** @brief Builtin Type IDs
+ *  Internal primitives don't require reflection, so 0 is safe. */
 #define MOKSHA_TYPE_MUTEX 0
 #define MOKSHA_TYPE_CHANNEL 0
 
-// ============================================================================
-// Core Memory Model
-// ============================================================================
+/** @brief Core Memory Model */
 typedef struct {
   uint32_t ref_count;      // Strong references
   uint32_t weak_count;     // Weak references
@@ -193,8 +189,6 @@ void print(MokshaAny *any_val, ...);
 void println(MokshaAny *any_val, ...);
 MokshaString *moksha_rt_readFile(void *any_ptr);
 void moksha_rt_close(void *any_ptr);
-
-// String Allocation & Concatenation (Updated to raw char*)
 char *__moksha_string_concat(char *a, char *b);
 char *__moksha_template_join_strs(int32_t count, ...);
 
@@ -203,7 +197,7 @@ bool __moksha_string_eq(void *a_ptr, void *b_ptr);
 bool __moksha_array_eq(void *a_ptr, int32_t a_len, void *b_ptr, int32_t b_len,
                        int32_t elem_size);
 
-// Type to String Conversions (Updated to raw char*)
+// Type to String Conversions
 char *__moksha_bool_to_string(bool val);
 char *__moksha_char_to_string(int8_t val);
 char *__moksha_uchar_to_string(uint8_t val);
@@ -383,8 +377,6 @@ void moksha_rt_panic_out_of_bounds(int64_t index, int64_t length);
 void moksha_rt_panic_null_deref(void);
 void moksha_rt_panic_key_not_found(void);
 void moksha_rt_panic_bad_cast(void);
-
-// [FIX] Updated throw signature and payload getter for the bare-metal unwinder
 void moksha_rt_throw(void *payload);
 void *moksha_rt_get_exception_payload(struct _Unwind_Exception *exc_base);
 

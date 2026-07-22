@@ -1,4 +1,3 @@
-// include/moksha/Dialect/MokshaDialect.td
 #ifndef MOKSHA_DIALECT
 #define MOKSHA_DIALECT
 
@@ -13,10 +12,7 @@ def Moksha_Dialect : Dialect {
     }];
     let cppNamespace = "moksha::IR";
 
-    // Generate boilerplate for types and attributes
     let useDefaultTypePrinterParser = 1;
-
-    // Enable custom materialization of constants (needed for `DecimalLiteral`)
     let hasConstantMaterializer = 1;
     let usePropertiesForAttributes = 0;
 }

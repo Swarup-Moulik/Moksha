@@ -1,5 +1,5 @@
 #pragma once
-#include "moksha/AST/Type.h" // Needed for Type* in Symbol
+#include "moksha/AST/Type.h"
 #include "moksha/Support/Diagnostics.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -14,7 +14,7 @@ class ASTContext;
 
 enum class SymbolKind { Variable, Function, Type, Class, Module, Macro };
 
-// [Requirement 1] Symbol Definition
+/** @brief Represents a symbol in the symbol table. */
 struct Symbol {
   SymbolKind kind;
   std::string name;
@@ -48,14 +48,11 @@ struct Symbol {
 
 enum class ScopeKind { Global, Function, Block, Class };
 
-// [Requirement 2] Scope Definition
+/** @brief Represents a scope in the symbol table. */
 class Scope {
 public:
-  // Public so SymbolTable.cpp can iterate over it in dump()
   llvm::StringMap<Symbol> symbols;
-
   Scope(ScopeKind k) : kind(k) {}
-
   void addSymbol(llvm::StringRef name, Symbol symbol);
   void addOverload(llvm::StringRef name, Symbol symbol);
   Symbol *findSymbol(llvm::StringRef name);
@@ -74,7 +71,6 @@ public:
   void enterScope(ScopeKind kind);
   void exitScope();
 
-  // Returns true if successful, false if redefinition
   bool addSymbol(llvm::StringRef name, Symbol symbol, llvm::SMLoc loc = {});
   void addOverload(llvm::StringRef name, Symbol symbol);
 

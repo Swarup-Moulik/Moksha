@@ -10,10 +10,7 @@ class HIRModule;
 
 namespace mir {
 
-/// \brief Verifies that the HIR module contains no unexpanded macros.
-///
-/// This is a hard pipeline barrier.
-/// MIR lowering and all later passes assume macros do not exist.
+/** @brief Verifies that the HIR module contains no unexpanded macros. */
 [[nodiscard]] bool VerifyNoMacros(const hir::HIRModule *module,
                                   DiagnosticEngine &diags);
 

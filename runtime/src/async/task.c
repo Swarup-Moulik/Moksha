@@ -44,9 +44,7 @@ typedef struct {
   int spin_lock;
 } JoinAllContext;
 
-// ============================================================================
-// Promise Resolution
-// ============================================================================
+/** @brief Promise Resolution */
 
 void moksha_rt_resolve_promise(void *promise_handle, void *result_data) {
   if (!promise_handle)
@@ -54,8 +52,6 @@ void moksha_rt_resolve_promise(void *promise_handle, void *result_data) {
   InternalPromise *prom = (InternalPromise *)promise_handle;
 
   // 1. Atomically attempt to set is_completed to true.
-  // If it is ALREADY true (due to cancellation or a previous resolve), bail out
-  // instantly.
   bool expected = false;
   if (!__atomic_compare_exchange_n(&prom->is_completed, &expected, true, false,
                                    __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
@@ -66,7 +62,6 @@ void moksha_rt_resolve_promise(void *promise_handle, void *result_data) {
   prom->result_data = result_data;
 
   // 3. Atomically steal the waiting coroutine and clear the pointer.
-  // This guarantees the waiter is pushed to the scheduler exactly once.
   void *waiter =
       __atomic_exchange_n(&prom->waiting_coro, NULL, __ATOMIC_ACQ_REL);
   if (waiter) {
@@ -74,9 +69,7 @@ void moksha_rt_resolve_promise(void *promise_handle, void *result_data) {
   }
 }
 
-// ============================================================================
-// Thread Trampolines
-// ============================================================================
+/** @brief Thread Trampolines */
 
 static void *strong_thread_trampoline(void *arg) {
   ThreadContext *ctx = (ThreadContext *)arg;
@@ -90,7 +83,7 @@ static void *strong_thread_trampoline(void *arg) {
 
   // 3. Free the context struct and let the scheduler know we are done!
   moksha_mem_free(ctx);
-  moksha_scheduler_dec_active(); // <--- Decrement here!
+  moksha_scheduler_dec_active();
   return NULL;
 }
 
@@ -101,9 +94,7 @@ static void *weak_thread_trampoline(void *arg) {
   return NULL;
 }
 
-// ============================================================================
-// Spawners
-// ============================================================================
+/** @brief Spawners */
 
 // Spawn an async closure (Cooperative Coroutine)
 void *moksha_rt_spawn(MokshaClosure closure) {
@@ -134,7 +125,7 @@ void *moksha_rt_spawn_thread(void *closure_ptr) {
   ctx->promise_handle = promise;
 
   // Tell the scheduler to stay alive for this strong thread!
-  moksha_scheduler_inc_active(); // <--- Increment here!
+  moksha_scheduler_inc_active();
 
   sys_thread_t thread;
   if (sys_thread_create(&thread, (sys_thread_func_t)strong_thread_trampoline,
@@ -170,9 +161,7 @@ void *moksha_rt_spawn_weak_thread(void *closure_ptr) {
   return promise;
 }
 
-// ============================================================================
-// Await Hooks
-// ============================================================================
+/** @brief Await Hooks */
 
 void moksha_rt_register_await(void *promise_handle, void *waiting_coro) {
   if (!promise_handle)
@@ -181,9 +170,6 @@ void moksha_rt_register_await(void *promise_handle, void *waiting_coro) {
 
   // Set the waiter
   __atomic_store_n(&prom->waiting_coro, waiting_coro, __ATOMIC_RELEASE);
-
-  // If the promise finished *just before* we registered, we missed the
-  // scheduler push. Catch it here and schedule ourselves.
   if (__atomic_load_n(&prom->is_completed, __ATOMIC_ACQUIRE)) {
     void *waiter =
         __atomic_exchange_n(&prom->waiting_coro, NULL, __ATOMIC_ACQ_REL);
@@ -233,9 +219,6 @@ void *moksha_rt_make_rejected_promise(void *ex_payload) {
   promise->coro_handle = NULL;
   promise->is_rejected = true;
   promise->was_awaited = false;
-
-  // Retain the exception payload so ARC doesn't free it while the promise holds
-  // it
   if (ex_payload) {
     extern void moksha_rt_retain(void *ptr);
     moksha_rt_retain(ex_payload);
@@ -269,9 +252,7 @@ void *moksha_rt_coro_setup(void *coro_handle) {
   promise->was_awaited = false;
   promise->coro_handle = coro_handle;
 
-  // Register the coroutine's priority synchronously during setup!
   moksha_scheduler_set_priority(coro_handle, current_spawn_priority);
-
   moksha_scheduler_inc_active();
   return promise;
 }
@@ -323,9 +304,6 @@ void *moksha_rt_make_unresolved_promise(void) {
 void *spawn_func(void *closure_ptr) {
   if (!closure_ptr)
     return NULL;
-
-  // Use the cooperative coroutine spawner so both tasks share the
-  // same event loop, allowing the AsyncMutex to function properly!
   return moksha_rt_spawn(*(MokshaClosure *)closure_ptr);
 }
 
@@ -339,14 +317,8 @@ void *moksha_builtin_join(void *p1_handle, void *p2_handle) {
     ((InternalPromise *)p2_handle)->was_awaited = true;
   }
 
-  // 1. The compiler expects the slice's .data pointer to be a fully managed ARC
-  // object.
-  // 2. Since test.mox expects an int[] (i32), each element is exactly 4 bytes.
-  // We allocate 8 bytes total (2 * 4 bytes) using MOKSHA_TYPE_ARRAY (18).
   void *data_buf = moksha_rt_alloc(8, 18);
   int32_t *int_data = (int32_t *)data_buf;
-
-  // Unbox the values from pointers back to 32-bit integers
   if (p1_handle) {
     InternalPromise *p1 = (InternalPromise *)p1_handle;
     int_data[0] = (int32_t)(intptr_t)p1->result_data;
@@ -361,11 +333,9 @@ void *moksha_builtin_join(void *p1_handle, void *p2_handle) {
     int_data[1] = 0;
   }
 
-  // 3. Create the temporary 16-byte slice container expected by the LLVM ABI
   MokshaSlice *slice = (MokshaSlice *)moksha_mem_alloc(sizeof(MokshaSlice));
   slice->data = data_buf;
   slice->length = 2;
-
   return moksha_rt_make_resolved_promise(slice);
 }
 
@@ -380,15 +350,12 @@ void moksha_rt_join_all_callback(void *sub_result, void *ctx_ptr, int index) {
   ctx->completed++;
 
   if (ctx->completed == ctx->total) {
-    // Allocate the ARC data buffer perfectly sized for i32
     void *data_buf = moksha_rt_alloc(ctx->total * 4, 18);
     int32_t *int_data = (int32_t *)data_buf;
-
     for (int i = 0; i < ctx->total; i++) {
       int_data[i] = (int32_t)(intptr_t)ctx->results_array[i];
     }
 
-    // Wrap in the temporary ABI container
     MokshaSlice *final_array =
         (MokshaSlice *)moksha_mem_alloc(sizeof(MokshaSlice));
     final_array->data = data_buf;
@@ -422,7 +389,6 @@ void moksha_rt_reject_promise(void *promise_handle, void *ex_payload) {
     moksha_rt_retain(ex_payload);
   }
 
-  // Wake up the awaiting coroutine
   void *waiter =
       __atomic_exchange_n(&prom->waiting_coro, NULL, __ATOMIC_ACQ_REL);
   if (waiter) {

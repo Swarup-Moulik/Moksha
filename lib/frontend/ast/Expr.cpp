@@ -32,7 +32,6 @@ void MemberExpr::accept(ASTVisitor &v) const { v.visitMemberExpr(this); }
 void IndexExpr::accept(ASTVisitor &v) const { v.visitIndexExpr(this); }
 void AwaitExpr::accept(ASTVisitor &v) const { v.visitAwaitExpr(this); }
 
-// [FIX] Define destructor here where Stmt is complete
 LambdaExpr::~LambdaExpr() = default;
 
 void LambdaExpr::accept(ASTVisitor &v) const { v.visitLambdaExpr(this); }
@@ -47,7 +46,7 @@ void SizeOfExpr::accept(ASTVisitor &v) const { v.visitSizeOfExpr(this); }
 void InputExpr::accept(ASTVisitor &v) const { v.visitInputExpr(this); }
 void AsmExpr::accept(ASTVisitor &v) const { v.visitAsmExpr(this); }
 
-// --- Expr Cloning Implementations ---
+/** @brief Expr Cloning Implementations */
 
 std::unique_ptr<Expr> IntegerLiteral::clone() const {
   return std::make_unique<IntegerLiteral>(value, suffix, loc);
@@ -57,7 +56,7 @@ std::unique_ptr<Expr> FloatLiteral::clone() const {
 }
 std::unique_ptr<Expr> DecimalLiteral::clone() const {
   auto copy = std::make_unique<DecimalLiteral>(exactValue, loc);
-  copy->setType(type); // Preserve the type if already checked
+  copy->setType(type);
   return copy;
 }
 std::unique_ptr<Expr> StringLiteral::clone() const {
@@ -171,7 +170,6 @@ std::unique_ptr<Expr> LambdaExpr::clone() const {
   auto cloned = std::make_unique<LambdaExpr>(
       std::move(clonedParams), body->clone(), isExprBody, captureMode, loc);
   cloned->setAsync(this->isAsyncFlag);
-  // Also copy captures over if they were generated
   for (const auto &c : captures) {
     cloned->addCapture(c.name, c.type, c.mode);
   }

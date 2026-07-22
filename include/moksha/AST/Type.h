@@ -8,9 +8,11 @@
 
 namespace moksha {
 
+/** @brief Forward declarations */
 class Expr;
 class ASTVisitor;
 
+/** @brief Represents the kind of a type */
 enum class TypeKind {
   Primitive,
   Pointer,
@@ -35,9 +37,12 @@ enum class TypeKind {
   Promise
 };
 
+/** @brief Represents the variance of a type
+ * @note Currently hardcoded to invariant in parse Generic, maybe if it has some use.
+ */
 enum class Variance { Invariant, Covariant, Contravariant };
 
-/// Base class for all types
+/** @brief Base class for all types */
 class Type {
 public:
   virtual ~Type() = default;
@@ -211,7 +216,6 @@ class ArrayType : public Type {
 public:
   static constexpr TypeKind classKind = TypeKind::Array;
 
-  // [FIX] Defer definitions to .cpp
   ~ArrayType() override;
   ArrayType(TypePtr element, std::unique_ptr<Expr> sizeExpr,
             SourceLocation loc);
@@ -239,11 +243,9 @@ class SliceType : public Type {
 public:
   static constexpr TypeKind classKind = TypeKind::Slice;
 
-  // Fix 1: Accept TypePtr and use std::move
   SliceType(TypePtr element, SourceLocation loc = SourceLocation())
       : Type(TypeKind::Slice, loc), elementType(std::move(element)) {}
 
-  // Fix 2: Return the raw pointer from the unique_ptr
   const Type *getElementType() const { return elementType.get(); }
 
   void accept(ASTVisitor &v) const override;
@@ -259,7 +261,6 @@ public:
     return elementType->toString() + "[]";
   }
 
-  // Fix 3: The constructor now matches the TypePtr returned by clone()
   std::unique_ptr<Type> clone() const override {
     return std::make_unique<SliceType>(elementType->clone(), getLoc());
   }
@@ -574,7 +575,6 @@ public:
 
   const Type *stripModifiers() const override;
 
-  // [FIX] Removed inline body
   void accept(ASTVisitor &v) const override;
 
   bool isEquivalent(const Type &other) const override {
@@ -587,12 +587,10 @@ public:
     return "volatile " + inner->toString();
   }
 
-  // [FIX] Added missing clone
   std::unique_ptr<Type> clone() const override {
     return std::make_unique<VolatileType>(inner->clone(), loc);
   }
 
-  // [FIX] Added missing LLVM classof
   static bool classof(const Type *T) {
     return T->getKind() == TypeKind::Volatile;
   }
@@ -610,7 +608,6 @@ public:
   bool isImmutable() const override;
   const Type *stripModifiers() const override;
 
-  // [FIX] Removed inline body
   void accept(ASTVisitor &v) const override;
 
   bool isEquivalent(const Type &other) const override {
@@ -624,7 +621,6 @@ public:
     return std::make_unique<ConstType>(inner->clone(), loc);
   }
 
-  // Added missing LLVM classof
   static bool classof(const Type *T) { return T->getKind() == TypeKind::Const; }
 };
 
@@ -656,7 +652,6 @@ public:
   static bool classof(const Type *T) { return T->getKind() == TypeKind::Weak; }
 };
 
-// --- [NEW] Decimal / Fixed-Point Type ---
 class DecimalType : public Type {
   unsigned int precision;
   unsigned int scale;

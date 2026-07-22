@@ -7,6 +7,6 @@
 // 1. Include Dialect Declaration
 #include "moksha/Dialect/MokshaDialect.h.inc"
 
-// 2. Include Types (Operations belong in MokshaOps.h!)
+// 2. Include Types
 #define GET_TYPEDEF_CLASSES
 #include "moksha/Dialect/MokshaOpsTypes.h.inc"

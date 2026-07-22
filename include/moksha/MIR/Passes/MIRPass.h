@@ -7,12 +7,11 @@ namespace mir {
 
 class MIRModule;
 
+/** @brief Base class for all MIR passes. */
 class MIRPass {
 public:
   virtual ~MIRPass() = default;
   virtual llvm::StringRef getName() const = 0;
-
-  // Returns true if the pass modified the module
   virtual bool runOnModule(MIRModule &M) = 0;
 };
 

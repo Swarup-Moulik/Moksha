@@ -15,10 +15,7 @@
 namespace moksha {
 namespace mir {
 
-// ============================================================================
-// [Helpers]
-// ============================================================================
-
+// Helpers
 static std::string getBorrowString(mir::BorrowKind bk) {
   switch (bk) {
   case mir::BorrowKind::Mut:
@@ -61,12 +58,12 @@ static void printOperand(llvm::raw_ostream &os, const MIRValue *val) {
     return;
   }
 
-  if (auto *arr = llvm::dyn_cast<ConstantArray>(val)) {
+  if (auto *arr = llvm::dyn_cast_or_null<ConstantArray>(val)) {
     arr->dump(os);
     return;
   }
 
-  if (auto *mapConst = llvm::dyn_cast<ConstantMap>(val)) {
+  if (auto *mapConst = llvm::dyn_cast_or_null<ConstantMap>(val)) {
     mapConst->dump(os);
     return;
   }
@@ -220,14 +217,9 @@ static std::string getOpcodeName(Opcode op) {
   }
 }
 
-// ============================================================================
-// [Global & Argument]
-// ============================================================================
-
+// Global & Argument
 void MIRGlobal::dump(llvm::raw_ostream &os) const {
   os << "@\"" << getName() << "\" = ";
-
-  // [FIX 1] Print Linkage (This handles 'static' -> internal)
   if (getLinkage() == Linkage::Internal)
     os << "internal ";
   else if (getLinkage() == Linkage::Weak)
@@ -236,26 +228,19 @@ void MIRGlobal::dump(llvm::raw_ostream &os) const {
     os << "linkonce ";
   else if (isExtern())
     os << "external ";
-
-  // [FIX 2] Print Used Attribute
   if (isUsed())
     os << "used ";
-
-  // [FIX 3] Print Thread Local Attribute
   if (isThreadLocal())
     os << "thread_local ";
-
   if (isVolatile())
     os << "volatile ";
-
   if (isConstant())
     os << "constant ";
   else
     os << "global ";
 
   if (getType()) {
-    // Unwrap the pointer so it prints "u8[4096]" instead of "&u8[4096]"
-    if (auto *ptrTy = llvm::dyn_cast<hir::PointerType>(getType())) {
+    if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(getType())) {
       os << ptrTy->getPointee()->toString() << " ";
     } else {
       os << getType()->toString() << " ";
@@ -268,12 +253,10 @@ void MIRGlobal::dump(llvm::raw_ostream &os) const {
     os << "zeroinitializer";
   }
 
-  // Print the alignment for LLVM!
   if (getAlignment() > 0) {
     os << ", align " << getAlignment();
   }
 
-  // [FIX 3] Print Section Attribute
   if (!getSection().empty()) {
     os << ", section \"" << getSection() << "\"";
   }
@@ -286,10 +269,8 @@ void MIRArgument::dump(llvm::raw_ostream &os) const {
   }
 }
 
-// ============================================================================
-// [Constants]
-// ============================================================================
-
+// Constants
+//
 void ConstantInt::dump(llvm::raw_ostream &os) const { os << value; }
 
 void ConstantFloat::dump(llvm::raw_ostream &os) const {
@@ -429,9 +410,7 @@ void ConstantSliceToArray::dump(llvm::raw_ostream &os) const {
   os << ")";
 }
 
-// ============================================================================
-// [Terminators]
-// ============================================================================
+// Terminators
 
 BranchInst::BranchInst(MIRBlock *target, SourceLocation loc)
     : MIRInst(Opcode::Br, nullptr, "", loc), target(target) {}
@@ -518,7 +497,7 @@ void SwitchInst::replaceOperand(MIRValue *oldVal, MIRValue *newVal) {
   }
 
   // 3. Update the target blocks (if SimplifyCFG is bypassing them)
-  if (auto *newBlock = llvm::dyn_cast<MIRBlock>(newVal)) {
+  if (auto *newBlock = llvm::dyn_cast_or_null<MIRBlock>(newVal)) {
     if (static_cast<MIRValue *>(defaultBlock) == oldVal) {
       defaultBlock = newBlock;
     }
@@ -546,9 +525,7 @@ void ReturnInst::dump(llvm::raw_ostream &os) const {
 
 void UnreachableInst::dump(llvm::raw_ostream &os) const { os << "unreachable"; }
 
-// ============================================================================
-// [Memory Ops]
-// ============================================================================
+// Memory Ops
 
 AllocaInst::AllocaInst(const hir::HIRType *ptrType,
                        const hir::HIRType *allocType, std::string name,
@@ -565,17 +542,14 @@ void AllocaInst::dump(llvm::raw_ostream &os) const {
   }
 }
 
-// Add this helper function right above LoadInst
 static const hir::HIRType *determineLoadType(const MIRValue *ptr) {
   if (!ptr || !ptr->getType())
     return nullptr;
 
-  // Safely try to cast to a PointerType
-  if (auto *pTy = llvm::dyn_cast<hir::PointerType>(ptr->getType())) {
+  if (auto *pTy = llvm::dyn_cast_or_null<hir::PointerType>(ptr->getType())) {
     return pTy->getPointee();
   }
 
-  // Fallback: If it's already a direct type, just return it
   return ptr->getType();
 }
 
@@ -588,11 +562,11 @@ void LoadInst::dump(llvm::raw_ostream &os) const {
   os << "  %" << getName() << " = load ";
   if (isVolatile())
     os << "volatile ";
-  printType(os, getType()); // The type of data being loaded (e.g., i32)
+  printType(os, getType());
   os << getBorrowString(getBorrowKind());
   os << ", ";
   printType(os, getType());
-  os << "* "; // Standard IR notation for a pointer to that type
+  os << "* ";
   printOperand(os, ptr);
 
   if (alignment > 0) {
@@ -609,12 +583,12 @@ void StoreInst::dump(llvm::raw_ostream &os) const {
   os << "store ";
   if (isVolatile())
     os << "volatile ";
-  printType(os, val->getType()); // Type of value (e.g., i32)
+  printType(os, val->getType());
   os << " ";
   printOperand(os, val);
   os << ", ";
-  printType(os, val->getType()); // Pointee type
-  os << "* ";                    // Standard IR notation
+  printType(os, val->getType());
+  os << "* ";
   printOperand(os, ptr);
 
   if (alignment > 0) {
@@ -622,9 +596,7 @@ void StoreInst::dump(llvm::raw_ostream &os) const {
   }
 }
 
-// ============================================================================
-// [Weak Memory Instructions]
-// ============================================================================
+// Weak Memory Instructions
 
 StoreWeakInst::StoreWeakInst(MIRValue *val, MIRValue *ptr, SourceLocation loc)
     : MIRInst(Opcode::StoreWeak, nullptr, "", loc), val(val), ptr(ptr) {}
@@ -679,9 +651,7 @@ void GetElementPtrInst::dump(llvm::raw_ostream &os) const {
   }
 }
 
-// ============================================================================
-// [Aggregates]
-// ============================================================================
+// Aggregates
 
 InsertValueInst::InsertValueInst(MIRValue *agg, MIRValue *val, uint32_t index,
                                  std::string name, SourceLocation loc)
@@ -714,9 +684,7 @@ void ExtractValueInst::dump(llvm::raw_ostream &os) const {
   os << ", " << index;
 }
 
-// ============================================================================
-// [Others]
-// ============================================================================
+// Others
 
 ARCInst::ARCInst(Opcode op, MIRValue *obj, MIRFunction *dropFunc,
                  SourceLocation loc)
@@ -803,10 +771,6 @@ void CompareInst::dump(llvm::raw_ostream &os) const {
   printOperand(os, rhs);
 }
 
-// ============================================================================
-// [FCmpInst]
-// ============================================================================
-
 FCmpInst::FCmpInst(Predicate pred, MIRValue *lhs, MIRValue *rhs,
                    const hir::HIRType *resType, std::string name,
                    SourceLocation loc)
@@ -815,7 +779,7 @@ FCmpInst::FCmpInst(Predicate pred, MIRValue *lhs, MIRValue *rhs,
 
 void FCmpInst::dump(llvm::raw_ostream &os) const {
   if (getType()) {
-    os << "%" << getName() << " = "; // Simplified!
+    os << "%" << getName() << " = ";
   }
   os << "fcmp ";
 
@@ -908,9 +872,9 @@ void PhiInst::replaceOperand(MIRValue *oldVal, MIRValue *newVal) {
     if (inc.first == oldVal)
       inc.first = newVal;
 
-    // 2. Remap the incoming block (Critical for Inlining!)
+    // 2. Remap the incoming block
     if (static_cast<MIRValue *>(inc.second) == oldVal) {
-      if (auto *newBlock = llvm::dyn_cast<MIRBlock>(newVal)) {
+      if (auto *newBlock = llvm::dyn_cast_or_null<MIRBlock>(newVal)) {
         inc.second = newBlock;
       }
     }
@@ -947,9 +911,7 @@ void CallInst::dump(llvm::raw_ostream &os) const {
   os << ")";
 }
 
-// ============================================================================
-// [Exceptions & Stack Unwinding]
-// ============================================================================
+// Exceptions & Stack Unwinding
 
 InvokeInst::InvokeInst(MIRValue *callee, std::vector<MIRValue *> &&args,
                        MIRBlock *normalDest, MIRBlock *unwindDest,
@@ -987,7 +949,6 @@ void InvokeInst::replaceOperand(MIRValue *oldVal, MIRValue *newVal) {
     if (arg == oldVal)
       arg = newVal;
   }
-  // [FIX] Update the CFG block targets!
   if (normalDest == oldVal)
     normalDest = static_cast<MIRBlock *>(newVal);
   if (unwindDest == oldVal)
@@ -1003,7 +964,7 @@ void LandingPadInst::dump(llvm::raw_ostream &os) const {
   printType(os, getType());
 
   if (catchTypes.empty()) {
-    os << " cleanup"; // If no catches, it's just a cleanup pad
+    os << " cleanup";
   } else {
     for (const auto *ct : catchTypes) {
       os << "\n          catch ";
@@ -1022,7 +983,7 @@ void ResumeInst::dump(llvm::raw_ostream &os) const {
     os << " ";
     printOperand(os, exception);
   } else {
-    os << "none <null exception>"; // Prevent the segfault!
+    os << "none <null exception>";
   }
 }
 
@@ -1045,14 +1006,11 @@ void ThrowInst::dump(llvm::raw_ostream &os) const {
 void ThrowInst::replaceOperand(MIRValue *oldVal, MIRValue *newVal) {
   if (exception == oldVal)
     exception = newVal;
-  // [FIX] Update the CFG block targets!
   if (unwindDest == oldVal)
     unwindDest = static_cast<MIRBlock *>(newVal);
 }
 
-// ============================================================================
-// [Inline Assembly & Decimal Constants]
-// ============================================================================
+// Inline Assembly & Decimal Constants
 
 InlineAsmInst::InlineAsmInst(std::string asmStr, std::string constraints,
                              std::vector<MIRValue *> &&args, bool isVolatile,
@@ -1132,9 +1090,7 @@ static const char *atomicOpToString(AtomicOp op) {
   return "add";
 }
 
-// ============================================================================
-// [Concurrency & Closures]
-// ============================================================================
+// Concurrency & Closures
 
 void MakeClosureInst::dump(llvm::raw_ostream &os) const {
   os << "%" << getName() << " = make_closure ";
@@ -1190,7 +1146,7 @@ AtomicLoadInst::AtomicLoadInst(MIRValue *pointer, MemoryOrder order,
                                SourceLocation loc)
     : MIRInst(Opcode::AtomicLoad, nullptr, "", loc), pointer(pointer),
       order(order) {
-  if (auto *ptrTy = llvm::dyn_cast<hir::PointerType>(pointer->getType())) {
+  if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(pointer->getType())) {
     setType(ptrTy->getPointee());
   }
 }

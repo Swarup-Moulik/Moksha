@@ -8,10 +8,7 @@
 namespace moksha {
 namespace hir {
 
-// ============================================================================
-// [Base Class]
-// ============================================================================
-
+// Base Class
 void HIRStmt::printIndent(llvm::raw_ostream &os, int indent) const {
   for (int i = 0; i < indent; ++i)
     os << "  ";
@@ -23,13 +20,9 @@ void HIRStmt::printLabel(llvm::raw_ostream &os, int indent,
   os << label << ":\n";
 }
 
-// Dump generic implementation
 void HIRStmt::dump(int indent) const { dump(llvm::errs(), indent); }
 
-// ============================================================================
-// [Blocks]
-// ============================================================================
-
+// Blocks
 BlockStmt::BlockStmt(std::vector<HIRStmtPtr> stmts, SourceLocation loc)
     : HIRStmt(Kind::Block, loc), statements(std::move(stmts)) {}
 
@@ -52,8 +45,6 @@ void BlockStmt::dump(llvm::raw_ostream &os, int indent) const {
 void BlockStmt::accept(HIRVisitor &v) { v.visitBlockStmt(*this); }
 void BlockStmt::accept(ConstHIRVisitor &v) const { v.visitBlockStmt(*this); }
 
-// --- UnsafeBlock ---
-
 UnsafeBlockStmt::UnsafeBlockStmt(std::vector<HIRStmtPtr> stmts,
                                  SourceLocation loc)
     : BlockStmt(Kind::UnsafeBlock, std::move(stmts), loc) {}
@@ -71,8 +62,6 @@ void UnsafeBlockStmt::accept(HIRVisitor &v) { v.visitUnsafeBlockStmt(*this); }
 void UnsafeBlockStmt::accept(ConstHIRVisitor &v) const {
   v.visitUnsafeBlockStmt(*this);
 }
-
-// --- LockStmt ---
 
 LockStmt::LockStmt(std::unique_ptr<HIRExpr> mutex,
                    std::unique_ptr<HIRStmt> body, bool isAsync,
@@ -96,10 +85,7 @@ void LockStmt::dump(llvm::raw_ostream &os, int indent) const {
 void LockStmt::accept(HIRVisitor &v) { v.visitLockStmt(*this); }
 void LockStmt::accept(ConstHIRVisitor &v) const { v.visitLockStmt(*this); }
 
-// ============================================================================
-// [Simple Statements]
-// ============================================================================
-
+// Simple Statements
 ExprStmt::ExprStmt(std::unique_ptr<HIRExpr> expr, SourceLocation loc)
     : HIRStmt(Kind::ExprStmt, loc), expr(std::move(expr)) {}
 
@@ -115,8 +101,6 @@ void ExprStmt::dump(llvm::raw_ostream &os, int indent) const {
 
 void ExprStmt::accept(HIRVisitor &v) { v.visitExprStmt(*this); }
 void ExprStmt::accept(ConstHIRVisitor &v) const { v.visitExprStmt(*this); }
-
-// --- Return ---
 
 ReturnStmt::ReturnStmt(std::unique_ptr<HIRExpr> value, SourceLocation loc)
     : HIRStmt(Kind::Return, loc), returnValue(std::move(value)) {}
@@ -135,10 +119,7 @@ void ReturnStmt::dump(llvm::raw_ostream &os, int indent) const {
 void ReturnStmt::accept(HIRVisitor &v) { v.visitReturnStmt(*this); }
 void ReturnStmt::accept(ConstHIRVisitor &v) const { v.visitReturnStmt(*this); }
 
-// ============================================================================
-// [Control Flow]
-// ============================================================================
-
+// Control Flow
 IfStmt::IfStmt(std::unique_ptr<HIRExpr> cond, HIRStmtPtr thenBr,
                HIRStmtPtr elseBr, SourceLocation loc)
     : HIRStmt(Kind::If, loc), condition(std::move(cond)),
@@ -170,8 +151,6 @@ void IfStmt::dump(llvm::raw_ostream &os, int indent) const {
 void IfStmt::accept(HIRVisitor &v) { v.visitIfStmt(*this); }
 void IfStmt::accept(ConstHIRVisitor &v) const { v.visitIfStmt(*this); }
 
-// --- While ---
-
 WhileStmt::WhileStmt(std::unique_ptr<HIRExpr> cond, HIRStmtPtr body,
                      SourceLocation loc)
     : HIRStmt(Kind::While, loc), condition(std::move(cond)),
@@ -195,8 +174,6 @@ void WhileStmt::dump(llvm::raw_ostream &os, int indent) const {
 
 void WhileStmt::accept(HIRVisitor &v) { v.visitWhileStmt(*this); }
 void WhileStmt::accept(ConstHIRVisitor &v) const { v.visitWhileStmt(*this); }
-
-// --- DoWhile ---
 
 DoWhileStmt::DoWhileStmt(HIRStmtPtr body, std::unique_ptr<HIRExpr> cond,
                          SourceLocation loc)
@@ -222,8 +199,6 @@ void DoWhileStmt::accept(HIRVisitor &v) { v.visitDoWhileStmt(*this); }
 void DoWhileStmt::accept(ConstHIRVisitor &v) const {
   v.visitDoWhileStmt(*this);
 }
-
-// --- For ---
 
 ForStmt::ForStmt(HIRStmtPtr init, std::unique_ptr<HIRExpr> cond,
                  std::unique_ptr<HIRExpr> inc, HIRStmtPtr body,
@@ -259,8 +234,6 @@ void ForStmt::dump(llvm::raw_ostream &os, int indent) const {
 void ForStmt::accept(HIRVisitor &v) { v.visitForStmt(*this); }
 void ForStmt::accept(ConstHIRVisitor &v) const { v.visitForStmt(*this); }
 
-// --- ForIn ---
-
 ForInStmt::ForInStmt(std::unique_ptr<HIRVarDeclStmt> var,
                      std::unique_ptr<HIRVarDeclStmt> indexVar,
                      std::unique_ptr<HIRExpr> collection, HIRStmtPtr body,
@@ -293,8 +266,6 @@ void ForInStmt::dump(llvm::raw_ostream &os, int indent) const {
 void ForInStmt::accept(HIRVisitor &v) { v.visitForInStmt(*this); }
 void ForInStmt::accept(ConstHIRVisitor &v) const { v.visitForInStmt(*this); }
 
-// --- Switch ---
-
 SwitchStmt::SwitchStmt(std::unique_ptr<HIRExpr> cond,
                        std::vector<SwitchCase> cases, SourceLocation loc)
     : HIRStmt(Kind::Switch, loc), condition(std::move(cond)),
@@ -320,10 +291,6 @@ void SwitchStmt::dump(llvm::raw_ostream &os, int indent) const {
 
 void SwitchStmt::accept(HIRVisitor &v) { v.visitSwitchStmt(*this); }
 void SwitchStmt::accept(ConstHIRVisitor &v) const { v.visitSwitchStmt(*this); }
-
-// ============================================================================
-// [Jumps / Misc]
-// ============================================================================
 
 BreakStmt::BreakStmt(SourceLocation loc) : HIRStmt(Kind::Break, loc) {}
 void BreakStmt::dump(llvm::raw_ostream &os, int indent) const {
@@ -358,8 +325,6 @@ void DeferStmt::dump(llvm::raw_ostream &os, int indent) const {
 void DeferStmt::accept(HIRVisitor &v) { v.visitDeferStmt(*this); }
 void DeferStmt::accept(ConstHIRVisitor &v) const { v.visitDeferStmt(*this); }
 
-// --- TryCatch ---
-
 void TryCatchStmt::dump(llvm::raw_ostream &os, int indent) const {
   printIndent(os, indent);
   os << "(TryCatchStmt)\n";
@@ -392,10 +357,6 @@ void TryCatchStmt::accept(HIRVisitor &v) { v.visitTryCatchStmt(*this); }
 void TryCatchStmt::accept(ConstHIRVisitor &v) const {
   v.visitTryCatchStmt(*this);
 }
-
-// ============================================================================
-// [Variable Declaration]
-// ============================================================================
 
 HIRVarDeclStmt::HIRVarDeclStmt(std::string name, const HIRType *type,
                                std::unique_ptr<HIRExpr> init, bool isMutable,
@@ -449,18 +410,11 @@ void HIRThrowStmt::dump(llvm::raw_ostream &os, int indent) const {
 void HIRThrowStmt::accept(HIRVisitor &v) { v.visitThrowStmt(*this); }
 void HIRThrowStmt::accept(ConstHIRVisitor &v) const { v.visitThrowStmt(*this); }
 
-// ============================================================================
-// [SwitchCase Implementation]
-// ============================================================================
 SwitchCase::SwitchCase(std::vector<std::unique_ptr<HIRExpr>> v,
                        std::unique_ptr<BlockStmt> b, bool d)
     : values(std::move(v)), body(std::move(b)), isDefault(d) {}
 
 SwitchCase::~SwitchCase() = default;
-
-// ============================================================================
-// [Destructors for Forward-Declared unique_ptr compatibility]
-// ============================================================================
 BlockStmt::~BlockStmt() = default;
 UnsafeBlockStmt::~UnsafeBlockStmt() = default;
 LockStmt::~LockStmt() = default;

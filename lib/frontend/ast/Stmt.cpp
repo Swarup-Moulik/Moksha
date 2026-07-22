@@ -2,7 +2,7 @@
 #include "moksha/AST/ASTVisitor.h"
 
 namespace moksha {
-// --- Declarations ---
+// Declarations
 void ModuleDecl::accept(ASTVisitor &v) const { v.visitModuleDecl(this); }
 void VariableDecl::accept(ASTVisitor &v) const { v.visitVariableDecl(this); }
 void FunctionDecl::accept(ASTVisitor &v) const { v.visitFunctionDecl(this); }
@@ -13,7 +13,7 @@ void EnumDecl::accept(ASTVisitor &v) const { v.visitEnumDecl(this); }
 void MacroDecl::accept(ASTVisitor &v) const { v.visitMacroDecl(this); }
 void UsingDecl::accept(ASTVisitor &v) const { v.visitUsingDecl(this); }
 
-// --- Statements ---
+// Statements
 void BlockStmt::accept(ASTVisitor &v) const { v.visitBlockStmt(this); }
 void ExpressionStmt::accept(ASTVisitor &v) const {
   v.visitExpressionStmt(this);
@@ -36,7 +36,7 @@ void TryCatchStmt::accept(ASTVisitor &v) const { v.visitTryCatchStmt(this); }
 void ThrowStmt::accept(ASTVisitor &v) const { v.visitThrowStmt(this); }
 void LockStmt::accept(ASTVisitor &v) const { v.visitLockStmt(this); }
 
-// --- Helper Struct Clones ---
+// Helper Struct Clones
 SwitchCase SwitchCase::clone() const {
   std::vector<ExprPtr> clonedVals;
   for (const auto &v : values)
@@ -45,7 +45,7 @@ SwitchCase SwitchCase::clone() const {
   return SwitchCase(std::move(clonedVals), std::move(clonedBody), isDefault);
 }
 
-// --- Declaration Cloning ---
+// Declaration Cloning
 
 std::unique_ptr<Decl> ModuleDecl::clone() const {
   std::vector<DeclPtr> clonedDecls;
@@ -143,7 +143,7 @@ std::unique_ptr<Decl> UsingDecl::clone() const {
   return std::make_unique<UsingDecl>(name, targetType->clone(), loc);
 }
 
-// --- Statement Cloning ---
+// Statement Cloning
 
 std::unique_ptr<Stmt> BlockStmt::clone() const {
   std::vector<StmtPtr> clonedStmts;

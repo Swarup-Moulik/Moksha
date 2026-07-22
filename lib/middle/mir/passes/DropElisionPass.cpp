@@ -20,7 +20,6 @@ buildPredecessorMap(MIRFunction *func) {
   std::unordered_map<MIRBlock *, std::vector<MIRBlock *>> preds;
   for (auto &blockPtr : func->getBlocks()) {
     MIRBlock *block = blockPtr.get();
-    // Use the native, reliable CFG edges!
     for (auto *succ : block->getSuccessors()) {
       preds[succ].push_back(block);
     }
@@ -28,7 +27,6 @@ buildPredecessorMap(MIRFunction *func) {
   return preds;
 }
 
-// Traces a value back to its origin AllocaInst
 MIRValue *getBaseAlloca(MIRValue *val) {
   while (val) {
     if (llvm::isa<AllocaInst>(val))
@@ -63,9 +61,7 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
 
   bool functionChanged = false;
 
-  // ========================================================================
   // 1. Dataflow Analysis: Track which Allocas are fully moved
-  // ========================================================================
   auto preds = buildPredecessorMap(F);
   std::unordered_map<MIRBlock *, std::unordered_set<MIRValue *>> blockMovedIn;
   std::unordered_map<MIRBlock *, std::unordered_set<MIRValue *>> blockMovedOut;
@@ -101,20 +97,17 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
         MIRInst *inst = instPtr.get();
 
         if (auto *store = llvm::dyn_cast_or_null<StoreInst>(inst)) {
-          // KILL: Re-initialization
           if (MIRValue *destAlloca = getBaseAlloca(store->getPointer())) {
             currentOut.erase(destAlloca);
           }
 
-          // GEN: Moving a value
-          if (auto *sourceLoad = llvm::dyn_cast_or_null<LoadInst>(store->getValue())) {
+          if (auto *sourceLoad =
+                  llvm::dyn_cast_or_null<LoadInst>(store->getValue())) {
             std::string loadName = sourceLoad->getName();
             if (loadName.find("cleanup") == std::string::npos &&
                 loadName.find("old") == std::string::npos) {
               if (sourceLoad->getBorrowKind() != BorrowKind::View) {
 
-                // [FIX] Do not elide drops for ARC/Shared types! They are
-                // copied, not moved.
                 bool isShared = false;
                 const hir::HIRType *checkTy = sourceLoad->getType();
                 if (auto *ptrTy =
@@ -145,7 +138,6 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
             }
           }
 
-          // GEN: Consumed by function call
           if (auto *call = llvm::dyn_cast_or_null<CallInst>(inst)) {
             for (auto *arg : call->getArgs()) {
               if (auto *argLoad = llvm::dyn_cast_or_null<LoadInst>(arg)) {
@@ -153,8 +145,6 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
                 if (argName.find("cleanup") == std::string::npos &&
                     argName.find("old") == std::string::npos) {
                   if (argLoad->getBorrowKind() != BorrowKind::View) {
-
-                    // [FIX] Prevent moving Shared types into functions
                     bool isShared = false;
                     const hir::HIRType *checkTy = argLoad->getType();
 
@@ -233,9 +223,7 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
     }
   }
 
-  // ========================================================================
   // 2. Elision Sweep: Remove Drops for Moved Variables
-  // ========================================================================
   for (auto &blockPtr : F->getBlocks()) {
     MIRBlock *block = blockPtr.get();
     std::unordered_set<MIRValue *> movedAllocas = blockMovedIn[block];
@@ -247,15 +235,14 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
       MIRInst *inst = it->get();
       bool elideInstruction = false;
 
-      // Update local state within the block
       if (auto *store = llvm::dyn_cast_or_null<StoreInst>(inst)) {
         if (MIRValue *destAlloca = getBaseAlloca(store->getPointer())) {
           movedAllocas.erase(destAlloca);
         }
-        if (auto *sourceLoad = llvm::dyn_cast_or_null<LoadInst>(store->getValue())) {
+        if (auto *sourceLoad =
+                llvm::dyn_cast_or_null<LoadInst>(store->getValue())) {
           if (sourceLoad->getName() != "cleanup_val" &&
               sourceLoad->getName() != "old_val") {
-            // FIX: Do not track as moved if it is just a borrow!
             if (sourceLoad->getBorrowKind() != BorrowKind::View) {
               if (MIRValue *sourceAlloca =
                       getBaseAlloca(sourceLoad->getPointer())) {
@@ -268,7 +255,6 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
         for (auto *arg : call->getArgs()) {
           if (auto *argLoad = llvm::dyn_cast_or_null<LoadInst>(arg)) {
             if (argLoad->getName() != "cleanup_val") {
-              // FIX: Do not track as moved if it is just a borrow!
               if (argLoad->getBorrowKind() != BorrowKind::View) {
                 if (MIRValue *sourceAlloca =
                         getBaseAlloca(argLoad->getPointer())) {
@@ -305,16 +291,12 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
       } else if (auto *call = llvm::dyn_cast_or_null<CallInst>(inst)) {
         if (call->getCallee()) {
           std::string calleeName = call->getCallee()->getName();
-
-          // [FIX] Ensure we do not elide ARC retains/releases!
-          // Only elide unique destructors.
           if (calleeName == "__moksha_free" ||
               calleeName.find(".destructor_ret_void") != std::string::npos ||
               calleeName.find(".drop_ret_void") != std::string::npos) {
 
             if (call->getArgs().size() > 0) {
               if (MIRValue *base = getBaseAlloca(call->getArgs()[0])) {
-                // Ensure this is not a shared/ARC pointer before eliding
                 if (base->getType()->toString().find("shared") ==
                         std::string::npos &&
                     base->getType()->toString().find("Arc<") ==
@@ -331,7 +313,7 @@ bool DropElisionPass::runOnFunction(MIRFunction *F) {
       }
 
       if (elideInstruction) {
-        it = insts.erase(it); // Safely remove the Destructor AND the Free
+        it = insts.erase(it);
         functionChanged = true;
       } else {
         ++it;

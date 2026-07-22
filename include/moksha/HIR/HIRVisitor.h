@@ -3,12 +3,12 @@
 namespace moksha {
 namespace hir {
 
-// --- Forward Declarations (Top-Level) ---
+// Forward Declarations (Top-Level)
 class HIRClass;
 class HIRFunction;
 class HIRModule;
 
-// --- Forward Declarations (Statements) ---
+// Forward Declarations (Statements)
 class BlockStmt;
 class UnsafeBlockStmt;
 class LockStmt;
@@ -28,7 +28,7 @@ class HIRVarDeclStmt;
 class HIRThrowStmt;
 class HIRAsmStmt;
 
-// --- Forward Declarations (Expressions) ---
+// Forward Declarations (Expressions)
 class HIRIntegerLiteral;
 class HIRFloatLiteral;
 class HIRDecimalLiteral;
@@ -61,10 +61,7 @@ class HIRDerefExpr;
 class HIRAddressOfExpr;
 class HIRInputExpr;
 
-// ============================================================================
-// [Expression Visitors]
-// ============================================================================
-
+// Expression Visitors
 class HIRExprVisitor {
 public:
   virtual ~HIRExprVisitor() = default;
@@ -143,10 +140,7 @@ public:
   virtual void visitAsmExpr(const HIRAsmExpr &expr) = 0;
 };
 
-// ============================================================================
-// [Statement Visitors]
-// ============================================================================
-
+// Statement Visitors
 class HIRStmtVisitor {
 public:
   virtual ~HIRStmtVisitor() = default;
@@ -193,10 +187,7 @@ public:
   virtual void visitThrowStmt(const HIRThrowStmt &stmt) = 0;
 };
 
-// ============================================================================
-// [Unified Master Visitors]
-// ============================================================================
-
+// Unified Master Visitors
 class HIRVisitor : public HIRExprVisitor, public HIRStmtVisitor {
 public:
   virtual ~HIRVisitor() = default;

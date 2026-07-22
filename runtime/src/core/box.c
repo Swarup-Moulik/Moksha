@@ -1,6 +1,6 @@
 #include "../../include/moksha_rt.h"
 
-// Define canonical VTables used by the runtime
+/** @brief Define canonical VTables used by the runtime */
 const AnyVTable vtable_string = {MOKSHA_TYPE_STRING,
                                  (void *)__moksha_ptr_to_string,
                                  moksha_rt_retain, moksha_rt_release};

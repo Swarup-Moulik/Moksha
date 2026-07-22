@@ -30,9 +30,7 @@ extern void moksha_rt_reject_promise(void *promise_handle, void *ex_payload);
 
 __thread int32_t current_spawn_priority = 1; // 1 = NORMAL
 
-// ============================================================================
-// Basic Builtins
-// ============================================================================
+/** @brief Basic Builtins */
 
 void *moksha_builtin_yield(void) {
   return moksha_rt_make_resolved_promise(NULL);
@@ -46,7 +44,7 @@ void *moksha_builtin_spawn(void *closure_ptr, int32_t priority) {
   // Set context before synchronous start
   current_spawn_priority = priority;
   void *promise = moksha_rt_spawn(*(MokshaClosure *)closure_ptr);
-  current_spawn_priority = 1; // Reset context
+  current_spawn_priority = 1;
 
   return promise;
 }
@@ -75,8 +73,6 @@ void moksha_builtin_cancel(void *promise_handle) {
   __atomic_store_n(&prom->is_rejected, true, __ATOMIC_RELEASE);
   __atomic_store_n(&prom->was_awaited, true, __ATOMIC_RELEASE);
 
-  // Must use ARC allocator for exception payloads!
-  // MOKSHA_TYPE_U32 = 6
   uint32_t *cancel_ex = (uint32_t *)moksha_rt_alloc(sizeof(uint32_t), 6);
   *cancel_ex = 1;
   prom->result_data = cancel_ex;
@@ -88,9 +84,7 @@ void moksha_builtin_cancel(void *promise_handle) {
   }
 }
 
-// ============================================================================
-// Sleep Builtin (Bare-Metal Compatible)
-// ============================================================================
+/** @brief Sleep Builtin (Bare-Metal Compatible) */
 
 static void sleep_timer_waker(void *ctx) {
   void *master = ctx;
@@ -115,9 +109,7 @@ void *moksha_builtin_sleep(uint32_t ms) {
   return master;
 }
 
-// ============================================================================
-// Timeout Builtin (Bare-Metal Compatible)
-// ============================================================================
+/** @brief Timeout Builtin (Bare-Metal Compatible) */
 
 typedef struct {
   void *master;
@@ -144,8 +136,7 @@ static void timeout_poll_waker(void *arg) {
   }
 
   if (sys_time_now_ms() >= ctx->end_time_ms) {
-    int32_t *timeout_ex =
-        (int32_t *)moksha_rt_alloc(4, 5); // Exception allocation
+    int32_t *timeout_ex = (int32_t *)moksha_rt_alloc(4, 5);
     *timeout_ex = 1;
     moksha_rt_reject_promise(master, timeout_ex);
     moksha_mem_free(ctx);
@@ -190,9 +181,7 @@ void *moksha_builtin_timeout(void *promise_handle, uint32_t ms) {
   return master;
 }
 
-// ============================================================================
-// Select Builtin (Bare-Metal Compatible)
-// ============================================================================
+/** @brief Select Builtin (Bare-Metal Compatible) */
 
 typedef struct {
   void *master;

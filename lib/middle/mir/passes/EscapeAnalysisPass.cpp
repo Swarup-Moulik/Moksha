@@ -98,7 +98,8 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
       } else if (auto *ret = llvm::dyn_cast_or_null<ReturnInst>(inst)) {
         if (ret->getReturnValue())
           defUse[ret->getReturnValue()].push_back(inst);
-      } else if (auto *makeClosure = llvm::dyn_cast_or_null<MakeClosureInst>(inst)) {
+      } else if (auto *makeClosure =
+                     llvm::dyn_cast_or_null<MakeClosureInst>(inst)) {
         defUse[makeClosure->getFunctionPointer()].push_back(inst);
         for (auto *cap : makeClosure->getCaptures())
           defUse[cap].push_back(inst);
@@ -112,8 +113,6 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
   // 2. Analyze each allocation to see if it escapes
   for (CallInst *alloc : allocations) {
     if (!doesEscape(alloc, defUse)) {
-
-      // [FIX] Deep recursive trace for ARC uses
       bool hasARCUses = false;
       std::vector<MIRInst *> worklist;
       std::unordered_set<MIRInst *> visited;
@@ -144,7 +143,6 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
         }
       }
 
-      // DO NOT stack-promote memory managed by the ARC runtime!
       if (hasARCUses)
         continue;
 
@@ -158,7 +156,6 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
       if (bitcasts.empty())
         continue;
 
-      // Use the first one to determine the type
       const hir::HIRType *actualType = bitcasts[0]->getType();
       const hir::HIRType *pointeeType = nullptr;
       bool isShared = false;
@@ -190,16 +187,13 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
 
       MIRValue *newAllocaPtr = alloca.get();
 
-      // [FIX 1: Prevent Loop Stack Overflow] Hoist Alloca to the Entry Block!
       entryBlock->getInstructionsMut().insert(
           entryBlock->getInstructionsMut().begin(), std::move(alloca));
 
-      // Replace all uses of the old BitCast with the new stack Alloca
       for (auto *bc : bitcasts) {
         replaceAllUsesInFunction(F, bc, newAllocaPtr);
       }
 
-      // Redirect any remaining uses of the raw allocation
       replaceAllUsesInFunction(F, alloc, newAllocaPtr);
 
       for (auto *bitcast : bitcasts) {
@@ -222,7 +216,8 @@ bool EscapeAnalysisPass::runOnFunction(MIRFunction *F, MIRModule &M) {
                   call->getCallee()->getName() == "__moksha_free") {
                 freeCalls.push_back(call);
               }
-            } else if (auto *invoke = llvm::dyn_cast_or_null<InvokeInst>(user)) {
+            } else if (auto *invoke =
+                           llvm::dyn_cast_or_null<InvokeInst>(user)) {
               if (invoke->getCallee() &&
                   invoke->getCallee()->getName() == "__moksha_free") {
                 freeCalls.push_back(invoke);
@@ -293,7 +288,6 @@ bool EscapeAnalysisPass::doesEscape(
 
     for (MIRInst *user : it->second) {
       if (auto *store = llvm::dyn_cast_or_null<StoreInst>(user)) {
-        // If we are storing the pointer INTO something else, it escapes!
         if (store->getValue() == curr)
           return true;
       } else if (auto *call = llvm::dyn_cast_or_null<CallInst>(user)) {
@@ -309,27 +303,25 @@ bool EscapeAnalysisPass::doesEscape(
           return true;
         }
       } else if (llvm::isa<ReturnInst>(user)) {
-        return true; // Returning the pointer escapes it
+        return true;
       } else if (auto *gep = llvm::dyn_cast_or_null<GetElementPtrInst>(user)) {
-        worklist.push_back(gep); // Trace through pointer arithmetic
+        worklist.push_back(gep);
       } else if (auto *cast = llvm::dyn_cast_or_null<CastInst>(user)) {
-        worklist.push_back(cast); // Trace through bitcasts
+        worklist.push_back(cast);
       } else if (auto *ext = llvm::dyn_cast_or_null<ExtractValueInst>(user)) {
         if (ext->getIndex() == 0) {
           worklist.push_back(ext);
         }
       } else if (auto *ins = llvm::dyn_cast_or_null<InsertValueInst>(user)) {
-        worklist.push_back(
-            ins); // Trace the aggregate the pointer was inserted into
-      } else if (auto *makeClosure = llvm::dyn_cast_or_null<MakeClosureInst>(user)) {
-        worklist.push_back(makeClosure); // Trace through the closure object
+        worklist.push_back(ins);
+      } else if (auto *makeClosure =
+                     llvm::dyn_cast_or_null<MakeClosureInst>(user)) {
+        worklist.push_back(makeClosure);
       } else if (llvm::isa<MakeSharedInst>(user)) {
-        return true; // Sharing a reference escapes the allocation to the heap!
+        return true;
       } else if (llvm::isa<SpawnInst>(user)) {
-        return true; // Spawning a thread escapes everything inside it
+        return true;
       } else {
-        // CONSERVATIVE FALLBACK: If we don't recognize the instruction,
-        // we MUST assume the pointer escapes to memory.
         return true;
       }
     }

@@ -8,11 +8,11 @@ class Logger {
 }
 
 void test_move_drop() {
-    Logger log = new Logger("Resource1");
+    Logger lg = new Logger("Resource1");
 
     // Transfer ownership to the closure [cite: 11]
     closure() -> void f = move () => {
-        println("Using: " + log.name);
+        println("Using: " + lg.name);
     };
 
     f();

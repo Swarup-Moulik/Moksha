@@ -16,6 +16,7 @@ class DiagnosticEngine;
 class ModuleDecl;
 class ASTContext;
 
+/** @brief The parser for the Moksha compiler, responsible for parsing AST nodes from tokens. */
 class Parser {
 public:
   explicit Parser(Lexer &lexer, ASTContext &context, llvm::SourceMgr &srcMgr,

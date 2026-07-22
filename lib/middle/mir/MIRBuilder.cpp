@@ -6,10 +6,6 @@
 namespace moksha {
 namespace mir {
 
-// ============================================================================
-// [Constructors & Positioning]
-// ============================================================================
-
 MIRBuilder::MIRBuilder(MIRModule *module)
     : module(module), currentBlock(nullptr) {}
 
@@ -21,10 +17,7 @@ MIRBlock *MIRBuilder::getInsertBlock() const { return currentBlock; }
 
 void MIRBuilder::clearInsertPoint() { currentBlock = nullptr; }
 
-// ========================================================================
-// [Globals]
-// ========================================================================
-
+// Globals
 MIRGlobal *MIRBuilder::createGlobal(MIRModule *module, std::string name,
                                     const hir::HIRType *type,
                                     MIRConstant *initializer, bool isConstant,
@@ -42,10 +35,7 @@ MIRGlobal *MIRBuilder::createGlobal(MIRModule *module, std::string name,
   return rawPtr;
 }
 
-// ============================================================================
-// [Terminators]
-// ============================================================================
-
+// Terminators
 BranchInst *MIRBuilder::createBr(MIRBlock *dest, SourceLocation loc) {
   if (currentBlock && dest) {
     currentBlock->addSuccessor(dest);
@@ -93,13 +83,10 @@ void MIRBuilder::addSwitchCase(SwitchInst *swInst, MIRValue *val,
   if (!swInst || !dest)
     return;
 
-  // Add the case to the instruction
   swInst->addCase(val, dest);
-
-  // Wire the CFG edge dynamically
   MIRBlock *parent = swInst->getParent();
   if (!parent)
-    parent = currentBlock; // Fallback if instruction isn't inserted yet
+    parent = currentBlock;
 
   if (parent) {
     parent->addSuccessor(dest);
@@ -107,10 +94,7 @@ void MIRBuilder::addSwitchCase(SwitchInst *swInst, MIRValue *val,
   }
 }
 
-// ============================================================================
-// [Arithmetic & Logic]
-// ============================================================================
-
+// Arithmetic & Logic
 BinaryInst *MIRBuilder::createBinaryOp(Opcode op, MIRValue *lhs, MIRValue *rhs,
                                        const std::string &name,
                                        SourceLocation loc) {
@@ -194,10 +178,7 @@ BinaryInst *MIRBuilder::createShr(MIRValue *lhs, MIRValue *rhs,
   return createBinaryOp(Opcode::Shr, lhs, rhs, name, loc);
 }
 
-// ============================================================================
-// [Comparison]
-// ============================================================================
-
+// Comparison
 CompareInst *MIRBuilder::createICmp(CompareInst::Predicate pred, MIRValue *lhs,
                                     MIRValue *rhs, const hir::HIRType *resType,
                                     const std::string &name,
@@ -212,14 +193,10 @@ FCmpInst *MIRBuilder::createFCmp(FCmpInst::Predicate pred, MIRValue *lhs,
   return insert(std::make_unique<FCmpInst>(pred, lhs, rhs, resType, name, loc));
 }
 
-// ============================================================================
-// [Memory Operations]
-// ============================================================================
-
+// Memory Operations
 AllocaInst *MIRBuilder::createAlloca(const hir::HIRType *type,
                                      const std::string &name,
                                      SourceLocation loc, unsigned align) {
-  // Request the pointer type from the module
   const hir::HIRType *ptrTy = module->getPointerType(type);
   return insert(std::make_unique<AllocaInst>(ptrTy, type, name, loc, align));
 }
@@ -234,14 +211,11 @@ StoreInst *MIRBuilder::createStore(MIRValue *val, MIRValue *ptr,
   return insert(std::make_unique<StoreInst>(val, ptr, loc, align));
 }
 
-// Update: Pass std::vector by value (moved in header declaration) to enable
-// move semantics
 GetElementPtrInst *MIRBuilder::createGEP(MIRValue *ptr,
                                          std::vector<MIRValue *> indices,
                                          const hir::HIRType *resType,
                                          const std::string &name,
                                          SourceLocation loc) {
-  // Request the pointer type from the module
   const hir::HIRType *ptrTy = module->getPointerType(resType);
   return insert(std::make_unique<GetElementPtrInst>(ptr, std::move(indices),
                                                     ptrTy, resType, name, loc));
@@ -251,20 +225,14 @@ GetElementPtrInst *
 MIRBuilder::createGEP(MIRValue *ptr, std::initializer_list<MIRValue *> indices,
                       const hir::HIRType *resType, const std::string &name,
                       SourceLocation loc) {
-  // Convert initializer_list to vector and delegate to the vector overload
   return createGEP(ptr, std::vector<MIRValue *>(indices), resType, name, loc);
 }
 
-// ============================================================================
-// [Function Calls & Phis]
-// ============================================================================
-
-// Update: Pass std::vector by value to enable move semantics
+// Function Calls & Phis
 CallInst *MIRBuilder::createCall(MIRValue *callee, std::vector<MIRValue *> args,
                                  const hir::HIRType *retType,
                                  const std::string &name, bool isVarArg,
                                  SourceLocation loc) {
-  // Explicitly move args into the constructor
   return insert(std::make_unique<CallInst>(callee, std::move(args), retType,
                                            name, isVarArg, loc));
 }
@@ -274,10 +242,7 @@ PhiInst *MIRBuilder::createPhi(const hir::HIRType *type,
   return insert(std::make_unique<PhiInst>(type, name, loc));
 }
 
-// ============================================================================
-// [Casts & ARC]
-// ============================================================================
-
+// Casts & ARC
 CastInst *MIRBuilder::createBitCast(MIRValue *val, const hir::HIRType *destType,
                                     const std::string &name,
                                     SourceLocation loc) {
@@ -332,12 +297,10 @@ CastInst *MIRBuilder::createSliceToArray(MIRValue *val,
 }
 
 ARCInst *MIRBuilder::createRetain(MIRValue *obj, SourceLocation loc) {
-  // Explicitly pass nullptr for dropFunc
   return insert(std::make_unique<ARCInst>(Opcode::Retain, obj, nullptr, loc));
 }
 
 ARCInst *MIRBuilder::createRelease(MIRValue *obj, SourceLocation loc) {
-  // Explicitly pass nullptr for dropFunc
   return insert(std::make_unique<ARCInst>(Opcode::Release, obj, nullptr, loc));
 }
 
@@ -353,10 +316,7 @@ LoadWeakInst *MIRBuilder::createLoadWeak(MIRValue *ptr,
   return insert(std::make_unique<LoadWeakInst>(ptr, resType, name, loc));
 }
 
-// ========================================================================
-// [Exceptions & Hardware]
-// ========================================================================
-
+// Exceptions & Hardware
 InvokeInst *MIRBuilder::createInvoke(MIRValue *callee,
                                      std::vector<MIRValue *> args,
                                      MIRBlock *normalDest, MIRBlock *unwindDest,
@@ -405,10 +365,7 @@ MIRBuilder::createInlineAsm(std::string asmString, std::string constraints,
       retType, loc));
 }
 
-// ========================================================================
-// [Concurrency & Closures]
-// ========================================================================
-
+// Concurrency & Closures
 MakeClosureInst *MIRBuilder::createMakeClosure(MIRValue *funcPtr,
                                                std::vector<MIRValue *> captures,
                                                const hir::HIRType *closureType,

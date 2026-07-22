@@ -5,6 +5,7 @@
 namespace moksha {
 namespace mir {
 
+/** @brief Performs constant folding on the MIR module. */
 class ConstantFoldingPass : public MIRPass {
 public:
   llvm::StringRef getName() const override { return "ConstantFoldingPass"; }

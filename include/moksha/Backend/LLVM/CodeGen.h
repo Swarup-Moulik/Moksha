@@ -5,6 +5,7 @@
 
 namespace moksha {
 
+/** @brief Represents the target configuration for code generation. */
 struct TargetConfig {
   std::string triple;
   std::string cpu;

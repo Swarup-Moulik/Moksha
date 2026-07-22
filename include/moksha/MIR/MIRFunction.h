@@ -15,39 +15,24 @@ namespace mir {
 class MIRBlock;
 class MIRArgument;
 
+/** @brief Represents a function in MIR. */
 class MIRFunction : public MIRValue {
 public:
-  // ------------------------------------------------------------------------
-  // Constructors / Destructors
-  // ------------------------------------------------------------------------
-
   MIRFunction(const hir::HIRType *returnType, std::string name,
               Linkage linkage);
 
   ~MIRFunction() override;
-
-  // Move Semantics
   MIRFunction(MIRFunction &&) = default;
   MIRFunction &operator=(MIRFunction &&) = default;
-
-  // Copy Semantics
   MIRFunction(const MIRFunction &) = delete;
   MIRFunction &operator=(const MIRFunction &) = delete;
 
-  // ------------------------------------------------------------------------
   // Attributes
-  // ------------------------------------------------------------------------
-
   Linkage getLinkage() const { return linkage; }
   void setLinkage(Linkage l) { linkage = l; }
   bool isWeak() const { return linkage == Linkage::Weak; }
   bool isDeclaration() const;
 
-  // ------------------------------------------------------------------------
-  // Block Management
-  // ------------------------------------------------------------------------
-
-  // [ADDED] Accessor for the entry block (needed by MIRDominance)
   MIRBlock *getEntryBlock() const {
     return blocks.empty() ? nullptr : blocks.front().get();
   }
@@ -62,23 +47,13 @@ public:
 
   void addBlock(std::unique_ptr<MIRBlock> block);
 
-  // ------------------------------------------------------------------------
-  // Argument Management
-  // ------------------------------------------------------------------------
-
   const std::vector<std::unique_ptr<MIRArgument>> &getArguments() const {
     return args;
   }
 
   std::vector<MIRArgument *> getRawArguments() const;
-
   void numberUnnamedValues();
-
   void addArgument(std::unique_ptr<MIRArgument> arg);
-
-  // ------------------------------------------------------------------------
-  // Iterators
-  // ------------------------------------------------------------------------
 
   auto begin() { return blocks.begin(); }
   auto end() { return blocks.end(); }
@@ -90,19 +65,12 @@ public:
   auto arg_begin() const { return args.cbegin(); }
   auto arg_end() const { return args.cend(); }
 
-  // ------------------------------------------------------------------------
-  // Debugging / RTTI
-  // ------------------------------------------------------------------------
-
   void dump(llvm::raw_ostream &os) const override;
 
   static bool classof(const MIRValue *v) {
     return v->getKind() == ValueKind::Function;
   }
 
-  // ------------------------------------------------------------------------
-  // System ABI & Attributes
-  // ------------------------------------------------------------------------
   bool isVariadic() const { return isVariadicFlag; }
   void setVariadic(bool v) { isVariadicFlag = v; }
 

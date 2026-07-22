@@ -22,11 +22,9 @@ class HIRMapType;
 class HIRModule {
 public:
   explicit HIRModule(std::string moduleName);
-  ~HIRModule(); // Implemented in .cpp
+  ~HIRModule();
 
   PrimitiveType *getPrimitiveType(TypeKind kind);
-
-  // Module metadata
   llvm::StringRef getName() const { return name; }
 
   // Function management
@@ -83,8 +81,7 @@ public:
 private:
   std::string name;
 
-  // Caches for returning ArrayRef (mutable allows modification in const
-  // methods)
+  // Caches for returning ArrayRef
   mutable std::vector<HIRStmt *> globalCache;
   mutable std::vector<HIRFunction *> functionCache;
 

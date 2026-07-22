@@ -17,58 +17,57 @@ namespace {
 std::vector<MIRValue *> getOperands(MIRInst *inst) {
   std::vector<MIRValue *> ops;
 
-  if (auto *bin = llvm::dyn_cast<BinaryInst>(inst)) {
+  if (auto *bin = llvm::dyn_cast_or_null<BinaryInst>(inst)) {
     ops.push_back(bin->getLHS());
     ops.push_back(bin->getRHS());
-  } else if (auto *store = llvm::dyn_cast<StoreInst>(inst)) {
+  } else if (auto *store = llvm::dyn_cast_or_null<StoreInst>(inst)) {
     ops.push_back(store->getValue());
     ops.push_back(store->getPointer());
-  } else if (auto *load = llvm::dyn_cast<LoadInst>(inst)) {
+  } else if (auto *load = llvm::dyn_cast_or_null<LoadInst>(inst)) {
     ops.push_back(load->getPointer());
-  } else if (auto *storeW = llvm::dyn_cast<StoreWeakInst>(inst)) {
+  } else if (auto *storeW = llvm::dyn_cast_or_null<StoreWeakInst>(inst)) {
     ops.push_back(storeW->getValue());
     ops.push_back(storeW->getPointer());
-  } else if (auto *loadW = llvm::dyn_cast<LoadWeakInst>(inst)) {
+  } else if (auto *loadW = llvm::dyn_cast_or_null<LoadWeakInst>(inst)) {
     ops.push_back(loadW->getPointer());
-  } else if (auto *arc = llvm::dyn_cast<ARCInst>(inst)) {
+  } else if (auto *arc = llvm::dyn_cast_or_null<ARCInst>(inst)) {
     ops.push_back(arc->getObject());
-  } else if (auto *cond = llvm::dyn_cast<CondBranchInst>(inst)) {
+  } else if (auto *cond = llvm::dyn_cast_or_null<CondBranchInst>(inst)) {
     ops.push_back(cond->getCondition());
-  } else if (auto *ret = llvm::dyn_cast<ReturnInst>(inst)) {
+  } else if (auto *ret = llvm::dyn_cast_or_null<ReturnInst>(inst)) {
     if (auto *val = ret->getReturnValue()) {
       ops.push_back(val);
     }
-  } else if (auto *call = llvm::dyn_cast<CallInst>(inst)) {
+  } else if (auto *call = llvm::dyn_cast_or_null<CallInst>(inst)) {
     ops.push_back(call->getCallee());
     for (auto *arg : call->getArgs())
       ops.push_back(arg);
-    // --- [NEW] Hardware & Exceptions ---
-  } else if (auto *inv = llvm::dyn_cast<InvokeInst>(inst)) {
+  } else if (auto *inv = llvm::dyn_cast_or_null<InvokeInst>(inst)) {
     ops.push_back(inv->getCallee());
     for (auto *arg : inv->getArgs())
       ops.push_back(arg);
-  } else if (auto *res = llvm::dyn_cast<ResumeInst>(inst)) {
+  } else if (auto *res = llvm::dyn_cast_or_null<ResumeInst>(inst)) {
     ops.push_back(res->getException());
-  } else if (auto *thr = llvm::dyn_cast<ThrowInst>(inst)) {
+  } else if (auto *thr = llvm::dyn_cast_or_null<ThrowInst>(inst)) {
     ops.push_back(thr->getException());
-  } else if (auto *ia = llvm::dyn_cast<InlineAsmInst>(inst)) {
+  } else if (auto *ia = llvm::dyn_cast_or_null<InlineAsmInst>(inst)) {
     for (auto *arg : ia->getArgs())
       ops.push_back(arg);
-  } else if (auto *makeClosure = llvm::dyn_cast<MakeClosureInst>(inst)) {
+  } else if (auto *makeClosure = llvm::dyn_cast_or_null<MakeClosureInst>(inst)) {
     ops.push_back(makeClosure->getFunctionPointer());
     for (auto *cap : makeClosure->getCaptures()) {
       ops.push_back(cap);
     }
-  } else if (auto *spawn = llvm::dyn_cast<SpawnInst>(inst)) {
+  } else if (auto *spawn = llvm::dyn_cast_or_null<SpawnInst>(inst)) {
     ops.push_back(spawn->getClosure());
-  } else if (auto *awaitInst = llvm::dyn_cast<AwaitInst>(inst)) {
+  } else if (auto *awaitInst = llvm::dyn_cast_or_null<AwaitInst>(inst)) {
     ops.push_back(awaitInst->getPromise());
-  } else if (auto *ext = llvm::dyn_cast<ExtractValueInst>(inst)) {
+  } else if (auto *ext = llvm::dyn_cast_or_null<ExtractValueInst>(inst)) {
     ops.push_back(ext->getAggregate());
-  } else if (auto *ins = llvm::dyn_cast<InsertValueInst>(inst)) {
+  } else if (auto *ins = llvm::dyn_cast_or_null<InsertValueInst>(inst)) {
     ops.push_back(ins->getAggregate());
     ops.push_back(ins->getValue());
-  } else if (auto *cast = llvm::dyn_cast<CastInst>(inst)) {
+  } else if (auto *cast = llvm::dyn_cast_or_null<CastInst>(inst)) {
     ops.push_back(cast->getValue());
   }
 
@@ -204,9 +203,9 @@ bool MIRDominance::verifySSA() const {
     MIRBlock *useBlock = blockPtr.get();
     for (auto &instPtr : useBlock->getInstructions()) {
       MIRInst *inst = instPtr.get();
-      if (auto *phi = llvm::dyn_cast<PhiInst>(inst)) {
+      if (auto *phi = llvm::dyn_cast_or_null<PhiInst>(inst)) {
         for (auto const &[val, pred] : phi->getIncoming()) {
-          if (auto *defInst = llvm::dyn_cast<MIRInst>(val)) {
+          if (auto *defInst = llvm::dyn_cast_or_null<MIRInst>(val)) {
             if (!dominates(defInst->getParent(), pred))
               return false;
           }
@@ -214,7 +213,7 @@ bool MIRDominance::verifySSA() const {
         continue;
       }
       for (MIRValue *op : getOperands(inst)) {
-        if (auto *defInst = llvm::dyn_cast<MIRInst>(op)) {
+        if (auto *defInst = llvm::dyn_cast_or_null<MIRInst>(op)) {
           MIRBlock *defBlock = defInst->getParent();
           if (!dominates(defBlock, useBlock))
             return false;

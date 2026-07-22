@@ -1,10 +1,9 @@
-// include/moksha/Dialect/MokshaTypes.td
 #ifndef MOKSHA_TYPES
 #define MOKSHA_TYPES
 
 include "MokshaDialect.td"
 
-// 1. The Pointer Type (Already mostly correct, just moved here)
+// 1. The Pointer Type
 def Moksha_PointerType : Moksha_Type<"Pointer", "ptr"> {
     let summary = "A managed or raw pointer type.";
     let parameters = (ins "::mlir::Type":$pointee);

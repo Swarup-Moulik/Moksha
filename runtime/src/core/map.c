@@ -13,8 +13,8 @@ extern void moksha_mem_free(void *ptr);
 #define MAP_INITIAL_CAPACITY 16
 
 typedef struct MapEntry {
-  MokshaAny key;   // <-- Fat Pointer
-  MokshaAny value; // <-- Fat Pointer
+  MokshaAny key;
+  MokshaAny value;
   struct MapEntry *next;
   struct MapEntry *order_next;
 } MapEntry;
@@ -27,9 +27,7 @@ typedef struct {
   MapEntry *tail;
 } MokshaMap;
 
-// ============================================================================
-// Internal Helper: Unwrap compiler-boxed IndexExpr pointers
-// ============================================================================
+/** @brief Internal Helper: Unwrap compiler-boxed IndexExpr pointers */
 
 // Bare-metal string comparison
 static int internal_strcmp(const char *s1, const char *s2) {
@@ -45,11 +43,9 @@ static uint32_t get_any_type(MokshaAny *key) {
   if (!key || !key->data)
     return 0;
 
-  // Try vtable first for complex objects
   if (key->vtable)
     return key->vtable->type_id;
 
-  // Fallback to the physical MokshaHeader for Primitives!
   MokshaHeader *hdr =
       (MokshaHeader *)((uint8_t *)key->data - sizeof(MokshaHeader));
   return hdr->type_id;
@@ -213,9 +209,8 @@ MokshaAny *moksha_rt_map_get(void *map_ptr, MokshaAny *key) {
   return NULL;
 }
 
-// ============================================================================
-// Dynamic 'Any' Indexing Dispatcher
-// ============================================================================
+/** @brief Dynamic 'Any' Indexing Dispatcher */
+
 MokshaAny *moksha_rt_any_get(MokshaAny *container, MokshaAny *key) {
   if (!container || !key || !container->data)
     return NULL;
@@ -319,43 +314,7 @@ int32_t moksha_rt_map_len(void *map_ptr) {
   return (int32_t)map->size;
 }
 
-// ============================================================================
-// Moksha Map Builtins
-// ============================================================================
-
-// Helper to check key equality securely across types
-// static bool map_keys_equal(MokshaAny *k1, MokshaAny *k2) {
-//   if (k1 == k2)
-//     return true;
-//   if (!k1 || !k2)
-//     return false;
-
-//   // Strict Type Enforcement
-//   if (k1->type_id != k2->type_id)
-//     return false;
-
-//   // Type ID 5 & 6 = 32-bit Integers (Signed & Unsigned)
-//   if (k1->type_id == 5 || k1->type_id == 6) {
-//     return *(int32_t *)k1->data == *(int32_t *)k2->data;
-//   }
-
-//   // Type ID 16 = String
-//   if (k1->type_id == 16) {
-//     MokshaString *s1 = (MokshaString *)k1->data;
-//     MokshaString *s2 = (MokshaString *)k2->data;
-//     if (s1->length != s2->length)
-//       return false;
-
-//     for (uint64_t i = 0; i < s1->length; i++) {
-//       if (s1->chars[i] != s2->chars[i])
-//         return false;
-//     }
-//     return true;
-//   }
-
-//   // Fallback: Pointer/Reference Equality for Objects
-//   return k1->data == k2->data;
-// }
+/** @brief Moksha Map Builtins */
 
 extern MokshaAny *moksha_rt_map_get(void *map_ptr, MokshaAny *key);
 

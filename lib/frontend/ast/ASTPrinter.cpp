@@ -8,6 +8,7 @@
 
 namespace moksha {
 
+/** @brief Pretty-prints an AST node to the output stream. */
 ASTPrinter::ASTPrinter(llvm::raw_ostream &OS) : OS(OS) {}
 
 void ASTPrinter::printIndent() {
@@ -127,7 +128,7 @@ void ASTPrinter::printVisibility(Visibility v) {
   }
 }
 
-// --- Types ---
+// Types
 
 void ASTPrinter::visitPrimitiveType(const PrimitiveType *type) {
   switch (type->getScalar()) {
@@ -197,8 +198,7 @@ void ASTPrinter::visitPointerType(const PointerType *type) {
 }
 
 void ASTPrinter::visitArrayType(const ArrayType *type) {
-  // If the element is nullable, it's an "Array of Nullables" (T[]?)
-  if (auto nullElem = llvm::dyn_cast<NullableType>(type->getElementType())) {
+  if (auto nullElem = llvm::dyn_cast_or_null<NullableType>(type->getElementType())) {
     nullElem->getInner()->accept(*this);
     OS << "[]?";
   } else {
@@ -256,8 +256,7 @@ void ASTPrinter::visitReferenceType(const ReferenceType *type) {
 }
 
 void ASTPrinter::visitNullableType(const NullableType *type) {
-  // If the inner type is an array, it's a "Nullable Array" (T?[])
-  if (auto arrInner = llvm::dyn_cast<ArrayType>(type->getInner())) {
+  if (auto arrInner = llvm::dyn_cast_or_null<ArrayType>(type->getInner())) {
     arrInner->getElementType()->accept(*this);
     OS << "?[]";
   } else if (llvm::isa<WeakType>(type->getInner())) {
@@ -327,7 +326,7 @@ void ASTPrinter::visitPromiseType(const PromiseType *type) {
   OS << ">";
 }
 
-// --- Expressions ---
+// Expressions
 
 void ASTPrinter::visitIntegerLiteral(const IntegerLiteral *expr) {
   OS << expr->getValue();
@@ -336,14 +335,13 @@ void ASTPrinter::visitFloatLiteral(const FloatLiteral *expr) {
   OS << expr->getValue();
 }
 void ASTPrinter::visitDecimalLiteral(const DecimalLiteral *expr) {
-  // Print the raw exact string plus the 'd' suffix
   OS << expr->getValue() << "d";
 }
 void ASTPrinter::visitStringLiteral(const StringLiteral *expr) {
   if (expr->isTemplateString()) {
-    OS << expr->getValue(); // Raw output for template parts
+    OS << expr->getValue();
   } else {
-    OS << "\"" << expr->getValue() << "\""; // Standard string
+    OS << "\"" << expr->getValue() << "\"";
   }
 }
 void ASTPrinter::visitBoolLiteral(const BoolLiteral *expr) {
@@ -426,7 +424,7 @@ void ASTPrinter::visitLambdaExpr(const LambdaExpr *expr) {
     OS << "move ";
     break;
   case CaptureMode::Snapshot:
-    break; // Default, print nothing
+    break;
   }
   OS << "(";
   for (size_t i = 0; i < expr->getParams().size(); ++i) {
@@ -530,7 +528,7 @@ void ASTPrinter::visitMapLiteral(const MapLiteral *expr) {
 void ASTPrinter::visitThisExpr(const ThisExpr *) { OS << "this"; }
 void ASTPrinter::visitSuperExpr(const SuperExpr *) { OS << "super"; }
 
-// --- Statements ---
+// Statements
 
 void ASTPrinter::visitBlockStmt(const BlockStmt *stmt) {
   OS << " {\n";
@@ -696,7 +694,7 @@ void ASTPrinter::visitTryCatchStmt(const TryCatchStmt *stmt) {
   }
 }
 
-// --- Declarations ---
+// Declarations
 
 void ASTPrinter::visitModuleDecl(const ModuleDecl *decl) {
   OS << "module " << decl->getName() << " {\n";

@@ -28,7 +28,6 @@ char *__moksha_input(char *prompt) {
 
   char buffer[1024];
   size_t bytesRead = 0;
-  // FIXED: Read up to 1023 bytes to prevent stack overflow
   sys_io_read(0, buffer, sizeof(buffer) - 1, &bytesRead);
 
   if (bytesRead > 0 &&

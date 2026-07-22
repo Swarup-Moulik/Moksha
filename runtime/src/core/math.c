@@ -4,16 +4,12 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// ============================================================================
-// Math Constants
-// ============================================================================
+/** @brief Math Constants */
 const double PI = 3.14159265358979323846;
 const double E = 2.71828182845904523536;
 const double TAU = 6.28318530717958647692;
 const double INF = INFINITY;
 
-// C's NAN macro causes conflicts if exported as an identifier, undefine it
-// first
 #undef NAN
 const double NAN = __builtin_nan("");
 
@@ -64,7 +60,7 @@ static __int128 moksha_pow10_128(int32_t exp) {
   return res;
 }
 
-// --- Decimal Runtime Operations ---
+// Decimal Runtime Operations
 
 void __moksha_dec_scale(MokshaDecimal *out, MokshaDecimal *dec,
                         int32_t target_scale) {
@@ -110,7 +106,6 @@ void __moksha_dec_div(MokshaDecimal *out, MokshaDecimal *a, MokshaDecimal *b) {
   out->scale = max_scale;
 
   if (b->mantissa == 0) {
-    // FIXED: Do not silently absorb division by zero!
     moksha_rt_panic("Math Error: Division by zero.");
     return;
   }
@@ -127,7 +122,6 @@ void __moksha_dec_mod(MokshaDecimal *out, MokshaDecimal *a, MokshaDecimal *b) {
   __moksha_dec_scale(&b_scaled, b, max_scale);
 
   if (b_scaled.mantissa == 0) {
-    // FIXED: Do not silently absorb modulo by zero!
     moksha_rt_panic("Math Error: Modulo by zero.");
     return;
   }
@@ -150,7 +144,7 @@ int32_t __moksha_dec_cmp(MokshaDecimal *a, MokshaDecimal *b) {
   return 0; // Equal
 }
 
-// --- Float to Decimal ---
+// Float to Decimal
 void __moksha_f64_to_decimal(MokshaDecimal *out, double val,
                              int32_t target_scale) {
   out->scale = target_scale;
@@ -159,16 +153,14 @@ void __moksha_f64_to_decimal(MokshaDecimal *out, double val,
   out->mantissa = (__int128)(val * multiplier);
 }
 
-// --- Decimal to Float ---
+// Decimal to Float
 double __moksha_decimal_to_f64(MokshaDecimal *dec) {
   double val = (double)dec->mantissa;
   double divisor = pow(10.0, dec->scale);
   return val / divisor;
 }
 
-// ============================================================================
-// Math Functions
-// ============================================================================
+/** @brief Math Functions */
 double moksha_rt_math_tan(double x) { return tan(x); }
 double moksha_rt_math_asin(double x) { return asin(x); }
 double moksha_rt_math_acos(double x) { return acos(x); }

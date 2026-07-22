@@ -47,7 +47,7 @@ std::optional<GenericError> GenericResolver::validateGenericArgs(
       }
     }
 
-    // 2. Validate `shared` constraints (Your existing code)
+    // 2. Validate `shared` constraints
     if (typeParams[i].isShared) {
       bool hasBorrow = false;
       const Type *curr = argType;
@@ -58,7 +58,6 @@ std::optional<GenericError> GenericResolver::validateGenericArgs(
           break;
         }
 
-        // Unwrap pointers and references to check their inner types
         if (curr->getKind() == TypeKind::Pointer) {
           curr = static_cast<const PointerType *>(curr)->getPointee();
         } else if (curr->getKind() == TypeKind::Reference) {
@@ -237,9 +236,6 @@ GenericResolver::getMangledName(llvm::StringRef baseName,
   for (const auto *arg : typeArgs) {
     mangled += "_";
     std::string argStr = arg->toString();
-
-    // Sanitize type names for LLVM backend compatibility (e.g., turn "[]" into
-    // array)
     for (char &c : argStr) {
       if (c == '<' || c == '>' || c == ',' || c == ' ' || c == '*' ||
           c == '&' || c == '[' || c == ']') {
@@ -247,13 +243,11 @@ GenericResolver::getMangledName(llvm::StringRef baseName,
       }
     }
 
-    // Collapse consecutive underscores
     auto new_end =
         std::unique(argStr.begin(), argStr.end(),
                     [](char a, char b) { return a == '_' && b == '_'; });
     argStr.erase(new_end, argStr.end());
 
-    // Trim trailing underscore
     if (!argStr.empty() && argStr.back() == '_') {
       argStr.pop_back();
     }
@@ -268,7 +262,7 @@ const ClassDecl *
 GenericResolver::instantiateClass(const GenericDecl *genericTemplate,
                                   const std::vector<const Type *> &typeArgs) {
 
-  auto *innerClass = llvm::dyn_cast<ClassDecl>(genericTemplate->getInnerDecl());
+  auto *innerClass = llvm::dyn_cast_or_null<ClassDecl>(genericTemplate->getInnerDecl());
   if (!innerClass)
     return nullptr;
 
@@ -293,17 +287,15 @@ GenericResolver::instantiateClass(const GenericDecl *genericTemplate,
 
   auto &mutMembers = const_cast<std::vector<DeclPtr> &>(mutClass->getMembers());
   for (auto &member : mutMembers) {
-    if (auto *varDecl = llvm::dyn_cast<VariableDecl>(member.get())) {
+    if (auto *varDecl = llvm::dyn_cast_or_null<VariableDecl>(member.get())) {
       TypePtr newType = substituteType(varDecl->getType(), substitutions);
       auto *mutVar = const_cast<VariableDecl *>(varDecl);
       mutVar->setType(std::move(newType));
-    } else if (auto *funcDecl = llvm::dyn_cast<FunctionDecl>(member.get())) {
-      // [FIX] Substitute method return types and parameters!
+    } else if (auto *funcDecl = llvm::dyn_cast_or_null<FunctionDecl>(member.get())) {
       auto *mutFunc = const_cast<FunctionDecl *>(funcDecl);
       mutFunc->setReturnType(
           substituteType(funcDecl->getReturnType(), substitutions));
 
-      // Cast away constness to mutate the function parameters
       auto &mutParams =
           const_cast<std::vector<FunctionDecl::Param> &>(mutFunc->getParams());
       for (auto &p : mutParams) {
@@ -324,13 +316,11 @@ const FunctionDecl *GenericResolver::instantiateFunction(
     const std::vector<const Type *> &typeArgs) {
 
   auto *innerFunc =
-      llvm::dyn_cast<FunctionDecl>(genericTemplate->getInnerDecl());
+      llvm::dyn_cast_or_null<FunctionDecl>(genericTemplate->getInnerDecl());
   if (!innerFunc)
     return nullptr;
 
   std::string mangledName = getMangledName(innerFunc->getName(), typeArgs);
-
-  // Check if we already instantiated this specific generic combination
   if (instantiatedFunctions.count(mangledName)) {
     return instantiatedFunctions[mangledName];
   }
@@ -341,17 +331,14 @@ const FunctionDecl *GenericResolver::instantiateFunction(
     substitutions[params[i].name] = typeArgs[i];
   }
 
-  // Clone the AST node
   std::unique_ptr<Decl> clonedDecl = innerFunc->clone();
   std::unique_ptr<FunctionDecl> concreteFunc(
       static_cast<FunctionDecl *>(clonedDecl.release()));
 
-  // Mangle name and substitute return type
   concreteFunc->setName(mangledName);
   concreteFunc->setReturnType(
       substituteType(innerFunc->getReturnType(), substitutions));
 
-  // Substitute parameter types
   auto &mutParams =
       const_cast<std::vector<FunctionDecl::Param> &>(concreteFunc->getParams());
   for (auto &p : mutParams) {
@@ -359,8 +346,6 @@ const FunctionDecl *GenericResolver::instantiateFunction(
   }
 
   const FunctionDecl *registeredDecl = concreteFunc.get();
-
-  // Register in AST Context so LowerASTToHIR can find it later!
   context.registerInstantiatedFunction(std::move(concreteFunc));
   instantiatedFunctions[mangledName] = registeredDecl;
 

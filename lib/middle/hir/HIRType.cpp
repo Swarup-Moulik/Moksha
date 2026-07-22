@@ -1,12 +1,9 @@
 #include "moksha/HIR/HIRType.h"
-#include <cassert> // [FIX] Added for assertions
+#include <cassert>
 #include <sstream>
 
 using namespace moksha::hir;
 
-// ============================================================================
-// [HIRIntType]
-// ============================================================================
 std::string HIRIntType::toString() const {
   return (isSignedFlag ? "i" : "u") + std::to_string(width);
 }
@@ -18,31 +15,20 @@ void HIRIntType::Profile(llvm::FoldingSetNodeID &ID) const {
   ID.AddBoolean(isPtrWidth);
 }
 
-// ============================================================================
-// [HIRFloatType] - Now successfully uses 'width'
-// ============================================================================
 std::string HIRFloatType::toString() const {
-  // Returns f8, f16, f32, f64 etc.
   return "f" + std::to_string(width);
 }
 
 void HIRFloatType::Profile(llvm::FoldingSetNodeID &ID) const {
   ID.AddInteger(static_cast<int>(kind));
-  ID.AddInteger(width); // Used for interning unique float types
+  ID.AddInteger(width);
 }
 
-// ============================================================================
-// [HIRStringType]
-// ============================================================================
 std::string HIRStringType::toString() const { return "string"; }
 
 void HIRStringType::Profile(llvm::FoldingSetNodeID &ID) const {
   ID.AddInteger(static_cast<int>(kind));
 }
-
-// ============================================================================
-// [PrimitiveType]
-// ============================================================================
 
 std::string PrimitiveType::toString() const {
   switch (kind) {
@@ -63,18 +49,9 @@ std::string PrimitiveType::toString() const {
 
 void PrimitiveType::Profile(llvm::FoldingSetNodeID &ID) const {
   ID.AddInteger(static_cast<int>(kind));
-  // Primitives are always leaf nodes with implied Ownership::None.
 }
 
-// ============================================================================
-// [StructType]
-// ============================================================================
-
 std::string StructType::toString() const { return name; }
-
-// ============================================================================
-// [FunctionType]
-// ============================================================================
 
 std::string FunctionType::toString() const {
   std::stringstream ss;
@@ -122,9 +99,6 @@ void FunctionType::Profile(llvm::FoldingSetNodeID &ID) const {
   ID.AddBoolean(isInterrupt);
 }
 
-// ============================================================================
-// [Arrays & Unions]
-// ============================================================================
 std::string ArrayType::toString() const {
   return elementType->toString() + "[" + std::to_string(size) + "]";
 }
@@ -136,9 +110,6 @@ void ArrayType::Profile(llvm::FoldingSetNodeID &ID) const {
 
 std::string UnionType::toString() const { return name; }
 
-// ============================================================================
-// [SliceType]
-// ============================================================================
 std::string SliceType::toString() const {
   return elementType->toString() + "[]";
 }
@@ -148,9 +119,6 @@ void SliceType::Profile(llvm::FoldingSetNodeID &ID) const {
   ID.AddPointer(elementType);
 }
 
-// ============================================================================
-// [PromiseType]
-// ============================================================================
 void HIRPromiseType::Profile(llvm::FoldingSetNodeID &ID) const {
   ID.AddInteger(static_cast<int>(kind));
   ID.AddPointer(innerType);

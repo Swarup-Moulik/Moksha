@@ -25,7 +25,6 @@ public:
   bool isExtern() const { return isExternFlag; }
   void setExtern(bool e) { isExternFlag = e; }
 
-  // Initializer Management
   MIRConstant *getInitializer() const { return initializer; }
   void setInitializer(MIRConstant *init) { initializer = init; }
   bool hasInitializer() const { return initializer != nullptr; }

@@ -53,9 +53,7 @@ void HIRFunction::accept(ConstHIRVisitor &visitor) const {
   visitor.visitFunction(*this);
 }
 
-// ============================================================================
-// [HIRParam Implementation]
-// ============================================================================
+// HIRParam Implementation
 HIRParam::HIRParam(std::string name, const HIRType *type, SourceLocation loc,
                    std::unique_ptr<HIRExpr> defVal)
     : name(std::move(name)), type(type), loc(loc),
@@ -65,7 +63,6 @@ HIRParam::~HIRParam() = default;
 HIRParam::HIRParam(HIRParam &&) noexcept = default;
 HIRParam &HIRParam::operator=(HIRParam &&) noexcept = default;
 
-// [FIX] Updated to take ostream reference
 static void printIndent(llvm::raw_ostream &os, int indent) {
   for (int i = 0; i < indent; ++i)
     os << "  ";
@@ -79,7 +76,6 @@ void HIRFunction::dump(llvm::raw_ostream &os, int indent) const {
   if (!typeParams.empty()) {
     os << "<";
     for (size_t i = 0; i < typeParams.size(); ++i) {
-      // [FIX] Safely unpack the new struct
       if (typeParams[i].isShared)
         os << "shared ";
       os << typeParams[i].name << (i < typeParams.size() - 1 ? ", " : "");
@@ -158,10 +154,7 @@ void HIRFunction::dump(llvm::raw_ostream &os, int indent) const {
   }
 }
 
-// ============================================================================
-// [HIRClass Implementation]
-// ============================================================================
-
+// HIRClass Implementation
 void HIRClass::dump(llvm::raw_ostream &os, int indent) const {
   printIndent(os, indent);
   if (isRefClass()) {

@@ -6,6 +6,7 @@
 
 namespace moksha {
 
+/** @brief The registry for built-in functions and types in the Moksha compiler. */
 class BuiltinRegistry {
 public:
   static void registerBuiltins(ASTContext &ctx, SymbolTable &sym);

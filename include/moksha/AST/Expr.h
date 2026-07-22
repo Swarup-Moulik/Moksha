@@ -8,12 +8,13 @@
 
 namespace moksha {
 
+/** @brief Forward declarations */
 class Stmt;
 class ASTVisitor;
 class FunctionDecl;
 class ClassDecl;
 
-/// Discriminator for LLVM-style RTTI (dyn_cast/isa)
+/** @brief It contains the kind of expression nodes */
 enum class ExprKind {
   IntegerLiteral,
   FloatLiteral,
@@ -45,7 +46,7 @@ enum class ExprKind {
   AsmExpr
 };
 
-/// Base Expression Node
+/** @brief Base Expression Node */
 class Expr {
 public:
   virtual ~Expr() = default;
@@ -69,7 +70,7 @@ protected:
 
 using ExprPtr = std::unique_ptr<Expr>;
 
-// --- Literals ---
+/** @brief Literal expression nodes */
 
 class IntegerLiteral : public Expr {
 public:
@@ -199,7 +200,6 @@ private:
 
 class MapLiteral : public Expr {
 public:
-  // Store pairs of Key:Value
   using Entry = std::pair<std::unique_ptr<Expr>, std::unique_ptr<Expr>>;
 
   MapLiteral(std::vector<Entry> entries, SourceLocation loc)
@@ -216,7 +216,7 @@ private:
   std::vector<Entry> entries;
 };
 
-// --- Operations ---
+/** @brief Operation expression nodes */
 
 class BinaryExpr : public Expr {
 public:
@@ -332,7 +332,7 @@ private:
   ExprPtr expr;
 };
 
-// --- Variables & Calls ---
+/** @brief Variables & Calls */
 
 class IdentifierExpr : public Expr {
 public:
@@ -445,7 +445,7 @@ private:
   bool isOptional;
 };
 
-// --- Advanced ---
+/** @brief Advanced expression nodes */
 
 class LambdaParam {
 public:
@@ -495,7 +495,6 @@ public:
   std::unique_ptr<Expr> clone() const override;
   const std::vector<ASTCapture> &getCaptures() const { return captures; }
 
-  // [FIX] Update to use the new CaptureMode enum
   void addCapture(std::string name, const Type *type, CaptureMode mode) const {
     captures.push_back({std::move(name), type, mode});
   }
@@ -620,7 +619,6 @@ private:
 
 class InputExpr : public Expr {
 public:
-  // prompt can be null if the user just types `input()`
   InputExpr(ExprPtr prompt, SourceLocation loc)
       : Expr(ExprKind::InputExpr, loc), prompt(std::move(prompt)) {}
 
@@ -638,7 +636,7 @@ private:
 
 class AsmExpr : public Expr {
 public:
-  // Helper struct to map a constraint string to an expression
+  /** @brief Helper struct to map a constraint string to an expression */
   struct AsmOperand {
     std::string constraint;
     std::unique_ptr<Expr> expr;
@@ -646,7 +644,6 @@ public:
     AsmOperand(std::string c, std::unique_ptr<Expr> e)
         : constraint(std::move(c)), expr(std::move(e)) {}
 
-    // Move semantics required for unique_ptr
     AsmOperand(AsmOperand &&) = default;
     AsmOperand &operator=(AsmOperand &&) = default;
 

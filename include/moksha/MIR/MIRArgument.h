@@ -8,6 +8,7 @@ namespace mir {
 
 class MIRFunction;
 
+/** @brief Represents a function argument in MIR. */
 class MIRArgument : public MIRValue {
 public:
   MIRArgument(MIRFunction *parent, const hir::HIRType *type, unsigned index,

@@ -10,6 +10,7 @@
 namespace moksha {
 namespace hir {
 
+/** @brief Represents a field within a struct or union type */
 struct FieldInfo {
   std::string name;
   uint32_t index;
@@ -52,7 +53,7 @@ enum class TypeKind {
   Map
 };
 
-// Explicit ownership semantics for HIR
+/** @brief Explicit ownership semantics for HIR */
 enum class Ownership {
   None,     // Value types (primitives, structs) or non-owning references
   Owned,    // Strong reference (Box<T>, unique_ptr)
@@ -60,14 +61,9 @@ enum class Ownership {
   Shared    // Thread-safe shared (Arc<T>)
 };
 
+/** @brief Borrow state for pointers and references */
 enum class BorrowState { None, View, Mut, Lock };
 
-/// Base class for all HIR types.
-/// INVARIANTS:
-/// 1. HIRType instances are immutable once created.
-/// 2. Pointer equality implies type equality (if uniqued by context).
-/// 3. Ownership is encoded ONLY in PointerType or specific bindings, never in
-/// Struct/Function defs.
 class HIRType : public llvm::FoldingSetNode {
 public:
   virtual ~HIRType() = default;
@@ -92,7 +88,6 @@ protected:
   Ownership ownership;
 };
 
-// --- [FIX] Update HIRIntType: Remove bodies ---
 class HIRIntType : public HIRType {
   uint16_t width;
   bool isSignedFlag;
@@ -114,18 +109,16 @@ public:
   }
 };
 
-// --- [FIX] Update HIRFloatType: Add width member and remove bodies ---
 class HIRFloatType : public HIRType {
-  uint16_t width; // Added this member
+  uint16_t width;
 
 public:
-  // Update constructor to take width
   explicit HIRFloatType(uint16_t width)
       : HIRType(TypeKind::Float, Ownership::None), width(width) {}
 
   uint16_t getWidth() const { return width; }
 
-  std::string toString() const override; // Logic moved to .cpp
+  std::string toString() const override;
   void Profile(llvm::FoldingSetNodeID &ID) const override;
 
   static bool classof(const HIRType *T) {
@@ -133,7 +126,6 @@ public:
   }
 };
 
-// --- [FIX] Update HIRStringType: Remove bodies ---
 class HIRStringType : public HIRType {
 public:
   HIRStringType() : HIRType(TypeKind::String, Ownership::None) {}
@@ -165,7 +157,7 @@ public:
 
 class PointerType : public HIRType {
   const HIRType *pointee;
-  BorrowState borrowState; // [NEW] Store the state!
+  BorrowState borrowState;
 
 public:
   PointerType(const HIRType *pointee, Ownership own,
@@ -174,8 +166,6 @@ public:
 
   const HIRType *getPointee() const { return pointee; }
   BorrowState getBorrowState() const { return borrowState; }
-
-  // [NEW] Fast O(1) Accessors
   bool isMut() const { return borrowState == BorrowState::Mut; }
   bool isView() const { return borrowState == BorrowState::View; }
   bool isLock() const { return borrowState == BorrowState::Lock; }
@@ -301,17 +291,14 @@ public:
 class UnionType : public HIRType {
   std::string name;
   std::vector<const HIRType *> fields;
-  std::vector<std::string> fieldNames; // [NEW] Store the names!
+  std::vector<std::string> fieldNames;
 
 public:
-  // [FIX] Added fieldNames parameter to the constructor to fix the self-move
-  // warning!
   UnionType(std::string name, std::vector<const HIRType *> fields,
             std::vector<std::string> fieldNames = {})
       : HIRType(TypeKind::Union, Ownership::None), name(std::move(name)),
         fields(std::move(fields)), fieldNames(std::move(fieldNames)) {}
 
-  // [FIX] Added newNames parameter to match HIRGen.cpp expectations!
   void setFields(std::vector<const HIRType *> newFields,
                  std::vector<std::string> newNames) {
     fields = std::move(newFields);
@@ -320,15 +307,13 @@ public:
 
   llvm::ArrayRef<const HIRType *> getFields() const { return fields; }
   llvm::StringRef getName() const { return name; }
-
-  // [NEW] The getFieldIndex Helper for Unions
   int getFieldIndex(const std::string &searchName) const {
     for (size_t i = 0; i < fieldNames.size(); ++i) {
       if (fieldNames[i] == searchName) {
         return static_cast<int>(i);
       }
     }
-    return -1; // Field not found
+    return -1;
   }
 
   std::string toString() const override;
@@ -392,10 +377,9 @@ public:
 
 class ReferenceType : public HIRType {
   const HIRType *inner;
-  BorrowState borrowState; // [NEW] Store the state!
+  BorrowState borrowState;
 
 public:
-  // [NEW] Accept BorrowState, defaulting to None
   ReferenceType(const HIRType *inner, Ownership own,
                 BorrowState state = BorrowState::None)
       : HIRType(TypeKind::Reference, own), inner(inner), borrowState(state) {}
@@ -403,12 +387,10 @@ public:
   const HIRType *getInner() const { return inner; }
   BorrowState getBorrowState() const { return borrowState; }
 
-  // [NEW] Fast O(1) Accessors
   bool isMut() const { return borrowState == BorrowState::Mut; }
   bool isView() const { return borrowState == BorrowState::View; }
   bool isLock() const { return borrowState == BorrowState::Lock; }
 
-  // [FIX] Format the string based on the active borrow state
   std::string toString() const override {
     std::string prefix = "&";
     if (borrowState == BorrowState::Mut)
@@ -433,7 +415,6 @@ public:
   }
 };
 
-// --- [NEW] Decimal / Fixed-Point Type ---
 class HIRDecimalType : public HIRType {
   unsigned int precision;
   unsigned int scale;
@@ -477,7 +458,6 @@ public:
   }
 };
 
-// --- [NEW] Closure Type ---
 class HIRClosureType : public HIRType {
   const HIRType *returnType;
   std::vector<const HIRType *> paramTypes;
@@ -535,7 +515,6 @@ public:
       : HIRType(TypeKind::View, Ownership::Borrowed), inner(inner) {}
   const HIRType *getInner() const { return inner; }
 
-  // Enforce Immutability at the HIR level
   bool isImmutable() const override { return true; }
 
   const HIRType *stripModifiers() const override {
@@ -601,7 +580,7 @@ public:
   explicit HIRConstType(const HIRType *inner)
       : HIRType(TypeKind::Const, Ownership::None), inner(inner) {}
   const HIRType *getInner() const { return inner; }
-  bool isImmutable() const override { return true; } // Enforce Immutability
+  bool isImmutable() const override { return true; }
   const HIRType *stripModifiers() const override {
     return inner->stripModifiers();
   }

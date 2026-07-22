@@ -16,16 +16,14 @@ namespace moksha {
 class ASTContext;
 class Decl;
 class Stmt;
-class ClassDecl; // Forward declaration
+class ClassDecl;
 
-/// \brief Performs semantic analysis and type checking on the AST.
+/** @brief Performs semantic analysis and type checking on the AST. */
 class TypeChecker : public ASTVisitor {
 public:
-  /// \brief Initialize the TypeChecker with necessary contexts.
   TypeChecker(ASTContext &ctx, SymbolTable &sym, DiagnosticEngine &diags);
   std::function<ModuleDecl *(const std::string &)> loadModuleCallback;
 
-  // Allow the driver to seed the main module to prevent cyclic double-loads
   void markModuleAsLoaded(const std::string &modName) {
     loadedModules.insert(modName);
   }
@@ -40,18 +38,17 @@ private:
   bool isLHSOfAssignment = false;
   std::unordered_set<std::string> loadedModules;
 
-  // --- Contexts ---
+  // Contexts
   ASTContext &context;
   SymbolTable &symbols;
   DiagnosticEngine &Diags;
   GenericResolver resolver;
 
-  // --- State ---
+  // State
   const Type *lastComputedType;
   const Type *currentExpectedReturnType;
   const Type *expectedExprType = nullptr;
-  const ClassDecl
-      *currentClassDecl; // Added: Tracks current class for 'this'/'super'
+  const ClassDecl *currentClassDecl;
   bool hasError;
   int loopDepth = 0;      // Track if we are inside a loop
   int syncLockDepth = 0;  // Track OS locks
@@ -67,22 +64,20 @@ private:
   std::set<std::string> activeLocks;
   std::vector<std::vector<std::set<const Decl *>>> loopBreakStates;
 
-  // --- Helpers ---
+  // Helpers
   bool isCompatible(const Type *expected, const Type *actual);
   bool isCastAllowed(const Type *src, const Type *dst);
 
-  /// Determine the common supertype (LUB) for two types.
   const Type *getCommonSuperType(const Type *t1, const Type *t2);
   bool isSubclassOf(const ClassDecl *child, const std::string &parentName);
   bool checkVisibility(const Decl *memberDecl, const ClassDecl *ownerClass,
                        SourceLocation loc);
 
-  // A queue of newly instantiated classes that need to be type-checked
   std::vector<const ClassDecl *> pendingInstantiations;
   std::vector<const FunctionDecl *> pendingFuncInstantiations;
   void processPendingInstantiations();
 
-  // --- ASTVisitor Overrides ---
+  // ASTVisitor Overrides
   void visitIntegerLiteral(const IntegerLiteral *expr) override;
   void visitFloatLiteral(const FloatLiteral *expr) override;
   void visitDecimalLiteral(const DecimalLiteral *expr) override;
@@ -143,7 +138,7 @@ private:
   void visitMacroDecl(const MacroDecl *decl) override;
   void visitUsingDecl(const UsingDecl *decl) override;
 
-  // Structural visitors (required by visitor interface but often no-ops here)
+  // Structural visitors
   void visitPrimitiveType(const PrimitiveType *type) override;
   void visitPointerType(const PointerType *type) override;
   void visitReferenceType(const ReferenceType *type) override;

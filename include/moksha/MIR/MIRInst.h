@@ -20,10 +20,7 @@ namespace mir {
 class MIRBlock;
 class MIRFunction;
 
-// ============================================================================
-// [Constants]
-// ============================================================================
-
+/** @brief Represents a constant value in MIR. */
 class MIRConstant : public MIRValue {
 protected:
   MIRConstant(ValueKind k, const hir::HIRType *t) : MIRValue(k, t, "") {}
@@ -298,10 +295,7 @@ private:
   MIRValue *value;
 };
 
-// ============================================================================
-// [Instruction Opcodes]
-// ============================================================================
-
+// Instruction Opcodes
 enum class MemoryOrder { Relaxed, Consume, Acquire, Release, AcqRel, SeqCst };
 
 enum class AtomicOp {
@@ -381,10 +375,7 @@ enum class Opcode {
   Fence,
 };
 
-// ============================================================================
-// [Base Instruction]
-// ============================================================================
-
+// Base Instruction
 class MIRInst : public MIRValue {
 public:
   Opcode getOpcode() const { return opcode; }
@@ -397,7 +388,6 @@ public:
     return v->getKind() == ValueKind::Instruction;
   }
 
-  // Polymorphic clone and operand replacement
   virtual std::unique_ptr<MIRInst> clone() const = 0;
   virtual void replaceOperand(MIRValue *oldVal, MIRValue *newVal) {}
 
@@ -412,7 +402,7 @@ protected:
   MIRBlock *parent;
 };
 
-// --- [MACRO FOR AUTO RTTI GENERATION] ---
+// MACRO FOR AUTO RTTI GENERATION
 #define DECLARE_INST_CLASSOF(OpVal)                                            \
   static bool classof(const MIRValue *v) {                                     \
     if (v->getKind() != ValueKind::Instruction)                                \
@@ -420,10 +410,7 @@ protected:
     return static_cast<const MIRInst *>(v)->getOpcode() == Opcode::OpVal;      \
   }
 
-// ============================================================================
-// [Terminators]
-// ============================================================================
-
+// Terminators
 class BranchInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(Br)
@@ -528,10 +515,7 @@ public:
   }
 };
 
-// ============================================================================
-// [Memory & Aggregates]
-// ============================================================================
-
+// Memory & Aggregates
 class AllocaInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(Alloca)
@@ -698,10 +682,7 @@ private:
   uint32_t index;
 };
 
-// ============================================================================
-// [ARC, Arithmetic, Logic, Casts]
-// ============================================================================
-
+// ARC, Arithmetic, Logic, Casts
 class ARCInst : public MIRInst {
 public:
   static bool classof(const MIRValue *v) {
@@ -986,10 +967,7 @@ private:
   bool isVarArg;
 };
 
-// ============================================================================
-// [Exceptions & Stack Unwinding]
-// ============================================================================
-
+// Exceptions & Stack Unwinding
 class InvokeInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(Invoke)
@@ -1022,8 +1000,6 @@ private:
 class LandingPadInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(LandingPad)
-
-  // 'resultType' is the { i8*, i32 } struct returned by the landing pad.
   explicit LandingPadInst(const hir::HIRType *resultType, std::string name,
                           SourceLocation loc);
   void addCatchType(const hir::HIRType *catchType) {
@@ -1088,10 +1064,7 @@ private:
   MIRBlock *unwindDest;
 };
 
-// ============================================================================
-// [Inline Assembly]
-// ============================================================================
-
+// Inline Assembly
 class InlineAsmInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(InlineAsm)
@@ -1127,10 +1100,7 @@ private:
   bool isVolatile;
 };
 
-// ============================================================================
-// [Concurrency & Closures]
-// ============================================================================
-
+// Concurrency & Closures
 class MakeClosureInst : public MIRInst {
 public:
   DECLARE_INST_CLASSOF(MakeClosure)

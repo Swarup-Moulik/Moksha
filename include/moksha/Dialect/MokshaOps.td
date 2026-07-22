@@ -5,10 +5,9 @@ include "mlir/IR/BuiltinTypes.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "MokshaInterfaces.td"
 include "MokshaDialect.td"
-include "MokshaTypes.td" // Include the new types!
+include "MokshaTypes.td"
 
-// === Global Variables ===
-
+// Global Variables
 def Moksha_GlobalOp : Moksha_Op<"global", [Symbol]> {
     let summary = "Defines a global variable.";
     let description = [{
@@ -20,8 +19,7 @@ def Moksha_GlobalOp : Moksha_Op<"global", [Symbol]> {
     let assemblyFormat = "$sym_name `:` $type ($initial_value^)? attr-dict";
 }
 
-// === Constants ===
-
+// Constants
 def Moksha_ConstantOp : Moksha_Op<"constant", [Pure, ConstantLike]> {
     let summary = "Materializes a constant value.";
     let arguments = (ins AnyAttr:$value);
@@ -29,8 +27,7 @@ def Moksha_ConstantOp : Moksha_Op<"constant", [Pure, ConstantLike]> {
     let hasFolder = 1;
 }
 
-// === Basic Memory Ops ===
-
+// Basic Memory Ops
 def Moksha_AllocaOp : Moksha_Op<"alloca"> {
     let summary = "Allocates memory and returns a pointer.";
     let arguments = (ins TypeAttr:$allocatedType);
@@ -71,8 +68,7 @@ def Moksha_LoadWeakOp : Moksha_Op<"load_weak", [MemoryEffects<[MemRead]>]> {
     let assemblyFormat = "$ptr attr-dict `:` type($ptr) `->` type($res)";
 }
 
-// === Arithmetic & Logic Ops ===
-
+// Arithmetic & Logic Ops
 def Moksha_AddOp : Moksha_Op<"add", [Pure]> {
     let summary = "Addition operation.";
     let arguments = (ins AnyType:$lhs, AnyType:$rhs);
@@ -140,8 +136,7 @@ def Moksha_UnreachableOp : Moksha_Op<"unreachable", [Terminator]> {
     let summary = "Terminates execution.";
 }
 
-// === Structural Ops ===
-
+// Structural Ops
 def Moksha_CallOp : Moksha_Op<"call"> {
     let summary = "Function call operation.";
     let arguments = (ins SymbolRefAttr:$callee, Variadic<AnyType>:$operands);
@@ -149,7 +144,7 @@ def Moksha_CallOp : Moksha_Op<"call"> {
     let assemblyFormat = "$callee `(` $operands `)` attr-dict `:` functional-type($operands, $results)";
 }
 
-// === Systems & Concurrency Operations ===
+// Systems & Concurrency Operations
 
 // 1. Spawn (Thread/Async creation)
 def Moksha_SpawnOp : Moksha_Op<"spawn", [DeclareOpInterfaceMethods<Moksha_AsyncOpInterface>]> {
@@ -246,8 +241,7 @@ def Moksha_ReleaseOp : Moksha_Op<"release", [DeclareOpInterfaceMethods<Moksha_AR
     let assemblyFormat = "$value ( `[` `drop` `:` $drop_func^ `]` )? attr-dict `:` type($value)";
 }
 
-// === Globals & Casts ===
-
+// Globals & Casts
 def Moksha_AddressOfOp : Moksha_Op<"address_of", [Pure]> {
     let summary = "Gets the address of a global variable.";
     let arguments = (ins FlatSymbolRefAttr:$global_name);
@@ -275,8 +269,7 @@ def Moksha_UpcastOp : Moksha_Op<"upcast", [Pure]> {
     let assemblyFormat = "$operand attr-dict `:` type($operand) `to` type($res)";
 }
 
-// === Aggregate & Pointer Ops ===
-
+// Aggregate & Pointer Ops
 def Moksha_GetElementPtrOp : Moksha_Op<"gep", [Pure]> {
     let summary = "Get element pointer";
     let arguments = (ins Moksha_PointerType:$base, Variadic<AnyType>:$indices);
@@ -298,8 +291,7 @@ def Moksha_InsertValueOp : Moksha_Op<"insert_value", [Pure]> {
     let assemblyFormat = "$value `into` $aggregate `[` $index `]` attr-dict `:` type($value) `,` type($aggregate) `->` type($res)";
 }
 
-// === Closures ===
-
+// Closures
 def Moksha_MakeClosureOp : Moksha_Op<"make_closure", [Pure]> {
     let summary = "Creates a closure (fat pointer) from a function and its captured environment.";
     let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$captures);
@@ -307,8 +299,7 @@ def Moksha_MakeClosureOp : Moksha_Op<"make_closure", [Pure]> {
     let assemblyFormat = "$callee `(` $captures `)` attr-dict `:` type($captures) `->` type($res)";
 }
 
-// === Exceptions ===
-
+// Exceptions
 def Moksha_ThrowOp : Moksha_Op<"throw", [Terminator]> {
     let summary = "Throws an exception and unwinds the stack.";
     // It takes the thrown value, and optionally branches to a local catch block
@@ -341,21 +332,14 @@ def InvokeIndirectOp : Moksha_Op<"invoke_indirect", [Terminator]> {
 
 def Moksha_LandingPadOp : Moksha_Op<"landingpad"> {
     let summary = "Catches an exception value in an unwind block.";
-
-    // ADDED: cleanup flag and array of catch types
     let arguments = (ins UnitAttr:$cleanup, ArrayAttr:$catch_clauses);
     let results = (outs AnyType:$res);
-
-    // We let attr-dict handle the printing of the attributes automatically
     let assemblyFormat = "attr-dict `:` type($res)";
 }
 
 def Moksha_ResumeOp : Moksha_Op<"resume", [Terminator]> {
     let summary = "Resumes propagation of an existing exception.";
-
-    // Resume takes exactly one argument: the exception payload to continue unwinding
     let arguments = (ins AnyType:$value);
-
     let assemblyFormat = "$value attr-dict `:` type($value)";
 }
 

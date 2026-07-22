@@ -5,8 +5,6 @@
 
 namespace moksha {
 
-// === Internal Helpers ===
-
 static llvm::StringRef scopeKindToString(ScopeKind kind) {
   switch (kind) {
   case ScopeKind::Global:
@@ -21,8 +19,6 @@ static llvm::StringRef scopeKindToString(ScopeKind kind) {
     return "Unknown";
   }
 }
-
-// === Scope Implementation ===
 
 void Scope::addSymbol(llvm::StringRef name, Symbol symbol) {
   auto result = symbols.insert({name, symbol});
@@ -45,8 +41,6 @@ const Symbol *Scope::findSymbol(llvm::StringRef name) const {
   }
   return nullptr;
 }
-
-// === SymbolTable Implementation ===
 
 SymbolTable::SymbolTable(DiagnosticEngine &Diags) : Diags(Diags) {
   enterScope(ScopeKind::Global);
@@ -77,11 +71,7 @@ bool SymbolTable::addSymbol(llvm::StringRef name, Symbol symbol,
     return false;
 
   Scope *currentScope = scopeStack.back().get();
-
-  // Check for redefinition OR overload
   if (Symbol *existing = currentScope->findSymbol(name)) {
-
-    // Allow redundant Module or Variable imports (Idempotency)
     if (existing->kind == symbol.kind &&
         (symbol.kind == SymbolKind::Module ||
          symbol.kind == SymbolKind::Variable)) {
@@ -140,10 +130,8 @@ ScopeKind SymbolTable::getCurrentScopeKind() const {
 void Scope::addOverload(llvm::StringRef name, Symbol symbol) {
   auto it = symbols.find(name);
   if (it != symbols.end()) {
-    // Symbol exists, append to its overload list
     it->second.overloads.push_back(std::move(symbol));
   } else {
-    // First time seeing this name, add as the primary symbol
     symbols.insert({name, std::move(symbol)});
   }
 }
@@ -154,10 +142,7 @@ void SymbolTable::addOverload(llvm::StringRef name, Symbol symbol) {
   scopeStack.back()->addOverload(name, std::move(symbol));
 }
 
-// === Helper: Built-in Primitives ===
-
 void SymbolTable::addPrimitiveTypes(ASTContext &ctx) {
-  // 1. Define the Canonical Types
   addSymbol("i8", Symbol(SymbolKind::Type, "i8", ctx.getI8Type()));
   addSymbol("i16", Symbol(SymbolKind::Type, "i16", ctx.getI16Type()));
   addSymbol("i32", Symbol(SymbolKind::Type, "i32", ctx.getI32Type()));
@@ -176,7 +161,6 @@ void SymbolTable::addPrimitiveTypes(ASTContext &ctx) {
   addSymbol("void", Symbol(SymbolKind::Type, "void", ctx.getVoidType()));
   addSymbol("any", Symbol(SymbolKind::Type, "any", ctx.getAnyType()));
 
-  // 2. Define Aliases for C-Style Syntax
   addSymbol("char", Symbol(SymbolKind::Type, "char", ctx.getI8Type()));
   addSymbol("short", Symbol(SymbolKind::Type, "short", ctx.getI16Type()));
   addSymbol("int", Symbol(SymbolKind::Type, "int", ctx.getI32Type()));
@@ -185,7 +169,6 @@ void SymbolTable::addPrimitiveTypes(ASTContext &ctx) {
   addSymbol("isize", Symbol(SymbolKind::Type, "isize", ctx.getISizeType()));
   addSymbol("usize", Symbol(SymbolKind::Type, "usize", ctx.getUSizeType()));
 
-  // Floats
   addSymbol("quarter", Symbol(SymbolKind::Type, "quarter", ctx.getF8Type()));
   addSymbol("half", Symbol(SymbolKind::Type, "half", ctx.getF16Type()));
   addSymbol("float", Symbol(SymbolKind::Type, "float", ctx.getF32Type()));
@@ -199,11 +182,9 @@ void SymbolTable::dump() const {
     llvm::errs() << "Scope Level " << level << " ("
                  << scopeKindToString(scope->getKind()) << "):\n";
 
-    // [CHANGE] Create an indentation string based on level
     std::string indent(level * 2, ' ');
 
     for (const auto &entry : scope->symbols) {
-      // [CHANGE] Use the indent
       llvm::errs() << indent << "  - " << entry.getKey() << " ["
                    << entry.getValue().kindToString() << "]\n";
     }

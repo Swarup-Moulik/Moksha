@@ -11,6 +11,7 @@ namespace hir {
 
 class HIRExpr;
 
+/** @brief Represents a function parameter */
 struct HIRParam {
   std::string name;
   const HIRType *type;
@@ -23,8 +24,6 @@ struct HIRParam {
   ~HIRParam();
   HIRParam(HIRParam &&) noexcept;
   HIRParam &operator=(HIRParam &&) noexcept;
-
-  // Add these getters if your code uses them as accessors
   const std::string &getName() const { return name; }
   const HIRType *getType() const { return type; }
   SourceLocation getLoc() const { return loc; }

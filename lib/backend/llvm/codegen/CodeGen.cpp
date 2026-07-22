@@ -3,6 +3,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 namespace moksha {
+/** @brief Emits the object code from the given LLVM module. */
 bool emitObjectCode(llvm::Module &llvmModule, const std::string &outputFilename,
                     const TargetConfig &config) {
   std::error_code errorCode;
@@ -12,8 +13,6 @@ bool emitObjectCode(llvm::Module &llvmModule, const std::string &outputFilename,
     llvm::errs() << "Could not open file: " << errorCode.message() << "\n";
     return false;
   }
-
-  // Simply dump the IR. Clang will run the coroutine passes for us.
   llvmModule.print(dest, nullptr);
   dest.flush();
   return true;

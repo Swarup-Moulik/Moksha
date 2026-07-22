@@ -22,22 +22,13 @@ class MIRBlock;
 class MIRInst;
 class MIRValue;
 
+/** @brief Verifies the MIR module and functions for errors. */
 class MIRVerifier {
 public:
-  // [FIX] 1. Constructor is now public so the caller can own the state.
   explicit MIRVerifier(llvm::raw_ostream *os = nullptr, bool verbose = false);
-
-  // [FIX] 2. Removed 'static'. These now update the instance's 'errors' vector.
-  // Check a module for errors.
   [[nodiscard]] bool verify(const MIRModule *module);
-
-  // Check a single function for errors.
   [[nodiscard]] bool verify(const MIRFunction *func);
-
   const std::vector<std::string> &getErrors() const { return errors; }
-
-  // Optional: A quick helper to check if errors were found without pulling the
-  // vector
   bool hasFailed() const { return hasError; }
 
 private:
@@ -45,9 +36,7 @@ private:
   bool verifyFunction(const MIRFunction *func);
   bool verifyBlock(const MIRBlock *block);
   bool verifyInstruction(const MIRInst *inst);
-
   bool checkUnreachableBlocks(const MIRFunction *func);
-
   bool verifyTypesMatch(const MIRValue *val1, const MIRValue *val2,
                         const std::string &msg,
                         const MIRInst *contextInst = nullptr);
@@ -59,7 +48,6 @@ private:
   void logError(const std::string &msg, const MIRInst *context);
   void logError(const std::string &msg, const MIRBlock *context);
   void logError(const std::string &msg, const MIRFunction *context);
-
   void logVerbose(const std::string &msg);
 
   llvm::raw_ostream *os;

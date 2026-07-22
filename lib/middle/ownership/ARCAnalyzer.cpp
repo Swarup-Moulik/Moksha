@@ -54,7 +54,7 @@ private:
 
   // Analyzes the actual memory location rather than the loaded SSA instance.
   MIRValue *getUnderlyingObject(MIRValue *val) {
-    while (auto *inst = llvm::dyn_cast<MIRInst>(val)) {
+    while (auto *inst = llvm::dyn_cast_or_null<MIRInst>(val)) {
       if (inst->getOpcode() == Opcode::BitCast ||
           inst->getOpcode() == Opcode::AnyCast) {
         val = static_cast<CastInst *>(inst)->getValue();
@@ -94,7 +94,7 @@ private:
         continue;
       }
 
-      auto *arc = llvm::dyn_cast<ARCInst>(inst);
+      auto *arc = llvm::dyn_cast_or_null<ARCInst>(inst);
       if (!arc)
         continue;
 
@@ -102,11 +102,10 @@ private:
       MIRValue *baseObj = getUnderlyingObject(arc->getObject());
 
       if (arc->getOpcode() == Opcode::Retain) {
-        activeRetains[baseObj].push_back(arc); // Push to stack
+        activeRetains[baseObj].push_back(arc);
       } else if (arc->getOpcode() == Opcode::Release) {
         auto it = activeRetains.find(baseObj);
         if (it != activeRetains.end() && !it->second.empty()) {
-          // Pop the most recent retain
           ARCInst *retainInst = it->second.back();
           it->second.pop_back();
 
@@ -138,9 +137,8 @@ private:
 
   bool isSafeToRemovePair(MIRBlock *block, ARCInst *retain, ARCInst *release) {
     bool inRange = false;
-
-    // [FIX] 1. Extract the true type using the direct object BEFORE stripping!
     MIRValue *directObj = retain->getObject();
+
     if (directObj && directObj->getType()) {
       std::string tyStr = directObj->getType()->toString();
       std::string className = "";
@@ -163,29 +161,22 @@ private:
 
       if (!className.empty()) {
         std::string dropPrefix = className + ".destructor";
-        // If the module contains ANY drop function for this type, abort
-        // elision!
         if (module) {
           for (auto &funcPtr : module->getFunctions()) {
             if (funcPtr->getName().find(dropPrefix) == 0) {
-              return false; // Found a destructor, DO NOT elide!
+              return false;
             }
           }
         }
       }
     }
 
-    // [FIX] 2. Now strip the object to check for intermediate memory
-    // manipulations
     MIRValue *targetVal = getUnderlyingObject(directObj);
-
-    // We must preserve at least one retain/release pair to ensure the memory is
-    // freed.
     if (MIRFunction *func = block->getParent()) {
       int retainCount = 0;
       for (auto &b : func->getBlocks()) {
         for (auto &i : b->getInstructions()) {
-          if (auto *a = llvm::dyn_cast<ARCInst>(i.get())) {
+          if (auto *a = llvm::dyn_cast_or_null<ARCInst>(i.get())) {
             if (a->getOpcode() == Opcode::Retain &&
                 getUnderlyingObject(a->getObject()) == targetVal) {
               retainCount++;
@@ -194,8 +185,6 @@ private:
         }
       }
 
-      // If this is the only retain left in the function for this object,
-      // DO NOT elide it!
       if (retainCount <= 1) {
         return false;
       }
@@ -216,28 +205,25 @@ private:
       if (!inRange)
         continue;
 
-      // Ensure no intermediate instructions manipulate the exact same ARC
-      // memory
-      if (auto *arc = llvm::dyn_cast<ARCInst>(inst)) {
+      if (auto *arc = llvm::dyn_cast_or_null<ARCInst>(inst)) {
         if (getUnderlyingObject(arc->getObject()) == targetVal) {
           return false;
         }
-      } else if (auto *store = llvm::dyn_cast<StoreInst>(inst)) {
+      } else if (auto *store = llvm::dyn_cast_or_null<StoreInst>(inst)) {
         if (getUnderlyingObject(store->getValue()) == targetVal) {
           return false;
         }
-      } else if (auto *storeW = llvm::dyn_cast<StoreWeakInst>(inst)) {
+      } else if (auto *storeW = llvm::dyn_cast_or_null<StoreWeakInst>(inst)) {
         if (getUnderlyingObject(storeW->getValue()) == targetVal ||
             getUnderlyingObject(storeW->getPointer()) == targetVal) {
           return false;
         }
-      } else if (auto *loadW = llvm::dyn_cast<LoadWeakInst>(inst)) {
+      } else if (auto *loadW = llvm::dyn_cast_or_null<LoadWeakInst>(inst)) {
         if (getUnderlyingObject(loadW->getPointer()) == targetVal) {
           return false;
         }
       } else if (llvm::isa<CallInst>(inst) || llvm::isa<InvokeInst>(inst) ||
                  llvm::isa<AwaitInst>(inst) || llvm::isa<SpawnInst>(inst)) {
-        // External functions or context switches might mutate the ref count!
         return false;
       }
     }

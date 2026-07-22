@@ -18,7 +18,6 @@ static void *internal_memcpy(void *dest, const void *src, size_t n) {
   return dest;
 }
 
-// Accessor for the MLIR Java-style lowering
 void *moksha_rt_array_data(MokshaSlice *slice) {
   if (!slice)
     return NULL;
@@ -26,16 +25,13 @@ void *moksha_rt_array_data(MokshaSlice *slice) {
 }
 
 void *moksha_rt_array_alloc(size_t element_size, uint64_t capacity) {
-  // THE FIX: The Slice wrapper ITSELF is the ARC-managed object!
   MokshaSlice *slice =
       (MokshaSlice *)moksha_rt_alloc(sizeof(MokshaSlice), MOKSHA_TYPE_ARRAY);
 
-  // Track capacity in the wrapper's native ARC header
   MokshaHeader *header = ((MokshaHeader *)slice) - 1;
   header->capacity_bytes = capacity * element_size;
 
   if (capacity > 0) {
-    // The data buffer is raw memory, which allows seamless reallocs!
     slice->data = moksha_mem_alloc(header->capacity_bytes);
   } else {
     slice->data = NULL;
@@ -63,13 +59,10 @@ static void ensure_capacity(MokshaSlice *slice, uint64_t required_elements,
     new_cap_bytes = required_bytes;
 
   if (slice->data && header->capacity_bytes > 0) {
-    // Owning slice: safe to realloc
     slice->data = moksha_mem_realloc(slice->data, new_cap_bytes);
   } else {
-    // Empty slice OR non-owning view: allocate fresh memory
     void *new_data = moksha_mem_alloc(new_cap_bytes);
     if (slice->data && slice->length > 0) {
-      // Copy existing view data into the new owned buffer
       internal_memcpy(new_data, slice->data, slice->length * element_size);
     }
     slice->data = new_data;
@@ -85,7 +78,6 @@ void *moksha_rt_array_view(void *stack_data, uint64_t length) {
   MokshaSlice *slice =
       (MokshaSlice *)moksha_rt_alloc(sizeof(MokshaSlice), MOKSHA_TYPE_ARRAY);
 
-  // Set capacity to 0 so the ARC destructor knows NOT to free slice->data
   MokshaHeader *header = ((MokshaHeader *)slice) - 1;
   header->capacity_bytes = 0;
 
@@ -148,9 +140,7 @@ bool __moksha_array_eq(void *a_ptr, int32_t a_len, void *b_ptr, int32_t b_len,
   return true;
 }
 
-// ============================================================================
 // Extended Array Operations
-// ============================================================================
 
 bool moksha_rt_array_is_empty(MokshaSlice *slice) {
   return !slice || slice->length == 0;

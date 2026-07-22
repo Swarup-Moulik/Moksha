@@ -7,8 +7,8 @@ void test_chain() {
     // Reborrow from the reference itself
     *view int v = &*m1;
 
-    int read = *v;
-    println(read); // Expected: 10
+    int reed = *v;
+    println(reed); // Expected: 10
 
     // 'v' dies here, releasing the view borrow.
 

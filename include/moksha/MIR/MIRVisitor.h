@@ -11,6 +11,7 @@
 namespace moksha {
 namespace mir {
 
+/** @brief Base class for all MIR visitors. */
 class MIRVisitor {
 public:
   virtual ~MIRVisitor() = default;
@@ -25,9 +26,7 @@ public:
     postVisitModule(module);
   }
 
-  virtual void visitGlobal(MIRGlobal *global) {
-    // Override to handle global variables
-  }
+  virtual void visitGlobal(MIRGlobal *global) {}
 
   virtual void visitFunction(MIRFunction *func) {
     if (!func)
@@ -51,7 +50,7 @@ public:
     postVisitBlock(block);
   }
 
-  // [Hooks]
+  // Hooks
   virtual void preVisitModule(MIRModule *) {}
   virtual void postVisitModule(MIRModule *) {}
   virtual void preVisitFunction(MIRFunction *) {}
@@ -59,7 +58,7 @@ public:
   virtual void preVisitBlock(MIRBlock *) {}
   virtual void postVisitBlock(MIRBlock *) {}
 
-  // [Instruction Dispatcher]
+  // Instruction Dispatcher
   void visit(MIRInst *inst) {
     if (!inst)
       return;
@@ -78,7 +77,7 @@ public:
     case Opcode::Switch:
       visitSwitchInst(static_cast<SwitchInst *>(inst));
       break;
-    case Opcode::Unreachable: // [FIX] Added Unreachable
+    case Opcode::Unreachable:
       visitUnreachableInst(static_cast<UnreachableInst *>(inst));
       break;
 
@@ -102,7 +101,7 @@ public:
     case Opcode::Mul:
     case Opcode::Div:
     case Opcode::Mod:
-    case Opcode::Pow: // [FIX] Added Pow
+    case Opcode::Pow:
     case Opcode::FAdd:
     case Opcode::FSub:
     case Opcode::FMul:
@@ -148,10 +147,10 @@ public:
     case Opcode::Release:
       visitARCInst(static_cast<ARCInst *>(inst));
       break;
-    case Opcode::StoreWeak: // [FIX] Added Weak Ptr handling
+    case Opcode::StoreWeak:
       visitStoreWeakInst(static_cast<StoreWeakInst *>(inst));
       break;
-    case Opcode::LoadWeak: // [FIX] Added Weak Ptr handling
+    case Opcode::LoadWeak:
       visitLoadWeakInst(static_cast<LoadWeakInst *>(inst));
       break;
     case Opcode::InsertValue:

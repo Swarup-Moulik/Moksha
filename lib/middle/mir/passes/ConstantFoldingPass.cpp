@@ -33,7 +33,8 @@ static MIRValue *getBasePointer(MIRValue *val) {
       val = cAny->getValue();
     } else if (auto *cArr = llvm::dyn_cast_or_null<ConstantArrayToSlice>(val)) {
       val = cArr->getValue();
-    } else if (auto *cSlice = llvm::dyn_cast_or_null<ConstantSliceToArray>(val)) {
+    } else if (auto *cSlice =
+                   llvm::dyn_cast_or_null<ConstantSliceToArray>(val)) {
       val = cSlice->getValue();
     } else {
       break;
@@ -44,8 +45,6 @@ static MIRValue *getBasePointer(MIRValue *val) {
 
 bool ConstantFoldingPass::runOnModule(MIRModule &M) {
   bool changed = false;
-
-  // Global Constant Propagation
   std::unordered_set<MIRGlobal *> mutatedGlobals;
 
   // 1. Scan for any potential mutation of a global
@@ -76,7 +75,8 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
               mutatedGlobals.insert(g);
             }
           }
-        } else if (auto *invoke = llvm::dyn_cast_or_null<InvokeInst>(inst.get())) {
+        } else if (auto *invoke =
+                       llvm::dyn_cast_or_null<InvokeInst>(inst.get())) {
           for (MIRValue *arg : invoke->getArgs()) {
             if (auto *g =
                     llvm::dyn_cast_or_null<MIRGlobal>(getBasePointer(arg))) {
@@ -131,7 +131,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
                 }
 
                 replaceAllUsesInFunction(func, load, replacement);
-                it = insts.erase(it); // Remove the LoadInst
+                it = insts.erase(it);
                 changed = true;
                 continue;
               }
@@ -160,14 +160,12 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
           if (auto *constSlice =
                   llvm::dyn_cast_or_null<ConstantSlice>(ext->getAggregate())) {
 
-            if (ext->getIndex() == 1) { // Index 1 is the .length/size
+            if (ext->getIndex() == 1) {
               folded = M.getOrInsertConstant<ConstantInt>(
                   constSlice->getElements().size(), ext->getType());
-            } else if (ext->getIndex() == 0) { // Index 0 is the data pointer
-              // To fold the pointer, we create a ConstantArray of the elements
-              // and return a BitCast of that array to the expected pointer type
-              if (auto *sliceTy =
-                      llvm::dyn_cast_or_null<hir::SliceType>(constSlice->getType())) {
+            } else if (ext->getIndex() == 0) {
+              if (auto *sliceTy = llvm::dyn_cast_or_null<hir::SliceType>(
+                      constSlice->getType())) {
                 auto *elemTy = sliceTy->getElementType();
                 auto *arrayTy =
                     M.getArrayType(elemTy, constSlice->getElements().size());
@@ -190,11 +188,8 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
           }
         }
 
-        // Fold Compare Instructions (e.g., icmp ne null, null OR icmp sgt 10,
-        // 20)
+        // Fold Compare Instructions
         if (auto *icmp = llvm::dyn_cast_or_null<CompareInst>(inst)) {
-
-          // Strip away BitCasts so we can see the raw Constants underneath
           auto unwrapCasts = [](MIRValue *val) -> MIRValue * {
             while (val) {
               if (auto *cast = llvm::dyn_cast_or_null<CastInst>(val)) {
@@ -247,14 +242,13 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
                   isSigned = hirIntTy->isSigned();
                 } else if (lhs->getType()->toString().find("i") !=
                            std::string::npos) {
-                  isSigned = true; // Fallback heuristic for "i32", "i64"
+                  isSigned = true;
                 }
               }
 
               bool result = false;
 
               if (isSigned) {
-                // Evaluate using C++ SIGNED comparisons
                 int64_t lVal = static_cast<int64_t>(lInt->getValue());
                 int64_t rVal = static_cast<int64_t>(rInt->getValue());
 
@@ -281,7 +275,6 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
                   break;
                 }
               } else {
-                // Evaluate using C++ UNSIGNED comparisons
                 uint64_t lVal = lInt->getValue();
                 uint64_t rVal = rInt->getValue();
 
@@ -315,9 +308,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
           }
         }
 
-        // --------------------------------------------------------------------
         // Fold Floating-Point Comparisons
-        // --------------------------------------------------------------------
         if (auto *fcmp = llvm::dyn_cast_or_null<FCmpInst>(inst)) {
           auto unwrapCasts = [](MIRValue *val) -> MIRValue * {
             while (val) {
@@ -386,9 +377,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
           }
         }
 
-        // --------------------------------------------------------------------
         // Fold Binary Math (Arithmetic)
-        // --------------------------------------------------------------------
         if (auto *binOp = llvm::dyn_cast_or_null<BinaryInst>(inst)) {
           auto unwrapCasts = [](MIRValue *val) -> MIRValue * {
             while (val) {
@@ -429,14 +418,13 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
                 isSigned = hirIntTy->isSigned();
               } else if (binOp->getType()->toString().find("i") !=
                          std::string::npos) {
-                isSigned = true; // Fallback heuristic for "i32", "i64", etc.
+                isSigned = true;
               }
 
               uint64_t result = 0;
               bool valid = true;
 
               if (isSigned) {
-                // Evaluate using C++ SIGNED arithmetic (sdiv, srem, etc.)
                 int64_t lVal = static_cast<int64_t>(lInt->getValue());
                 int64_t rVal = static_cast<int64_t>(rInt->getValue());
                 int64_t sResult = 0;
@@ -469,7 +457,6 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
                 }
                 result = static_cast<uint64_t>(sResult);
               } else {
-                // Evaluate using C++ UNSIGNED arithmetic (udiv, urem, etc.)
                 uint64_t lVal = lInt->getValue();
                 uint64_t rVal = rInt->getValue();
 
@@ -531,7 +518,7 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
               case Opcode::Div:
               case Opcode::FDiv:
                 result = lVal / rVal;
-                break; // IEEE 754 natively handles x / 0.0
+                break;
               default:
                 valid = false;
                 break;
@@ -546,9 +533,9 @@ bool ConstantFoldingPass::runOnModule(MIRModule &M) {
 
         if (folded) {
           replaceAllUsesInFunction(func, inst, folded);
-          it = insts.erase(it); // Remove the redundant instruction
+          it = insts.erase(it);
           changed = true;
-          continue; // Don't increment iterator
+          continue;
         }
         ++it;
       }

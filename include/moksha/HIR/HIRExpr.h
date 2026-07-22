@@ -17,10 +17,7 @@ class HIRVisitor;
 class ConstHIRVisitor;
 class HIRStmt;
 
-// ============================================================================
-// [Enums]
-// ============================================================================
-
+/** @brief Binary operator kinds */
 enum class BinaryOp {
   Add,
   Sub,
@@ -46,8 +43,10 @@ enum class BinaryOp {
   Range
 };
 
+/** @brief Unary operator kinds */
 enum class UnaryOp { Neg, Not, BitNot, PreInc, PreDec, PostInc, PostDec };
 
+/** @brief Cast operator kinds */
 enum class CastOp {
   BitCast,
   IntToFloat,
@@ -63,19 +62,20 @@ enum class CastOp {
   Upcast
 };
 
-// [NEW] robust ThreadKind
+/** @brief Thread kind */
 enum class ThreadKind {
   Strong,  // Standard joinable thread
   Weak,    // Daemon/Background thread
   Detached // Fire-and-forget
 };
 
+/** @brief Value category */
 enum class ValueCategory {
   LValue, // Represents a memory location (e.g., variables, dereferences)
   RValue  // Represents a temporary value (e.g., literals, arithmetic results)
 };
 
-// Define the explicit capture modes for HIR
+/** @brief Capture mode for closures */
 enum class CaptureMode {
   Snapshot, // Default: by-value copy ()
   View,     // Immutable borrow &()
@@ -83,10 +83,7 @@ enum class CaptureMode {
   Move      // Ownership transfer move ()
 };
 
-// ============================================================================
-// [HIR Expression Base]
-// ============================================================================
-
+/** @brief Base class for all HIR expressions */
 class HIRExpr {
 public:
   enum class Kind {
@@ -133,7 +130,6 @@ public:
     return valCategory == ValueCategory::LValue;
   }
 
-  // Support for mutable AND const visitors
   virtual void accept(HIRVisitor &v) = 0;
   virtual void accept(ConstHIRVisitor &v) const = 0;
   virtual void dump(llvm::raw_ostream &os, int indent = 0) const = 0;
@@ -150,10 +146,7 @@ protected:
 
 using HIRExprPtr = std::unique_ptr<HIRExpr>;
 
-// ============================================================================
-// [Literals]
-// ============================================================================
-
+/** @brief Literal expression kinds */
 class HIRIntegerLiteral : public HIRExpr {
 public:
   HIRIntegerLiteral(uint64_t value, const HIRType *type, SourceLocation loc)
@@ -324,10 +317,7 @@ private:
   std::vector<Entry> entries;
 };
 
-// ============================================================================
-// [Operations]
-// ============================================================================
-
+/** @brief HIR expression classes */
 class HIRBinaryExpr : public HIRExpr {
 public:
   HIRBinaryExpr(BinaryOp op, HIRExprPtr lhs, HIRExprPtr rhs,
@@ -379,7 +369,7 @@ public:
   HIRCastExpr(CastOp op, HIRExprPtr operand, const HIRType *targetType,
               SourceLocation loc)
       : HIRExpr(Kind::Cast, targetType, ValueCategory::RValue, loc),
-        expr(std::move(operand)), op(op) {} // Match order: expr then op
+        expr(std::move(operand)), op(op) {}
 
   [[nodiscard]] HIRExpr *getExpr() const { return expr.get(); }
   [[nodiscard]] CastOp getOp() const { return op; }
@@ -390,7 +380,7 @@ public:
   static bool classof(const HIRExpr *E) { return E->getKind() == Kind::Cast; }
 
 private:
-  HIRExprPtr expr; // Declare expr first
+  HIRExprPtr expr;
   CastOp op;
 };
 
@@ -418,10 +408,7 @@ private:
   HIRExprPtr falseExpr;
 };
 
-// ============================================================================
-// [Variables & Access]
-// ============================================================================
-
+/** @brief HIR expression classes */
 class HIRIdentifierExpr : public HIRExpr {
 public:
   HIRIdentifierExpr(std::string name, const HIRType *type, SourceLocation loc)
@@ -527,7 +514,6 @@ public:
 
 class HIRSuperExpr : public HIRExpr {
 public:
-  // SuperExpr is usually a pointer to the parent class type
   HIRSuperExpr(const HIRType *type, SourceLocation loc)
       : HIRExpr(Kind::Super, type, ValueCategory::RValue, loc) {}
 
@@ -537,10 +523,7 @@ public:
   static bool classof(const HIRExpr *E) { return E->getKind() == Kind::Super; }
 };
 
-// ============================================================================
-// [High-Level Constructs]
-// ============================================================================
-
+/** @brief HIR expression classes */
 class HIRCallExpr : public HIRExpr {
 public:
   HIRCallExpr(HIRExprPtr callee, std::vector<HIRExprPtr> args,
@@ -604,17 +587,13 @@ private:
   std::unordered_map<std::string, const HIRType *> genericBindings;
 };
 
-// ============================================================================
-// [Lambda & Closure Implementation]
-// ============================================================================
-
-// [NEW] Define how a variable is captured by the closure
+/** @brief Capture kind for lambda expressions */
 enum class CaptureKind {
   ByValue,    // Deep copy or Arc<T> clone (Required for Threads!)
   ByReference // Weak pointer / raw reference
 };
 
-// [NEW] Struct to hold capture metadata
+// Struct to hold capture metadata
 struct HIRCapture {
   std::string name;
   const HIRType *type;
@@ -720,13 +699,9 @@ private:
   std::unique_ptr<HIRExpr> expression;
 };
 
-// ============================================================================
-// [Pointer Operations]
-// ============================================================================
-
+/** @brief HIR pointer expressions */
 class HIRDerefExpr : public HIRExpr {
 public:
-  // Dereferencing a pointer gives you a memory location (L-Value!)
   HIRDerefExpr(std::unique_ptr<HIRExpr> pointerExpr, const HIRType *derefedType,
                SourceLocation loc)
       : HIRExpr(Kind::Deref, derefedType, ValueCategory::LValue, loc),
@@ -765,7 +740,6 @@ private:
   bool isMutBorrow;
 };
 
-/// Represents the spread operator (...) in array or map literals.
 class HIRSpreadExpr : public HIRExpr {
 public:
   HIRSpreadExpr(std::unique_ptr<HIRExpr> iterable, const HIRType *type,
@@ -787,7 +761,6 @@ private:
 
 class HIRInputExpr : public HIRExpr {
 public:
-  // prompt can be null if it's just `input()` without arguments
   HIRInputExpr(std::unique_ptr<HIRExpr> prompt, const HIRType *type,
                SourceLocation loc)
       : HIRExpr(Kind::Input, type, ValueCategory::RValue, loc),
@@ -826,7 +799,6 @@ private:
 
 class HIRAsmExpr : public HIRExpr {
 public:
-  // Replicate the AsmOperand struct here in the HIR layer
   struct AsmOperand {
     std::string constraint;
     std::unique_ptr<HIRExpr> expr;
@@ -834,12 +806,8 @@ public:
     AsmOperand(std::string c, std::unique_ptr<HIRExpr> e)
         : constraint(std::move(c)), expr(std::move(e)) {}
 
-    // Move semantics required for unique_ptr
     AsmOperand(AsmOperand &&) = default;
     AsmOperand &operator=(AsmOperand &&) = default;
-
-    // We do not need a clone() method here as HIR is generally immutable
-    // post-creation
   };
 
   HIRAsmExpr(std::string assemblyStr, std::vector<AsmOperand> outputs,
