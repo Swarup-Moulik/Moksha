@@ -1,0 +1,19 @@
+println("--- [E2E] import_alias_test.mox ---")
+
+// Import the full module under the alias 't'
+import test as t
+
+void run_aliased_import_test() {
+    // 1. Access imported global variable via alias 't'
+    println(t.test_multiplier); // Expected: 5
+
+    // 2. Access and call imported function via alias 't'
+    int result = t.calculate_magic(10, 20);
+    println(result); // Expected: 150  ((10 + 20) * 5)
+
+    // 3. Instantiate imported class via alias 't'
+    t.TestConfig config = new t.TestConfig(42);
+    println(config.version); // Expected: 42
+}
+
+run_aliased_import_test();

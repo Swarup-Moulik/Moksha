@@ -64,7 +64,7 @@ void __moksha_string_to_decimal(MokshaDecimal *out, MokshaString *str) {
     input_str++;
   }
 
-  __int128 mantissa = 0;
+  moksha_int128_t mantissa = 0;
   int32_t scale = 0;
   bool in_fraction = false;
   bool found_digits = false;

@@ -635,29 +635,64 @@ bool Parser::isStartOfDeclaration() {
 
   // 3. Identifier Ambiguity: "MyType x" (Decl) vs "myVar = 5" (Stmt)
   if (curTok.is(TokenKind::Identifier)) {
-    // "Type Name" -> Declaration
-    if (nextTok.is(TokenKind::Identifier))
+    // We need a manual lookahead to handle namespace dots: "module.Type name"
+    const char *ptr = curTok.getSpelling().data();
+
+    // Skip the current identifier
+    while ((*ptr >= 'a' && *ptr <= 'z') || (*ptr >= 'A' && *ptr <= 'Z') ||
+           *ptr == '_' || (*ptr >= '0' && *ptr <= '9'))
+      ptr++;
+
+    // Skip any ".Identifier" chains
+    while (true) {
+      const char *temp = ptr;
+      while (*temp == ' ' || *temp == '\t' || *temp == '\r' || *temp == '\n')
+        temp++;
+      if (*temp == '.') {
+        temp++; // skip '.'
+        while (*temp == ' ' || *temp == '\t' || *temp == '\r' || *temp == '\n')
+          temp++;
+        if ((*temp >= 'a' && *temp <= 'z') || (*temp >= 'A' && *temp <= 'Z') ||
+            *temp == '_') {
+          while ((*temp >= 'a' && *temp <= 'z') ||
+                 (*temp >= 'A' && *temp <= 'Z') || *temp == '_' ||
+                 (*temp >= '0' && *temp <= '9'))
+            temp++;
+          ptr = temp; // Accept the segment
+          continue;
+        }
+      }
+      break;
+    }
+
+    // Now `ptr` points just after the (possibly namespaced) type name.
+    // Skip whitespace
+    while (*ptr == ' ' || *ptr == '\t' || *ptr == '\r' || *ptr == '\n')
+      ptr++;
+
+    // If what follows is an identifier (variable name), it's a declaration!
+    if ((*ptr >= 'a' && *ptr <= 'z') || (*ptr >= 'A' && *ptr <= 'Z') ||
+        *ptr == '_') {
       return true;
+    }
 
     // "Type<...> Name" -> Declaration
-    if (nextTok.is(TokenKind::Less)) {
-      const char *ptr = nextTok.getSpelling().data();
+    if (*ptr == '<') {
       int depth = 0;
       while (*ptr != '\0' && *ptr != ';' && *ptr != '\n') {
-        if (*ptr == '<') {
+        if (*ptr == '<')
           depth++;
-        } else if (*ptr == '>') {
+        else if (*ptr == '>') {
           depth--;
           if (depth == 0) {
             ptr++;
             while (*ptr == ' ' || *ptr == '\t' || *ptr == '\r' || *ptr == '\n')
               ptr++;
             if ((*ptr >= 'a' && *ptr <= 'z') || (*ptr >= 'A' && *ptr <= 'Z') ||
-                *ptr == '_') {
+                *ptr == '_')
               return true;
-            } else {
+            else
               return false;
-            }
           }
         }
         ptr++;
@@ -667,77 +702,91 @@ bool Parser::isStartOfDeclaration() {
 
     // "Type[] Name", "Type? Name", "Type* Name" -> Declaration vs Operator
     // ambiguity
-    if (nextTok.is(TokenKind::LBracket) || nextTok.is(TokenKind::Question) ||
-        nextTok.is(TokenKind::Star) || nextTok.is(TokenKind::Power)) {
-
-      // Manual lookahead to disambiguate types from expressions
-      const char *ptr = nextTok.getSpelling().data();
-      while (*ptr != '\0') {
-        if (*ptr == '[') {
-          int depth = 0;
-          while (*ptr != '\0') {
-            if (*ptr == '[')
-              depth++;
-            else if (*ptr == ']')
-              depth--;
-            ptr++;
-            if (depth == 0)
-              break; // Reached the matching ']'
-          }
-        } else if (*ptr == ' ' || *ptr == '\t' || *ptr == '\r' ||
-                   *ptr == '\n') {
-          ptr++; // Skip whitespace
-        } else if (*ptr == '?' || *ptr == '*') {
-          ptr++; // Skip nullable or pointer suffix
-        } else if ((*ptr >= 'a' && *ptr <= 'z') ||
-                   (*ptr >= 'A' && *ptr <= 'Z') || *ptr == '_') {
-          return true; // Followed by a variable name -> It's a Declaration!
-        } else {
-          return false;
+    while (*ptr != '\0') {
+      if (*ptr == '[') {
+        int depth = 0;
+        while (*ptr != '\0') {
+          if (*ptr == '[')
+            depth++;
+          else if (*ptr == ']')
+            depth--;
+          ptr++;
+          if (depth == 0)
+            break; // Reached the matching ']'
         }
+      } else if (*ptr == ' ' || *ptr == '\t' || *ptr == '\r' || *ptr == '\n') {
+        ptr++; // Skip whitespace
+      } else if (*ptr == '?' || *ptr == '*') {
+        ptr++; // Skip nullable or pointer suffix
+      } else if ((*ptr >= 'a' && *ptr <= 'z') || (*ptr >= 'A' && *ptr <= 'Z') ||
+                 *ptr == '_') {
+        return true; // Followed by a variable name -> It's a Declaration!
+      } else {
+        return false;
       }
-      return false;
     }
+    return false;
   }
 
   // 4. Prefix Pointers & References for Declarations
   if (curTok.isAny(TokenKind::Star, TokenKind::Power, TokenKind::Amp)) {
-    // 4a. Built-in primitives are always declarations (e.g., *int x)
-    if (nextTok.isAny(TokenKind::KwMut, TokenKind::KwConst, TokenKind::KwLock,
-                      TokenKind::KwView, TokenKind::KwInt, TokenKind::KwFloat,
-                      TokenKind::KwDouble, TokenKind::KwBool,
-                      TokenKind::KwString, TokenKind::KwChar,
-                      TokenKind::KwShort, TokenKind::KwLong, TokenKind::KwISize,
-                      TokenKind::KwUSize, TokenKind::KwHalf) ||
-        nextTok.isAny(TokenKind::KwQuarter, TokenKind::KwVoid, TokenKind::KwAny,
-                      TokenKind::KwUnsigned, TokenKind::KwVolatile,
-                      TokenKind::KwDecimal, TokenKind::Star, TokenKind::Power,
-                      TokenKind::Amp)) {
+    const char *ptr = curTok.getSpelling().data();
+
+    // Skip all prefix operators (*, &, whitespace)
+    while (*ptr != '\0' && (*ptr == '*' || *ptr == '&' || *ptr == ' ' ||
+                            *ptr == '\t' || *ptr == '\r' || *ptr == '\n')) {
+      ptr++;
+    }
+
+    // Now `ptr` points to the start of the underlying type or identifier.
+    std::string word;
+    while ((*ptr >= 'a' && *ptr <= 'z') || (*ptr >= 'A' && *ptr <= 'Z') ||
+           *ptr == '_' || (*ptr >= '0' && *ptr <= '9')) {
+      word += *ptr;
+      ptr++;
+    }
+
+    if (word == "mut" || word == "const" || word == "lock" || word == "view" ||
+        word == "int" || word == "float" || word == "double" ||
+        word == "bool" || word == "string" || word == "char" ||
+        word == "short" || word == "long" || word == "isize" ||
+        word == "usize" || word == "half" || word == "quarter" ||
+        word == "void" || word == "any" || word == "unsigned" ||
+        word == "volatile" || word == "decimal") {
       return true;
     }
 
-    // 4b. Disambiguate Custom Types: "*Type name" (Decl) vs "*ptr = 5" (Stmt)
-    if (nextTok.is(TokenKind::Identifier)) {
-      // Manual lookahead past the identifier to see what comes next
-      const char *ptr =
-          nextTok.getSpelling().data() + nextTok.getSpelling().size();
-
-      // Skip trailing whitespace
-      while (*ptr == ' ' || *ptr == '\t' || *ptr == '\r' || *ptr == '\n') {
+    // If it's a custom type, we expect another identifier (the variable name)
+    // after it. Skip template args if any
+    if (*ptr == '<') {
+      int depth = 0;
+      while (*ptr != '\0' && *ptr != ';' && *ptr != '\n') {
+        if (*ptr == '<')
+          depth++;
+        else if (*ptr == '>') {
+          depth--;
+          if (depth == 0) {
+            ptr++;
+            break;
+          }
+        }
         ptr++;
       }
-
-      // If the next character is a letter or underscore, it's a variable name
-      // -> Declaration!
-      if ((*ptr >= 'a' && *ptr <= 'z') || (*ptr >= 'A' && *ptr <= 'Z') ||
-          *ptr == '_') {
-        return true;
-      }
-      // Otherwise, it's an operator (=, +, etc.) -> Statement!
-      else {
-        return false;
-      }
     }
+
+    // Skip trailing whitespace after the potential type name
+    while (*ptr == ' ' || *ptr == '\t' || *ptr == '\r' || *ptr == '\n') {
+      ptr++;
+    }
+
+    // If the next character is a letter or underscore, it's a variable name ->
+    // Declaration!
+    if ((*ptr >= 'a' && *ptr <= 'z') || (*ptr >= 'A' && *ptr <= 'Z') ||
+        *ptr == '_') {
+      return true;
+    }
+
+    return false;
   }
 
   return false;
@@ -1265,6 +1314,7 @@ std::vector<DeclPtr> Parser::parseVariableDecls() {
 DeclPtr Parser::parseImportDecl() {
   SourceLocation loc = curTok.location;
   std::string moduleName;
+  std::string aliasName = "";
   std::vector<std::string> symbols;
 
   /** @brief Helper to strip quotes from a string literal */
@@ -1277,9 +1327,12 @@ DeclPtr Parser::parseImportDecl() {
 
   // Pattern 1: from "std/collections" import { table, list }
   if (consumeIf(TokenKind::KwFrom)) {
-    if (curTok.is(TokenKind::StringLiteral)) {
+    if (curTok.is(TokenKind::StringLiteral) ||
+        curTok.is(TokenKind::Identifier)) {
       moduleName = stripQuotes(curTok.getSpelling().str());
       consume();
+    } else {
+      error("Expected string literal or identifier after 'from'");
     }
     expect(TokenKind::KwImport);
     expect(TokenKind::LBrace);
@@ -1290,22 +1343,37 @@ DeclPtr Parser::parseImportDecl() {
       consume();
       parseImportSymbolList(symbols);
       expect(TokenKind::KwFrom);
-      if (curTok.is(TokenKind::StringLiteral)) {
+      if (curTok.is(TokenKind::StringLiteral) ||
+          curTok.is(TokenKind::Identifier)) {
         moduleName = stripQuotes(curTok.getSpelling().str());
         consume();
+      } else {
+        error("Expected string literal or identifier after 'from'");
       }
     }
-    // Pattern 3: import "std/io" (Whole Module)
-    else if (curTok.is(TokenKind::StringLiteral)) {
+    // Pattern 3 & 4: import "std/io" OR import test [as t]
+    else if (curTok.is(TokenKind::StringLiteral) ||
+             curTok.is(TokenKind::Identifier)) {
       moduleName = stripQuotes(curTok.getSpelling().str());
       consume();
+
+      // Check for the 'as' alias syntax
+      if (consumeIf(TokenKind::KwAs)) {
+        if (curTok.is(TokenKind::Identifier)) {
+          aliasName = curTok.getSpelling().str();
+          consume();
+        } else {
+          error("Expected identifier after 'as'");
+        }
+      }
     } else {
-      error("Expected '{' or string literal after 'import'");
+      error("Expected '{', identifier, or string literal after 'import'");
     }
   }
 
   consumeIf(TokenKind::Semicolon);
-  return std::make_unique<ImportDecl>(moduleName, symbols, loc);
+
+  return std::make_unique<ImportDecl>(moduleName, aliasName, symbols, loc);
 }
 
 DeclPtr Parser::parseGenericDecl() {
@@ -3645,6 +3713,15 @@ TypePtr Parser::parseType() {
   case TokenKind::Identifier: {
     std::string name = curTok.getSpelling().str();
     consume();
+    while (consumeIf(TokenKind::Dot)) {
+      if (curTok.is(TokenKind::Identifier)) {
+        name += "." + curTok.getSpelling().str();
+        consume();
+      } else {
+        error("Expected identifier after '.' in type name");
+        break;
+      }
+    }
     std::vector<NamedType::GenericArg> args;
     if (consumeIf(TokenKind::Less)) {
       do {

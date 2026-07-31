@@ -12,15 +12,38 @@ extern "C" {
 struct _Unwind_Exception;
 
 /** @brief Builtin Type IDs
- *  Internal primitives don't require reflection, so 0 is safe. */
+ * Internal primitives don't require reflection, so 0 is safe. */
 #define MOKSHA_TYPE_MUTEX 0
 #define MOKSHA_TYPE_CHANNEL 0
 
+/** @brief CPU Pause/Relax Inline Function for Bare-Metal & OS Spinlocks */
+static inline void cpu_relax(void) {
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) ||             \
+    defined(_M_IX86)
+  __asm__ volatile("pause" ::: "memory");
+#elif defined(__aarch64__)
+  __asm__ volatile("yield" ::: "memory");
+#elif defined(__arm__)
+#if __ARM_ARCH >= 6
+  __asm__ volatile("yield" ::: "memory");
+#else
+  __asm__("" ::: "memory");
+#endif
+#elif defined(__riscv)
+  __asm__ volatile("nop" ::: "memory"); // Universal RISC-V fallback
+#else
+  ((void)0);
+#endif
+}
+
 /** @brief Core Memory Model */
 typedef struct {
-  uint32_t ref_count;      // Strong references
-  uint32_t weak_count;     // Weak references
-  uint32_t type_id;        // Metadata
+  uint32_t ref_count;
+  // Strong references
+  uint32_t weak_count;
+  // Weak references
+  uint32_t type_id;
+  // Metadata
   uint32_t capacity_bytes; // Tracks buffer size, replacing padding
 } MokshaHeader;
 
@@ -49,10 +72,12 @@ typedef struct {
 
 // 2. Define the Fat Pointer
 typedef struct {
-  void *data;              // Pointer to the actual heap/stack data
+  void *data;
+  // Pointer to the actual heap/stack data
   const AnyVTable *vtable; // Pointer to the type's specific VTable
 } MokshaAny;
 
+#if defined(__SIZEOF_INT128__)
 typedef unsigned __int128 MokshaAnyRet;
 
 static inline MokshaAnyRet moksha_pack_any(void *data,
@@ -63,10 +88,32 @@ static inline MokshaAnyRet moksha_pack_any(void *data,
   ret |= (MokshaAnyRet)(uintptr_t)data;
   return ret;
 }
-
+#else
 typedef struct {
-  __int128 mantissa; // 128-bit signed integer
-  int32_t scale;     // 32-bit signed scale
+  uint64_t data;
+  uint64_t vtable;
+} MokshaAnyRet;
+
+static inline MokshaAnyRet moksha_pack_any(void *data,
+                                           const AnyVTable *vtable) {
+  MokshaAnyRet ret;
+  ret.data = (uint64_t)(uintptr_t)data;
+  ret.vtable = (uint64_t)(uintptr_t)vtable;
+  return ret;
+}
+#endif
+
+// Fallback for bare-metal (missing libgcc division) or 32-bit archs
+#if defined(__SIZEOF_INT128__) && !defined(__MOKSHA_BAREMETAL__)
+typedef __int128 moksha_int128_t;
+#else
+typedef int64_t moksha_int128_t;
+#endif
+
+// Update your Decimal struct to use the new type
+typedef struct {
+  moksha_int128_t mantissa;
+  int32_t scale;
 } MokshaDecimal;
 
 typedef enum {
@@ -112,7 +159,7 @@ typedef struct {
 // ============================================================================
 char *__moksha_input(char *prompt);
 
-// New Type-Specific Parsers
+// Type-Specific Parsers
 int64_t __moksha_parse_int(const char *input_str);
 uint64_t __moksha_parse_uint(const char *input_str);
 double __moksha_parse_float(const char *input_str);
@@ -169,15 +216,6 @@ bool moksha_rt_array_contains(MokshaSlice *slice, void *value_ptr,
 int32_t moksha_rt_array_index(MokshaSlice *slice, void *value_ptr,
                               size_t element_size);
 void moksha_rt_array_sort(MokshaSlice *slice, size_t element_size);
-void moksha_rt_array_resize(MokshaSlice *slice, int32_t new_length,
-                            size_t element_size);
-bool moksha_rt_array_contains(MokshaSlice *slice, void *element,
-                              size_t element_size);
-int32_t moksha_rt_array_index(MokshaSlice *slice, void *element,
-                              size_t element_size);
-void moksha_rt_array_reverse(MokshaSlice *slice, size_t element_size);
-void moksha_rt_array_fill(MokshaSlice *slice, void *value_ptr,
-                          size_t element_size);
 
 // ============================================================================
 // Strings & I/O
@@ -210,8 +248,10 @@ char *__moksha_ulong_to_string(uint64_t val);
 char *__moksha_isize_to_string(intptr_t val);
 char *__moksha_usize_to_string(size_t val);
 char *__moksha_quarter_to_string(float val); // f8
-char *__moksha_half_to_string(float val);    // f16
-char *__moksha_float_to_string(float val);   // f32
+char *__moksha_half_to_string(float val);
+// f16
+char *__moksha_float_to_string(float val);
+// f32
 char *__moksha_double_to_string(double val); // f64
 char *__moksha_half_to_string_abi(float val);
 char *__moksha_quarter_to_string_abi(float val);
@@ -219,7 +259,7 @@ char *moksha_rt_dec_to_string(MokshaDecimal *dec);
 char *__moksha_ptr_to_string(void *ptr);
 char *__moksha_cstr_to_string(const char *cstr);
 char *__moksha_any_to_string(MokshaAny *any_val);
-void moksha_print_decimal128(__int128_t value, int scale);
+void moksha_print_decimal128(moksha_int128_t value, int scale);
 
 // ============================================================================
 // Moksha String Builtins
@@ -366,7 +406,7 @@ void moksha_builtin_cancel(void *promise_handle);
 void *moksha_builtin_select(void *p1, void *p2);
 void *moksha_builtin_timeout(void *promise_handle, uint32_t ms);
 void *moksha_builtin_sleep(uint32_t ms);
-void *moksha_rt_consume_exception();
+void *moksha_rt_consume_exception(void);
 
 // ============================================================================
 // Error Handling & Exceptions
@@ -377,8 +417,13 @@ void moksha_rt_panic_out_of_bounds(int64_t index, int64_t length);
 void moksha_rt_panic_null_deref(void);
 void moksha_rt_panic_key_not_found(void);
 void moksha_rt_panic_bad_cast(void);
+#if defined(__MOKSHA_BAREMETAL__)
+void moksha_rt_throw(void *payload);
+void *moksha_rt_get_exception_payload(void *exc_base);
+#else
 void moksha_rt_throw(void *payload);
 void *moksha_rt_get_exception_payload(struct _Unwind_Exception *exc_base);
+#endif
 
 // ============================================================================
 // Decimal Conversions
@@ -405,7 +450,7 @@ double moksha_rt_math_clamp(double x, double low, double high);
 double moksha_rt_math_lerp(double a, double b, double t);
 double moksha_rt_math_sign(double x);
 
-double moksha_rt_math_random();
+double moksha_rt_math_random(void);
 int32_t moksha_rt_math_randint(int32_t min, int32_t max);
 void moksha_rt_math_seed(int32_t val);
 

@@ -93,8 +93,10 @@ static hir::CastOp determineCastOp(const hir::HIRType *srcTy,
 
   // 4. Pointer Conversions
   if (srcKind == hir::TypeKind::Pointer && dstKind == hir::TypeKind::Pointer) {
-    auto srcPointee = llvm::dyn_cast_or_null<hir::PointerType>(srcTy)->getPointee();
-    auto dstPointee = llvm::dyn_cast_or_null<hir::PointerType>(dstTy)->getPointee();
+    auto srcPointee =
+        llvm::dyn_cast_or_null<hir::PointerType>(srcTy)->getPointee();
+    auto dstPointee =
+        llvm::dyn_cast_or_null<hir::PointerType>(dstTy)->getPointee();
 
     if (srcPointee && dstPointee && srcPointee != dstPointee) {
       if (srcPointee->getKind() == hir::TypeKind::Struct &&
@@ -273,7 +275,8 @@ const hir::HIRType *HIRGen::lowerType(const Type *astType) {
     if (auto arrT = llvm::dyn_cast_or_null<ArrayType>(current)) {
       uint64_t size = 0;
       if (arrT->getSizeExpr()) {
-        if (auto lit = llvm::dyn_cast_or_null<IntegerLiteral>(arrT->getSizeExpr())) {
+        if (auto lit =
+                llvm::dyn_cast_or_null<IntegerLiteral>(arrT->getSizeExpr())) {
           size = lit->getValue();
         }
       }
@@ -579,7 +582,8 @@ void HIRGen::visitClassDecl(const ClassDecl *decl) {
         fieldInitStmts.push_back(std::make_unique<hir::ExprStmt>(
             std::move(assignExpr), varDecl->getLoc()));
       }
-    } else if (auto fnDecl = llvm::dyn_cast_or_null<FunctionDecl>(member.get())) {
+    } else if (auto fnDecl =
+                   llvm::dyn_cast_or_null<FunctionDecl>(member.get())) {
       if (fnDecl->getName() == "constructor") {
         hasConstructor = true;
       }
@@ -1258,6 +1262,24 @@ void HIRGen::visitCallExpr(const CallExpr *expr) {
 
 void HIRGen::visitMemberExpr(const MemberExpr *expr) {
   const Type *baseType = expr->getObject()->getType();
+
+  // 1. Module Prefix Stripping for Whole-Program Linking
+  if (auto *idObj = llvm::dyn_cast_or_null<IdentifierExpr>(expr->getObject())) {
+    if (baseType && baseType->is<AnyType>()) {
+      auto directId = std::make_unique<hir::HIRIdentifierExpr>(
+          expr->getName(), lowerType(expr->getType()), expr->getLoc());
+
+      if (auto *refT = llvm::dyn_cast_or_null<ReferenceType>(expr->getType())) {
+        lastExpr = std::make_unique<hir::HIRDerefExpr>(
+            std::move(directId), lowerType(refT->getInner()), expr->getLoc());
+      } else {
+        lastExpr = std::move(directId);
+      }
+      return;
+    }
+  }
+
+  // 2. Enum Handling
   if (baseType) {
     bool isEnum = llvm::isa<EnumType>(baseType);
     if (auto *namedT = llvm::dyn_cast_or_null<NamedType>(baseType)) {

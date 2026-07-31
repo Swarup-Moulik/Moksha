@@ -1,7 +1,6 @@
 #include "../../include/moksha_rt.h"
 #include <stdbool.h>
 #include <stdint.h>
-#include <string.h>
 
 extern void *moksha_rt_alloc(size_t payload_size, uint32_t type_id);
 extern void moksha_rt_panic(const char *message);
@@ -16,6 +15,16 @@ static void *internal_memcpy(void *dest, const void *src, size_t n) {
   for (size_t i = 0; i < n; i++)
     d[i] = s[i];
   return dest;
+}
+
+static int internal_memcmp(const void *s1, const void *s2, size_t n) {
+  const unsigned char *p1 = (const unsigned char *)s1;
+  const unsigned char *p2 = (const unsigned char *)s2;
+  for (size_t i = 0; i < n; i++) {
+    if (p1[i] != p2[i])
+      return p1[i] - p2[i];
+  }
+  return 0;
 }
 
 void *moksha_rt_array_data(MokshaSlice *slice) {
@@ -275,7 +284,7 @@ void moksha_rt_array_sort(MokshaSlice *slice, size_t element_size) {
     int64_t j = (int64_t)i - 1;
 
     while (j >= 0 &&
-           memcmp(base + (j * element_size), temp, element_size) > 0) {
+           internal_memcmp(base + (j * element_size), temp, element_size) > 0) {
       internal_memcpy(base + ((j + 1) * element_size),
                       base + (j * element_size), element_size);
       j--;
@@ -312,7 +321,7 @@ bool moksha_rt_array_contains(MokshaSlice *slice, void *element,
 
   uint8_t *raw = (uint8_t *)slice->data;
   for (uint64_t i = 0; i < slice->length; i++) {
-    if (memcmp(raw + (i * element_size), element, element_size) == 0) {
+    if (internal_memcmp(raw + (i * element_size), element, element_size) == 0) {
       return true;
     }
   }
@@ -326,7 +335,7 @@ int32_t moksha_rt_array_index(MokshaSlice *slice, void *element,
 
   uint8_t *raw = (uint8_t *)slice->data;
   for (uint64_t i = 0; i < slice->length; i++) {
-    if (memcmp(raw + (i * element_size), element, element_size) == 0) {
+    if (internal_memcmp(raw + (i * element_size), element, element_size) == 0) {
       return (int32_t)i;
     }
   }

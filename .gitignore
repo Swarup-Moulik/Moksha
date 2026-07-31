@@ -43,3 +43,6 @@ compile_commands.json
 # OS
 .DS_Store
 Thumbs.db
+
+#Baremetal Runtimes
+build_baremetal_*

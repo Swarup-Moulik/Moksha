@@ -21,7 +21,7 @@ namespace mlir {
 /** @brief Lowers finalized MIR to MLIR (Moksha Dialect). */
 ::mlir::OwningOpRef<::mlir::ModuleOp>
 convertMIRToMLIR(mir::MIRModule &mirModule, ::mlir::MLIRContext &context,
-                 DiagnosticEngine &diags);
+                 DiagnosticEngine &diags, unsigned pointerSize = 8);
 
 } // namespace mlir
 } // namespace backend

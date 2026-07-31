@@ -120,7 +120,7 @@ std::unique_ptr<Decl> GenericDecl::clone() const {
 }
 
 std::unique_ptr<Decl> ImportDecl::clone() const {
-  return std::make_unique<ImportDecl>(name, symbols, loc);
+  return std::make_unique<ImportDecl>(name, aliasName, symbols, loc);
 }
 
 std::unique_ptr<Decl> EnumDecl::clone() const {

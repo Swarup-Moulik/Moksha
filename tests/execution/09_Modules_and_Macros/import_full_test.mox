@@ -1,0 +1,19 @@
+println("--- [E2E] import_full_test.mox ---")
+
+// Import the full module without destructuring or aliasing
+import test
+
+void run_full_import_test() {
+    // 1. Access imported global variable via module namespace
+    println(test.test_multiplier); // Expected: 5
+
+    // 2. Access and call imported function via module namespace
+    int result = test.calculate_magic(10, 20);
+    println(result); // Expected: 150  ((10 + 20) * 5)
+
+    // 3. Instantiate imported class via module namespace
+    test.TestConfig config = new test.TestConfig(42);
+    println(config.version); // Expected: 42
+}
+
+run_full_import_test();

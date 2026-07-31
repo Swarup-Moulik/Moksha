@@ -26,7 +26,6 @@ extern void moksha_rt_panic(const char *message);
 extern void *moksha_rt_make_unresolved_promise(void);
 extern void moksha_rt_resolve_promise(void *promise_handle, void *result_data);
 extern void moksha_rt_reject_promise(void *promise_handle, void *ex_payload);
-extern void cpu_relax(void);
 
 void *moksha_builtin_Channel_new(int capacity) {
   void *ptr = moksha_rt_alloc(sizeof(MokshaChannel), MOKSHA_TYPE_CHANNEL);

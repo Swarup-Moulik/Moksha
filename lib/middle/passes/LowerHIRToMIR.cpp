@@ -213,9 +213,11 @@ public:
         coreTy = viewTy->getInner();
       else if (auto *lockTy = llvm::dyn_cast_or_null<hir::HIRLockType>(coreTy))
         coreTy = lockTy->getInner();
-      else if (auto *constTy = llvm::dyn_cast_or_null<hir::HIRConstType>(coreTy))
+      else if (auto *constTy =
+                   llvm::dyn_cast_or_null<hir::HIRConstType>(coreTy))
         coreTy = constTy->getInner();
-      else if (auto *volTy = llvm::dyn_cast_or_null<hir::HIRVolatileType>(coreTy))
+      else if (auto *volTy =
+                   llvm::dyn_cast_or_null<hir::HIRVolatileType>(coreTy))
         coreTy = volTy->getInner();
       else
         break;
@@ -228,7 +230,8 @@ public:
         return const_cast<hir::HIRModule *>(hirModule)->getPointerType(
             inner, ptrTy->getOwnership());
       }
-    } else if (auto *refTy = llvm::dyn_cast_or_null<hir::ReferenceType>(coreTy)) {
+    } else if (auto *refTy =
+                   llvm::dyn_cast_or_null<hir::ReferenceType>(coreTy)) {
       const hir::HIRType *inner = stripMemoryModifiers(refTy->getInner());
       if (inner != refTy->getInner()) {
         return const_cast<hir::HIRModule *>(hirModule)->getPointerType(
@@ -311,6 +314,7 @@ public:
       if (hirFunc->getName() == name && hirFunc->isExtern()) {
         std::string abi = hirFunc->getABI();
         if (!abi.empty() && abi != "stdcall" && abi != "fastcall" &&
+            abi != "vectorcall" && abi != "sysv64" && abi != "win64" &&
             abi != "cdecl" && abi != "C") {
           if (mirModule->getFunction(abi))
             return;
@@ -692,7 +696,8 @@ public:
         if (auto *br = llvm::dyn_cast_or_null<BranchInst>(term)) {
           b->addSuccessor(br->getTarget());
           br->getTarget()->addPredecessor(b);
-        } else if (auto *condBr = llvm::dyn_cast_or_null<CondBranchInst>(term)) {
+        } else if (auto *condBr =
+                       llvm::dyn_cast_or_null<CondBranchInst>(term)) {
           b->addSuccessor(condBr->getTrueBlock());
           condBr->getTrueBlock()->addPredecessor(b);
           b->addSuccessor(condBr->getFalseBlock());
@@ -709,7 +714,8 @@ public:
             b->addSuccessor(throwInst->getUnwindDest());
             throwInst->getUnwindDest()->addPredecessor(b);
           }
-        } else if (auto *switchInst = llvm::dyn_cast_or_null<SwitchInst>(term)) {
+        } else if (auto *switchInst =
+                       llvm::dyn_cast_or_null<SwitchInst>(term)) {
           b->addSuccessor(switchInst->getDefaultBlock());
           switchInst->getDefaultBlock()->addPredecessor(b);
           for (auto &casePair : switchInst->getCases()) {
@@ -758,8 +764,8 @@ public:
 
         if (mutexPtr && lockStmt->getMutex()->getValueCategory() ==
                             hir::ValueCategory::LValue) {
-          if (auto *ptrTy =
-                  llvm::dyn_cast_or_null<hir::PointerType>(mutexPtr->getType())) {
+          if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(
+                  mutexPtr->getType())) {
             if (ptrTy->getPointee()->getKind() == hir::TypeKind::Pointer ||
                 ptrTy->getPointee()->getKind() == hir::TypeKind::Reference) {
               mutexPtr =
@@ -1467,7 +1473,8 @@ private:
         mirVal->setBorrowKind(mir::BorrowKind::View);
       else if (ptrTy->isLock())
         mirVal->setBorrowKind(mir::BorrowKind::Lock);
-    } else if (auto *refTy = llvm::dyn_cast_or_null<hir::ReferenceType>(hirType)) {
+    } else if (auto *refTy =
+                   llvm::dyn_cast_or_null<hir::ReferenceType>(hirType)) {
       if (refTy->isMut())
         mirVal->setBorrowKind(mir::BorrowKind::Mut);
       else if (refTy->isView())
@@ -1824,7 +1831,6 @@ private:
     builder->setInsertPoint(elemBlock);
 
     MIRValue *elemPtr = nullptr;
-    auto gk = elemTy->getKind();
     elemPtr = builder->createGEP(dataPtr, {idxVal}, elemTy, "elem.ptr", loc);
 
     MIRValue *elemLoad = builder->createLoad(elemPtr, "elem.load", loc);
@@ -2235,7 +2241,8 @@ private:
           break;
         }
       }
-    } else if (auto *floatTy = llvm::dyn_cast_or_null<hir::HIRFloatType>(valTy)) {
+    } else if (auto *floatTy =
+                   llvm::dyn_cast_or_null<hir::HIRFloatType>(valTy)) {
       switch (floatTy->getWidth()) {
       case 8:
         typeName = "quarter";
@@ -2435,7 +2442,8 @@ private:
     if (hirFunc->isExtern() && !hirFunc->getABI().empty()) {
       std::string abi = hirFunc->getABI();
       if (abi != "stdcall" && abi != "fastcall" && abi != "cdecl" &&
-          abi != "C") {
+          abi != "C" && abi != "vectorcall" && abi != "sysv64" &&
+          abi != "win64") {
         mirName = abi;
       }
     }
@@ -2459,6 +2467,12 @@ private:
       mirFunc->setCallingConv(CallingConv::StdCall);
     else if (abi == "fastcall")
       mirFunc->setCallingConv(CallingConv::FastCall);
+    else if (abi == "vectorcall")
+      mirFunc->setCallingConv(CallingConv::VectorCall);
+    else if (abi == "sysv64")
+      mirFunc->setCallingConv(CallingConv::SysV64);
+    else if (abi == "win64")
+      mirFunc->setCallingConv(CallingConv::Win64);
 
     if (hirFunc->isInterruptFunc()) {
       mirFunc->setCallingConv(CallingConv::Interrupt);
@@ -4040,7 +4054,6 @@ private:
         }
 
         MIRValue *gep = nullptr;
-        auto gk = trueElemTy->getKind();
         gep = builder->createGEP(dataPtr, {currentIndex}, trueElemTy,
                                  "elem.ptr", stmt.getLoc());
 
@@ -4400,7 +4413,8 @@ private:
     MIRValue *mutexPtr = lastExprValue;
     if (mutexPtr &&
         stmt.getMutex()->getValueCategory() == hir::ValueCategory::LValue) {
-      if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(mutexPtr->getType())) {
+      if (auto *ptrTy =
+              llvm::dyn_cast_or_null<hir::PointerType>(mutexPtr->getType())) {
         if (ptrTy->getPointee()->getKind() == hir::TypeKind::Pointer ||
             ptrTy->getPointee()->getKind() == hir::TypeKind::Reference) {
           mutexPtr = builder->createLoad(mutexPtr, "mutex.load", stmt.getLoc());
@@ -5187,8 +5201,57 @@ private:
 
     auto *ptrTy = const_cast<hir::HIRModule *>(hirModule)->getPointerType(
         rawType, hir::Ownership::None);
+
+    uint64_t explicitAlign = varDecl->getAlignment();
+    if (explicitAlign == 0 && rawType) {
+      const hir::HIRType *baseAlignTy = rawType;
+
+      // Unwrap Arrays, Pointers, and References to find the core struct
+      while (baseAlignTy) {
+        if (auto *pTy = llvm::dyn_cast_or_null<hir::PointerType>(baseAlignTy)) {
+          baseAlignTy = pTy->getPointee();
+        } else if (auto *arrTy =
+                       llvm::dyn_cast_or_null<hir::ArrayType>(baseAlignTy)) {
+          baseAlignTy = arrTy->getElementType();
+        } else if (auto *slcTy =
+                       llvm::dyn_cast_or_null<hir::SliceType>(baseAlignTy)) {
+          baseAlignTy = slcTy->getElementType();
+        } else if (auto *refTy = llvm::dyn_cast_or_null<hir::ReferenceType>(
+                       baseAlignTy)) {
+          baseAlignTy = refTy->getInner();
+        } else if (auto *nullTy = llvm::dyn_cast_or_null<hir::HIRNullableType>(
+                       baseAlignTy)) {
+          baseAlignTy = nullTy->getInner();
+        } else {
+          break;
+        }
+      }
+
+      if (baseAlignTy) {
+        std::string className = baseAlignTy->toString();
+        while (!className.empty() &&
+               (className[0] == '*' || className[0] == '&' ||
+                className[0] == ' ')) {
+          className = className.substr(1);
+        }
+        if (className.find("struct.") == 0)
+          className = className.substr(7);
+        if (className.find("class.") == 0)
+          className = className.substr(6);
+        if (className.find("union.") == 0)
+          className = className.substr(6);
+
+        for (const auto *cls : hirModule->getClasses()) {
+          if (cls->getName() == className) {
+            explicitAlign = cls->getAlignment();
+            break;
+          }
+        }
+      }
+    }
+
     auto allocaInst = std::make_unique<AllocaInst>(
-        ptrTy, rawType, varDecl->getName(), varDecl->getLoc(), 0);
+        ptrTy, rawType, varDecl->getName(), varDecl->getLoc(), explicitAlign);
     auto *alloca = allocaInst.get();
 
     MIRBlock *entryBlock = currFunc->getEntryBlock();
@@ -5418,8 +5481,14 @@ private:
 
           std::vector<MIRValue *> gepIndices = {zero, idx};
 
+          const hir::HIRType *structTy = nullptr;
+          if (auto *pTy =
+                  llvm::dyn_cast_or_null<hir::PointerType>(objPtr->getType())) {
+            structTy = pTy->getPointee();
+          }
+
           MIRValue *containerPtr = builder->createGEP(
-              objPtr, gepIndices, memExpr->getType(), "bf.gep", expr.getLoc());
+              objPtr, gepIndices, structTy, "bf.gep", expr.getLoc());
 
           auto *expectedPtrTy =
               const_cast<hir::HIRModule *>(hirModule)->getPointerType(
@@ -5505,7 +5574,8 @@ private:
 
       if (lhsPtr && lhsPtr->getType() &&
           lhsPtr->getType()->getKind() == hir::TypeKind::Pointer) {
-        if (auto *pTy = llvm::dyn_cast_or_null<hir::PointerType>(lhsPtr->getType())) {
+        if (auto *pTy =
+                llvm::dyn_cast_or_null<hir::PointerType>(lhsPtr->getType())) {
           if (pTy->getPointee()->getKind() == hir::TypeKind::Reference) {
             lhsPtr =
                 builder->createLoad(lhsPtr, "ref.dest.load", expr.getLoc());
@@ -5601,7 +5671,8 @@ private:
         }
 
         if (lhsPtr && lhsPtr->getType()) {
-          if (auto *pTy = llvm::dyn_cast_or_null<hir::PointerType>(lhsPtr->getType())) {
+          if (auto *pTy =
+                  llvm::dyn_cast_or_null<hir::PointerType>(lhsPtr->getType())) {
             auto *rawTy =
                 const_cast<hir::HIRModule *>(hirModule)->getPointerType(
                     pTy->getPointee(), hir::Ownership::None);
@@ -5751,7 +5822,6 @@ private:
         }
         const hir::HIRType *resTy = coreTy;
 
-        MIRBlock *lhsCheckBlock = builder->getInsertBlock();
         MIRBlock *lhsUnboxBlock = newBlock("nullcoal.unbox");
         MIRBlock *rhsBlock = newBlock("nullcoal.rhs");
         MIRBlock *mergeBlock = newBlock("nullcoal.end");
@@ -6524,7 +6594,8 @@ private:
       if (isFloat) {
         // Determine precision width
         bool isF64 = false;
-        if (auto *fTy = llvm::dyn_cast_or_null<hir::HIRFloatType>(lhs->getType())) {
+        if (auto *fTy =
+                llvm::dyn_cast_or_null<hir::HIRFloatType>(lhs->getType())) {
           if (fTy->getWidth() == 64)
             isF64 = true;
         } else if (lhs->getType()->getKind() == hir::TypeKind::Decimal) {
@@ -6589,7 +6660,8 @@ private:
       if (!isString && !isCollection && lhs->getType()) {
         if (lhs->getType()->getKind() == hir::TypeKind::String)
           isString = true;
-        if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(lhs->getType())) {
+        if (auto *ptrTy =
+                llvm::dyn_cast_or_null<hir::PointerType>(lhs->getType())) {
           if (auto *intTy = llvm::dyn_cast_or_null<hir::HIRIntType>(
                   ptrTy->getPointee())) {
             if (intTy->getWidth() == 8)
@@ -6856,7 +6928,8 @@ private:
       }
 
       if (ptr && ptr->getType()) {
-        if (auto *pTy = llvm::dyn_cast_or_null<hir::PointerType>(ptr->getType())) {
+        if (auto *pTy =
+                llvm::dyn_cast_or_null<hir::PointerType>(ptr->getType())) {
           if (pTy->getOwnership() != hir::Ownership::None) {
             auto *rawTy =
                 const_cast<hir::HIRModule *>(hirModule)->getPointerType(
@@ -6864,8 +6937,8 @@ private:
             ptr = builder->createBitCast(ptr, rawTy, "store.dest.cast",
                                          expr.getLoc());
           }
-        } else if (auto *rTy =
-                       llvm::dyn_cast_or_null<hir::ReferenceType>(ptr->getType())) {
+        } else if (auto *rTy = llvm::dyn_cast_or_null<hir::ReferenceType>(
+                       ptr->getType())) {
           if (rTy->getOwnership() != hir::Ownership::None) {
             auto *rawTy =
                 const_cast<hir::HIRModule *>(hirModule)->getPointerType(
@@ -6974,7 +7047,8 @@ private:
       visit(expr.getOperand());
       MIRValue *operand = lastExprValue;
       uint64_t mask = ~0ULL;
-      if (auto *intTy = llvm::dyn_cast_or_null<hir::HIRIntType>(operand->getType())) {
+      if (auto *intTy =
+              llvm::dyn_cast_or_null<hir::HIRIntType>(operand->getType())) {
         if (intTy->getWidth() < 64) {
           mask = (1ULL << intTy->getWidth()) - 1;
         }
@@ -7118,7 +7192,8 @@ private:
               builder->createLoad(base, "base.load", expr.getLoc());
           baseLoad->setBorrowKind(mir::BorrowKind::View);
           base = baseLoad;
-        } else if (auto *existingLoad = llvm::dyn_cast_or_null<LoadInst>(base)) {
+        } else if (auto *existingLoad =
+                       llvm::dyn_cast_or_null<LoadInst>(base)) {
           existingLoad->setBorrowKind(mir::BorrowKind::View);
         }
       }
@@ -7269,137 +7344,151 @@ private:
       }
     }
 
-    /** @brief Helper to recursively extract the field, bypassing opaque
-    wrappers like Box/Arc */
-    std::vector<const hir::HIRType *> visitedTy;
-    auto searchField = [&](auto &self, const hir::HIRType *ty,
-                           const hir::HIRClass *currentCls) -> bool {
-      if (!ty)
-        return false;
+    auto memberInfo = expr.getMemberInfo();
 
-      const hir::HIRType *innerTy = ty;
-      while (innerTy) {
-        if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(innerTy)) {
-          innerTy = ptrTy->getPointee();
-        } else if (auto *refTy =
-                       llvm::dyn_cast_or_null<hir::ReferenceType>(innerTy)) {
-          innerTy = refTy->getInner();
-        } else {
-          break;
-        }
+    // --- FIX: Use exact physical index for Bitfields to prevent offset 0
+    // corruption ---
+    if (memberInfo.isBitfield) {
+      fieldIndex = memberInfo.index;
+      fieldType = expr.getType();
+      if (auto *pTy =
+              llvm::dyn_cast_or_null<hir::PointerType>(base->getType())) {
+        resolvedAggregateTy = pTy->getPointee();
       }
-
-      for (auto *v : visitedTy) {
-        if (v == innerTy)
+    } else {
+      /** @brief Helper to recursively extract the field, bypassing opaque
+      wrappers like Box/Arc */
+      std::vector<const hir::HIRType *> visitedTy;
+      auto searchField = [&](auto &self, const hir::HIRType *ty,
+                             const hir::HIRClass *currentCls) -> bool {
+        if (!ty)
           return false;
-      }
-      visitedTy.push_back(innerTy);
 
-      if (auto *st = llvm::dyn_cast_or_null<hir::StructType>(innerTy)) {
-        int idx = st->getFieldIndex(fieldName);
-        if (idx >= 0) {
-          if (innerTy->getKind() == hir::TypeKind::Union) {
-            isUnionField = true;
+        const hir::HIRType *innerTy = ty;
+        while (innerTy) {
+          if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(innerTy)) {
+            innerTy = ptrTy->getPointee();
+          } else if (auto *refTy =
+                         llvm::dyn_cast_or_null<hir::ReferenceType>(innerTy)) {
+            innerTy = refTy->getInner();
+          } else {
+            break;
           }
+        }
 
-          //  INHERITANCE FIELD OFFSET ACCUMULATION
-          size_t baseOffset = 0;
-          if (currentCls) {
-            const hir::HIRClass *c = currentCls;
-            while (!c->getParentTypes().empty()) {
-              std::string pName = c->getParentTypes()[0]->toString();
-              while (!pName.empty() && !isalnum(pName[0]))
-                pName = pName.substr(1);
+        for (auto *v : visitedTy) {
+          if (v == innerTy)
+            return false;
+        }
+        visitedTy.push_back(innerTy);
 
-              const hir::HIRClass *pCls = nullptr;
-              for (const auto *cls : hirModule->getClasses()) {
-                std::string clsName = cls->getName();
-                size_t bPos = clsName.find('<');
-                if (bPos != std::string::npos)
-                  clsName = clsName.substr(0, bPos);
+        if (auto *st = llvm::dyn_cast_or_null<hir::StructType>(innerTy)) {
+          int idx = st->getFieldIndex(fieldName);
+          if (idx >= 0) {
+            if (innerTy->getKind() == hir::TypeKind::Union) {
+              isUnionField = true;
+            }
 
-                std::string searchName = pName;
-                size_t pPos = searchName.find('<');
-                if (pPos != std::string::npos)
-                  searchName = searchName.substr(0, pPos);
+            //  INHERITANCE FIELD OFFSET ACCUMULATION
+            size_t baseOffset = 0;
+            if (currentCls) {
+              const hir::HIRClass *c = currentCls;
+              while (!c->getParentTypes().empty()) {
+                std::string pName = c->getParentTypes()[0]->toString();
+                while (!pName.empty() && !isalnum(pName[0]))
+                  pName = pName.substr(1);
 
-                if (clsName == searchName) {
-                  pCls = cls;
+                const hir::HIRClass *pCls = nullptr;
+                for (const auto *cls : hirModule->getClasses()) {
+                  std::string clsName = cls->getName();
+                  size_t bPos = clsName.find('<');
+                  if (bPos != std::string::npos)
+                    clsName = clsName.substr(0, bPos);
+
+                  std::string searchName = pName;
+                  size_t pPos = searchName.find('<');
+                  if (pPos != std::string::npos)
+                    searchName = searchName.substr(0, pPos);
+
+                  if (clsName == searchName) {
+                    pCls = cls;
+                    break;
+                  }
+                }
+
+                if (pCls) {
+                  const hir::HIRType *pTy = pCls->getType();
+                  if (auto *ptrTy =
+                          llvm::dyn_cast_or_null<hir::PointerType>(pTy))
+                    pTy = ptrTy->getPointee();
+                  if (auto *pSt =
+                          llvm::dyn_cast_or_null<hir::StructType>(pTy)) {
+                    baseOffset += pSt->getFields().size();
+                  }
+                  c = pCls;
+                } else {
                   break;
                 }
               }
-
-              if (pCls) {
-                const hir::HIRType *pTy = pCls->getType();
-                if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(pTy))
-                  pTy = ptrTy->getPointee();
-                if (auto *pSt = llvm::dyn_cast_or_null<hir::StructType>(pTy)) {
-                  baseOffset += pSt->getFields().size();
-                }
-                c = pCls;
-              } else {
-                break;
-              }
             }
-          }
 
-          fieldIndex = isUnionField ? 0 : (baseOffset + idx);
-          fieldType = st->getFields()[idx];
-          resolvedAggregateTy = st;
-          return true;
-        }
-
-        // Inheritance Traversal
-        if (currentCls) {
-          for (const auto *parentTy : currentCls->getParentTypes()) {
-            std::string pName = parentTy->toString();
-            while (!pName.empty() &&
-                   (pName[0] == '&' || pName[0] == '*' || pName[0] == ' ')) {
-              pName = pName.substr(1);
-            }
-            const hir::HIRClass *pCls = nullptr;
-            for (const auto *c : hirModule->getClasses()) {
-              if (c->getName() == pName) {
-                pCls = c;
-                break;
-              }
-            }
-            if (self(self, parentTy, pCls)) {
-              return true;
-            }
-          }
-        }
-
-        for (const auto *fieldTy : st->getFields()) {
-          if (self(self, fieldTy, nullptr))
+            fieldIndex = isUnionField ? 0 : (baseOffset + idx);
+            fieldType = st->getFields()[idx];
+            resolvedAggregateTy = st;
             return true;
+          }
+
+          // Inheritance Traversal
+          if (currentCls) {
+            for (const auto *parentTy : currentCls->getParentTypes()) {
+              std::string pName = parentTy->toString();
+              while (!pName.empty() &&
+                     (pName[0] == '&' || pName[0] == '*' || pName[0] == ' ')) {
+                pName = pName.substr(1);
+              }
+              const hir::HIRClass *pCls = nullptr;
+              for (const auto *c : hirModule->getClasses()) {
+                if (c->getName() == pName) {
+                  pCls = c;
+                  break;
+                }
+              }
+              if (self(self, parentTy, pCls)) {
+                return true;
+              }
+            }
+          }
+
+          for (const auto *fieldTy : st->getFields()) {
+            if (self(self, fieldTy, nullptr))
+              return true;
+          }
+        } else if (auto *ut = llvm::dyn_cast_or_null<hir::UnionType>(innerTy)) {
+          int idx = ut->getFieldIndex(fieldName);
+          if (idx >= 0) {
+            fieldIndex = idx;
+            fieldType = ut->getFields()[idx];
+            resolvedAggregateTy = ut;
+            isUnionField = true;
+            return true;
+          }
         }
-      } else if (auto *ut = llvm::dyn_cast_or_null<hir::UnionType>(innerTy)) {
-        int idx = ut->getFieldIndex(fieldName);
-        if (idx >= 0) {
-          fieldIndex = idx;
-          fieldType = ut->getFields()[idx];
-          resolvedAggregateTy = ut;
-          isUnionField = true;
-          return true;
-        }
+        return false;
+      };
+
+      bool found = searchField(searchField, objAstTy, targetCls);
+      if (!found && targetCls) {
+        found = searchField(searchField, targetCls->getType(), targetCls);
       }
-      return false;
-    };
 
-    bool found = searchField(searchField, objAstTy, targetCls);
-    if (!found && targetCls) {
-      found = searchField(searchField, targetCls->getType(), targetCls);
-    }
-
-    if (!fieldType) {
-      fieldType = expr.getType();
       if (!fieldType) {
-        fieldType = const_cast<hir::HIRModule *>(hirModule)->getVoidType();
+        fieldType = expr.getType();
+        if (!fieldType) {
+          fieldType = const_cast<hir::HIRModule *>(hirModule)->getVoidType();
+        }
       }
+      fieldType = stripMemoryModifiers(fieldType);
     }
-
-    fieldType = stripMemoryModifiers(fieldType);
 
     MIRValue *accessPtr = nullptr;
     if (resolvedAggregateTy) {
@@ -7555,7 +7644,6 @@ private:
 
     MIRValue *lvalueBase = evaluateAsLValue(expr.getBase());
     MIRValue *base = lvalueBase;
-    bool isArrayBase = false;
 
     // Optional Chaining Short-Circuit
     MIRBlock *checkBlock = nullptr;
@@ -7585,7 +7673,6 @@ private:
       auto *pointeeTy =
           static_cast<const hir::PointerType *>(base->getType())->getPointee();
       if (pointeeTy && pointeeTy->getKind() == hir::TypeKind::Array) {
-        isArrayBase = true;
       } else {
         auto *baseLoad = builder->createLoad(base, "base.load", expr.getLoc());
         baseLoad->setBorrowKind(mir::BorrowKind::View);
@@ -7949,7 +8036,8 @@ private:
                                  expr.getLoc());
       } else {
         const hir::HIRType *gepPointeeTy = trueElemTy;
-        if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(base->getType())) {
+        if (auto *ptrTy =
+                llvm::dyn_cast_or_null<hir::PointerType>(base->getType())) {
           if (ptrTy->getPointee()->getKind() != hir::TypeKind::Nullable) {
             gepPointeeTy = ptrTy->getPointee();
           }
@@ -8106,11 +8194,9 @@ private:
     const hir::HIRType *destTy = expr.getType();
 
     const hir::HIRType *checkDestTy = stripMemoryModifiers(destTy);
-    bool isNullableDest = false;
     if (auto *nullTy =
             llvm::dyn_cast_or_null<hir::HIRNullableType>(checkDestTy)) {
       checkDestTy = nullTy->getInner();
-      isNullableDest = true;
     }
     checkDestTy = stripMemoryModifiers(checkDestTy);
 
@@ -8469,7 +8555,12 @@ private:
               pointeeTy, hir::Ownership::None),
           "new.obj", expr.getLoc());
     } else {
-      objPtr = builder->createAlloca(objTy, "new.obj.stack", expr.getLoc());
+      uint64_t stackAlign = 0;
+      if (targetCls) {
+        stackAlign = targetCls->getAlignment();
+      }
+      objPtr = builder->createAlloca(objTy, "new.obj.stack", expr.getLoc(),
+                                     stackAlign);
     }
 
     MIRValue *nullStruct =
@@ -9424,21 +9515,232 @@ private:
   }
 
   void visitSizeOfExpr(const hir::HIRSizeOfExpr &expr) override {
-    const hir::HIRType *targetTy = expr.getTargetType();
+    const hir::HIRType *targetTy = stripMemoryModifiers(expr.getTargetType());
     if (!targetTy) {
       targetTy = const_cast<hir::HIRModule *>(hirModule)->getIntType(32, true);
     }
-    auto *nullPtr = mirModule->getOrInsertConstant<ConstantNull>(
-        const_cast<hir::HIRModule *>(hirModule)->getPointerType(
-            targetTy, hir::Ownership::None));
-    auto *one = mirModule->getOrInsertConstant<ConstantInt>(
-        1, const_cast<hir::HIRModule *>(hirModule)->getIntType(32, true));
-    auto *gep = builder->createGEP(nullPtr, {one}, targetTy, "sizeof.gep",
-                                   expr.getLoc());
-    const hir::HIRType *usizeTy =
+
+    auto *usizeTy =
         const_cast<hir::HIRModule *>(hirModule)->getIntType(64, false);
-    lastExprValue =
-        builder->createBitCast(gep, usizeTy, "sizeof.int", expr.getLoc());
+    auto *i32Ty = const_cast<hir::HIRModule *>(hirModule)->getIntType(32, true);
+    auto *i8Ty = const_cast<hir::HIRModule *>(hirModule)->getIntType(8, true);
+    const hir::HIRType *boolTy =
+        const_cast<hir::HIRModule *>(hirModule)->getBoolType();
+
+    // 1. Recursive Alignment Resolution Helper
+    auto getMaxAlignment = [&](auto &self, const hir::HIRType *ty) -> uint64_t {
+      if (!ty)
+        return 0;
+      const hir::HIRType *stripped = stripMemoryModifiers(ty);
+      uint64_t maxAlign = 0;
+
+      std::string cName = stripped->toString();
+      while (!cName.empty() &&
+             (cName[0] == '*' || cName[0] == '&' || cName[0] == ' ')) {
+        cName = cName.substr(1);
+      }
+      if (cName.find("struct.") == 0)
+        cName = cName.substr(7);
+      if (cName.find("class.") == 0)
+        cName = cName.substr(6);
+      if (cName.find("union.") == 0)
+        cName = cName.substr(6);
+
+      const hir::HIRClass *matchedCls = nullptr;
+      for (const auto *cls : hirModule->getClasses()) {
+        if (cls->getName() == cName) {
+          matchedCls = cls;
+          break;
+        }
+      }
+
+      const hir::HIRType *underlying = stripped;
+      if (matchedCls) {
+        maxAlign = matchedCls->getAlignment();
+        underlying = matchedCls->getType();
+      }
+
+      if (auto *st = llvm::dyn_cast_or_null<hir::StructType>(underlying)) {
+        for (const auto *fieldTy : st->getFields()) {
+          uint64_t fieldAlign = self(self, fieldTy);
+          if (fieldAlign > maxAlign)
+            maxAlign = fieldAlign;
+        }
+      } else if (auto *ut =
+                     llvm::dyn_cast_or_null<hir::UnionType>(underlying)) {
+        for (const auto *fieldTy : ut->getFields()) {
+          uint64_t fieldAlign = self(self, fieldTy);
+          if (fieldAlign > maxAlign)
+            maxAlign = fieldAlign;
+        }
+      } else if (auto *arr =
+                     llvm::dyn_cast_or_null<hir::ArrayType>(underlying)) {
+        maxAlign = std::max(maxAlign, self(self, arr->getElementType()));
+      }
+
+      return maxAlign;
+    };
+
+    // Helper: Safely calculate Size via dynamic GEP trick
+    auto emitSizeOf = [&](const hir::HIRType *ty) -> MIRValue * {
+      auto *one = mirModule->getOrInsertConstant<ConstantInt>(1, i32Ty);
+      MIRValue *baseAlloc =
+          builder->createAlloca(ty, "sizeof.base", expr.getLoc());
+      MIRValue *baseInt = builder->insert(
+          std::make_unique<CastInst>(Opcode::PtrToInt, baseAlloc, usizeTy,
+                                     "sizeof.base.int", expr.getLoc()));
+      MIRValue *gep =
+          builder->createGEP(baseAlloc, std::vector<MIRValue *>{one}, ty,
+                             "sizeof.gep", expr.getLoc());
+      MIRValue *gepInt = builder->insert(std::make_unique<CastInst>(
+          Opcode::PtrToInt, gep, usizeTy, "sizeof.gep.int", expr.getLoc()));
+      return builder->createSub(gepInt, baseInt, "sizeof.val", expr.getLoc());
+    };
+
+    // Helper: Safely calculate Alignment via dynamic GEP trick or explicit
+    // metadata
+    auto emitAlignOf = [&](const hir::HIRType *ty) -> MIRValue * {
+      uint64_t customAlign = getMaxAlignment(getMaxAlignment, ty);
+      if (customAlign > 0) {
+        return mirModule->getOrInsertConstant<ConstantInt>(customAlign,
+                                                           usizeTy);
+      }
+
+      std::string alignName = ty->toString();
+      std::replace(alignName.begin(), alignName.end(), ' ', '_');
+      std::replace(alignName.begin(), alignName.end(), '*', 'p');
+      std::replace(alignName.begin(), alignName.end(), '<', '_');
+      std::replace(alignName.begin(), alignName.end(), '>', '_');
+
+      auto *structTy = const_cast<hir::HIRModule *>(hirModule)->getStructType(
+          "__moksha_alignof_" + alignName, {i8Ty, ty});
+
+      auto *zero = mirModule->getOrInsertConstant<ConstantInt>(0, i32Ty);
+      auto *one = mirModule->getOrInsertConstant<ConstantInt>(1, i32Ty);
+
+      MIRValue *baseAlloc =
+          builder->createAlloca(structTy, "alignof.base", expr.getLoc());
+      MIRValue *baseInt = builder->insert(
+          std::make_unique<CastInst>(Opcode::PtrToInt, baseAlloc, usizeTy,
+                                     "alignof.base.int", expr.getLoc()));
+
+      MIRValue *gep =
+          builder->createGEP(baseAlloc, std::vector<MIRValue *>{zero, one},
+                             structTy, "alignof.gep", expr.getLoc());
+      MIRValue *gepInt = builder->insert(std::make_unique<CastInst>(
+          Opcode::PtrToInt, gep, usizeTy, "alignof.gep.int", expr.getLoc()));
+
+      return builder->createSub(gepInt, baseInt, "alignof.val", expr.getLoc());
+    };
+
+    // Helper: Emulate 'select' using control flow and a Phi node
+    auto emitSelect = [&](MIRValue *cond, MIRValue *trueVal, MIRValue *falseVal,
+                          const hir::HIRType *resTy,
+                          const std::string &name) -> MIRValue * {
+      MIRBlock *currentBlock = builder->getInsertBlock();
+      MIRBlock *trueBlock = newBlock(name + ".true");
+      MIRBlock *mergeBlock = newBlock(name + ".merge");
+
+      builder->createCondBr(cond, trueBlock, mergeBlock);
+
+      builder->setInsertPoint(trueBlock);
+      builder->createBr(mergeBlock);
+
+      builder->setInsertPoint(mergeBlock);
+      auto *phi = builder->createPhi(resTy, name, expr.getLoc());
+      phi->addIncoming(trueVal, trueBlock);
+      phi->addIncoming(falseVal, currentBlock);
+      return phi;
+    };
+
+    // 2. Resolve targetType to Underlying Type
+    const hir::HIRType *actualTy = targetTy;
+    std::string className = targetTy->toString();
+    while (!className.empty() && (className[0] == '*' || className[0] == '&' ||
+                                  className[0] == ' ')) {
+      className = className.substr(1);
+    }
+    if (className.find("struct.") == 0)
+      className = className.substr(7);
+    if (className.find("class.") == 0)
+      className = className.substr(6);
+    if (className.find("union.") == 0)
+      className = className.substr(6);
+
+    for (const auto *cls : hirModule->getClasses()) {
+      if (cls->getName() == className) {
+        actualTy = cls->getType();
+        break;
+      }
+    }
+
+    // 3. Union Calculation Branch
+    if (auto *ut = llvm::dyn_cast_or_null<hir::UnionType>(actualTy)) {
+      MIRValue *maxSize =
+          mirModule->getOrInsertConstant<ConstantInt>(0, usizeTy);
+      MIRValue *maxAlign =
+          mirModule->getOrInsertConstant<ConstantInt>(1, usizeTy);
+
+      for (const auto *fieldTy : ut->getFields()) {
+        MIRValue *fieldSize = emitSizeOf(fieldTy);
+
+        MIRValue *cmpSize =
+            builder->createICmp(CompareInst::Predicate::UGT, fieldSize, maxSize,
+                                boolTy, "union.size.cmp", expr.getLoc());
+        maxSize =
+            emitSelect(cmpSize, fieldSize, maxSize, usizeTy, "union.size.max");
+
+        MIRValue *fieldAlign = emitAlignOf(fieldTy);
+        MIRValue *cmpAlign = builder->createICmp(
+            CompareInst::Predicate::UGT, fieldAlign, maxAlign, boolTy,
+            "union.align.cmp", expr.getLoc());
+        maxAlign = emitSelect(cmpAlign, fieldAlign, maxAlign, usizeTy,
+                              "union.align.max");
+      }
+
+      MIRValue *oneUsize =
+          mirModule->getOrInsertConstant<ConstantInt>(1, usizeTy);
+      MIRValue *alignMinusOne =
+          builder->createSub(maxAlign, oneUsize, "align.m1", expr.getLoc());
+      MIRValue *added =
+          builder->createAdd(maxSize, alignMinusOne, "size.add", expr.getLoc());
+
+      MIRValue *allOnes =
+          mirModule->getOrInsertConstant<ConstantInt>(~0ULL, usizeTy);
+      MIRValue *invAlign = builder->insert(std::make_unique<BinaryInst>(
+          Opcode::Xor, alignMinusOne, allOnes, "align.inv", expr.getLoc()));
+
+      lastExprValue = builder->insert(std::make_unique<BinaryInst>(
+          Opcode::And, added, invAlign, "union.padded.size", expr.getLoc()));
+    } else {
+      // 4. Standard Primitive/Struct Branch
+      MIRValue *rawSize = emitSizeOf(targetTy);
+
+      // Apply explicit alignment padding if the struct has an align(N)
+      // attribute
+      uint64_t explicitAlign = getMaxAlignment(getMaxAlignment, targetTy);
+
+      if (explicitAlign > 0) {
+        MIRValue *alignVal =
+            mirModule->getOrInsertConstant<ConstantInt>(explicitAlign, usizeTy);
+        MIRValue *oneUsize =
+            mirModule->getOrInsertConstant<ConstantInt>(1, usizeTy);
+        MIRValue *alignMinusOne =
+            builder->createSub(alignVal, oneUsize, "align.m1", expr.getLoc());
+        MIRValue *added = builder->createAdd(rawSize, alignMinusOne, "size.add",
+                                             expr.getLoc());
+
+        MIRValue *allOnes =
+            mirModule->getOrInsertConstant<ConstantInt>(~0ULL, usizeTy);
+        MIRValue *invAlign = builder->insert(std::make_unique<BinaryInst>(
+            Opcode::Xor, alignMinusOne, allOnes, "align.inv", expr.getLoc()));
+
+        lastExprValue = builder->insert(std::make_unique<BinaryInst>(
+            Opcode::And, added, invAlign, "padded.size", expr.getLoc()));
+      } else {
+        lastExprValue = rawSize;
+      }
+    }
   }
 
   void visitSharedExpr(const hir::HIRSharedExpr &expr) override {
@@ -9701,7 +10003,8 @@ private:
     for (size_t i = 0; i < expr.getElements().size(); ++i) {
       auto *elementExpr = expr.getElements()[i].get();
 
-      if (auto *spread = llvm::dyn_cast_or_null<hir::HIRSpreadExpr>(elementExpr)) {
+      if (auto *spread =
+              llvm::dyn_cast_or_null<hir::HIRSpreadExpr>(elementExpr)) {
         visit(spread->getIterable());
         MIRValue *sourceVal = lastExprValue;
         const hir::HIRType *sourceTy = spread->getIterable()->getType();
@@ -10370,6 +10673,157 @@ private:
             static_cast<const hir::HIRIdentifierExpr *>(rawCallee)->getName();
       }
 
+      if (calleeName == "alignof" && expr.getArgs().size() == 1) {
+        const hir::HIRExpr *argExpr = expr.getArgs()[0].get();
+        while (auto *castExpr =
+                   llvm::dyn_cast_or_null<hir::HIRCastExpr>(argExpr)) {
+          argExpr = castExpr->getExpr();
+        }
+        const hir::HIRType *targetTy = stripMemoryModifiers(argExpr->getType());
+        auto *usizeTy =
+            const_cast<hir::HIRModule *>(hirModule)->getIntType(64, false);
+
+        // Sync recursive alignment resolution from sizeof
+        auto getStructAlignment = [&](auto &self,
+                                      const hir::HIRType *ty) -> uint64_t {
+          if (!ty)
+            return 0;
+          const hir::HIRType *stripped = stripMemoryModifiers(ty);
+          uint64_t maxAlign = 0;
+
+          std::string cName = stripped->toString();
+          while (!cName.empty() &&
+                 (cName[0] == '*' || cName[0] == '&' || cName[0] == ' ')) {
+            cName = cName.substr(1);
+          }
+          if (cName.find("struct.") == 0)
+            cName = cName.substr(7);
+          if (cName.find("class.") == 0)
+            cName = cName.substr(6);
+          if (cName.find("union.") == 0)
+            cName = cName.substr(6);
+
+          const hir::HIRClass *matchedCls = nullptr;
+          for (const auto *cls : hirModule->getClasses()) {
+            if (cls->getName() == cName) {
+              matchedCls = cls;
+              break;
+            }
+          }
+
+          const hir::HIRType *underlying = stripped;
+          if (matchedCls) {
+            maxAlign = matchedCls->getAlignment();
+            underlying = matchedCls->getType();
+          }
+
+          if (auto *st = llvm::dyn_cast_or_null<hir::StructType>(underlying)) {
+            for (const auto *fieldTy : st->getFields()) {
+              uint64_t fieldAlign = self(self, fieldTy);
+              if (fieldAlign > maxAlign)
+                maxAlign = fieldAlign;
+            }
+          } else if (auto *ut =
+                         llvm::dyn_cast_or_null<hir::UnionType>(underlying)) {
+            for (const auto *fieldTy : ut->getFields()) {
+              uint64_t fieldAlign = self(self, fieldTy);
+              if (fieldAlign > maxAlign)
+                maxAlign = fieldAlign;
+            }
+          } else if (auto *arr =
+                         llvm::dyn_cast_or_null<hir::ArrayType>(underlying)) {
+            maxAlign = std::max(maxAlign, self(self, arr->getElementType()));
+          }
+
+          return maxAlign;
+        };
+
+        uint64_t explicitAlign =
+            getStructAlignment(getStructAlignment, targetTy);
+
+        if (explicitAlign > 0) {
+          lastExprValue = mirModule->getOrInsertConstant<ConstantInt>(
+              explicitAlign, usizeTy);
+          return;
+        }
+
+        // 3. Fallback to GEP trick for natural ABI alignment
+        auto *i8Ty =
+            const_cast<hir::HIRModule *>(hirModule)->getIntType(8, true);
+        auto *i32Ty =
+            const_cast<hir::HIRModule *>(hirModule)->getIntType(32, true);
+
+        std::string alignName = targetTy ? targetTy->toString() : "any";
+        std::replace(alignName.begin(), alignName.end(), ' ', '_');
+        std::replace(alignName.begin(), alignName.end(), '*', 'p');
+        std::replace(alignName.begin(), alignName.end(), '<', '_');
+        std::replace(alignName.begin(), alignName.end(), '>', '_');
+
+        auto *structTy = const_cast<hir::HIRModule *>(hirModule)->getStructType(
+            "__moksha_alignof_" + alignName, {i8Ty, targetTy});
+
+        auto *zero = mirModule->getOrInsertConstant<ConstantInt>(0, i32Ty);
+        auto *one = mirModule->getOrInsertConstant<ConstantInt>(1, i32Ty);
+
+        MIRValue *baseAlloc =
+            builder->createAlloca(structTy, "alignof.base", expr.getLoc());
+        MIRValue *baseInt = builder->insert(
+            std::make_unique<CastInst>(Opcode::PtrToInt, baseAlloc, usizeTy,
+                                       "alignof.base.int", expr.getLoc()));
+
+        MIRValue *gep =
+            builder->createGEP(baseAlloc, std::vector<MIRValue *>{zero, one},
+                               structTy, "alignof.gep", expr.getLoc());
+        MIRValue *gepInt = builder->insert(std::make_unique<CastInst>(
+            Opcode::PtrToInt, gep, usizeTy, "alignof.gep.int", expr.getLoc()));
+
+        lastExprValue =
+            builder->createSub(gepInt, baseInt, "alignof.val", expr.getLoc());
+        return;
+      }
+
+      if (calleeName == "offsetof" && expr.getArgs().size() == 2) {
+        const hir::HIRExpr *argExpr = expr.getArgs()[0].get();
+        while (auto *castExpr =
+                   llvm::dyn_cast_or_null<hir::HIRCastExpr>(argExpr)) {
+          argExpr = castExpr->getExpr();
+        }
+        const hir::HIRType *targetTy = stripMemoryModifiers(argExpr->getType());
+
+        std::string fieldName = "";
+        if (auto *id = llvm::dyn_cast_or_null<hir::HIRIdentifierExpr>(
+                expr.getArgs()[1].get())) {
+          fieldName = id->getName();
+        }
+
+        auto *i32Ty =
+            const_cast<hir::HIRModule *>(hirModule)->getIntType(32, true);
+        auto *usizeTy =
+            const_cast<hir::HIRModule *>(hirModule)->getIntType(64, false);
+
+        if (auto *st = llvm::dyn_cast_or_null<hir::StructType>(targetTy)) {
+          int idx = st->getFieldIndex(fieldName);
+          if (idx >= 0) {
+            auto *nullPtr = mirModule->getOrInsertConstant<ConstantNull>(
+                const_cast<hir::HIRModule *>(hirModule)->getPointerType(
+                    st, hir::Ownership::None));
+            auto *zero = mirModule->getOrInsertConstant<ConstantInt>(0, i32Ty);
+            auto *idxVal =
+                mirModule->getOrInsertConstant<ConstantInt>(idx, i32Ty);
+
+            MIRValue *gep = builder->createGEP(
+                nullPtr, std::vector<MIRValue *>{zero, idxVal}, st,
+                "offsetof.gep", expr.getLoc());
+            lastExprValue = builder->insert(std::make_unique<CastInst>(
+                Opcode::PtrToInt, gep, usizeTy, "offsetof.int", expr.getLoc()));
+            return;
+          }
+        }
+
+        lastExprValue = mirModule->getOrInsertConstant<ConstantInt>(0, usizeTy);
+        return;
+      }
+
       std::string originalName = calleeName;
       ensureBuiltinMIR(originalName);
       for (const auto *hirTarget : hirModule->getFunctions()) {
@@ -10377,7 +10831,8 @@ private:
           if (hirTarget->isExtern() && !hirTarget->getABI().empty()) {
             std::string abi = hirTarget->getABI();
             if (abi != "stdcall" && abi != "fastcall" && abi != "cdecl" &&
-                abi != "C") {
+                abi != "C" && abi != "vectorcall" && abi != "sysv64" &&
+                abi != "win64") {
               calleeName = abi;
             }
           }
@@ -10700,7 +11155,7 @@ private:
         calleeName = "llvm.bswap.i64";
       else if (calleeName == "ctpop" || calleeName == "popcount")
         calleeName = "llvm.ctpop.i32";
-      else if (calleeName == "clz" || calleeName == "cttz") {
+      else if (calleeName == "clz" || calleeName == "ctz") {
         calleeName = (calleeName == "clz") ? "llvm.ctlz.i32" : "llvm.cttz.i32";
         needsZeroPoison = true;
       } else if (calleeName == "trap") {
@@ -10947,7 +11402,8 @@ private:
                   builder->createLoad(baseObj, "base.load", expr.getLoc());
               baseLoad->setBorrowKind(mir::BorrowKind::View);
               baseObj = baseLoad;
-            } else if (auto *existingLoad = llvm::dyn_cast_or_null<LoadInst>(baseObj)) {
+            } else if (auto *existingLoad =
+                           llvm::dyn_cast_or_null<LoadInst>(baseObj)) {
               existingLoad->setBorrowKind(mir::BorrowKind::View);
             }
           }
@@ -11109,7 +11565,8 @@ private:
           const hir::HIRType *rawBase = baseObj->getType();
           if (auto *pTy = llvm::dyn_cast_or_null<hir::PointerType>(rawBase)) {
             rawBase = pTy->getPointee();
-          } else if (auto *rTy = llvm::dyn_cast_or_null<hir::ReferenceType>(rawBase)) {
+          } else if (auto *rTy =
+                         llvm::dyn_cast_or_null<hir::ReferenceType>(rawBase)) {
             rawBase = rTy->getInner();
           }
           thisTy = const_cast<hir::HIRModule *>(hirModule)->getPointerType(
@@ -12222,7 +12679,8 @@ private:
       std::vector<MIRValue *> cArgs;
       MIRValue *mapArg = args[0];
       bool isPtrToAny = false;
-      if (auto *pTy = llvm::dyn_cast_or_null<hir::PointerType>(mapArg->getType())) {
+      if (auto *pTy =
+              llvm::dyn_cast_or_null<hir::PointerType>(mapArg->getType())) {
         if (pTy->getPointee()->getKind() == hir::TypeKind::Any) {
           isPtrToAny = true;
         }

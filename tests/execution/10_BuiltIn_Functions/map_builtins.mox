@@ -1,3 +1,5 @@
+void test() {
+
 table<string, int> scores = {
     "Alice": 100,
     "Bob": 95
@@ -41,3 +43,7 @@ scores["Alice"] = 98;
     } else {
         println("[CRITICAL] FAIL: clear()");
     }
+
+}
+
+test()

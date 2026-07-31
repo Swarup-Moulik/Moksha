@@ -23,7 +23,7 @@ namespace mlir {
 /** @brief Lowers HIR/MIR types to MLIR types. */
 class TypeLowering {
 public:
-  explicit TypeLowering(::mlir::MLIRContext &ctx);
+  explicit TypeLowering(::mlir::MLIRContext &ctx, unsigned ptrSize = 8);
   ::mlir::Type lowerHIRType(const hir::HIRType &type) const;
   ::mlir::Type lowerMIRType(const mir::MIRType *type) const;
   ::mlir::Type lowerMIRValueType(const mir::MIRValue &value) const;
@@ -33,6 +33,7 @@ public:
 
 private:
   ::mlir::MLIRContext &context;
+  unsigned pointerSize;
 };
 
 } // namespace mlir

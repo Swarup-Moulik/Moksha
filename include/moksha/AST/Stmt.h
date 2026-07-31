@@ -56,8 +56,11 @@ enum class IntrinsicKind {
   AtomicAdd,
   AtomicCAS,
   AtomicFence,
+  Bswap16,
   Bswap32,
-  Clz
+  Bswap64,
+  Clz,
+  Ctz
 };
 
 /** @brief AST Node Bases */
@@ -389,14 +392,15 @@ private:
 
 class ImportDecl : public Decl {
 public:
-  ImportDecl(std::string moduleName, std::vector<std::string> symbols,
-             SourceLocation loc)
+  ImportDecl(std::string moduleName, std::string aliasName,
+             std::vector<std::string> symbols, SourceLocation loc)
       : Decl(StmtKind::ImportDecl, std::move(moduleName), Visibility::Default,
              loc),
-        symbols(std::move(symbols)) {}
+        aliasName(std::move(aliasName)), symbols(std::move(symbols)) {}
 
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const std::string &getModuleName() const { return name; }
+  [[nodiscard]] const std::string &getAliasName() const { return aliasName; }
   [[nodiscard]] const std::vector<std::string> &getSymbols() const {
     return symbols;
   }
@@ -406,6 +410,7 @@ public:
   }
 
 private:
+  std::string aliasName;
   std::vector<std::string> symbols;
 };
 

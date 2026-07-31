@@ -25,9 +25,10 @@ namespace {
 
 class MIRToMLIRConverter {
 public:
-  MIRToMLIRConverter(::mlir::MLIRContext &context, DiagnosticEngine &diags)
+  MIRToMLIRConverter(::mlir::MLIRContext &context, DiagnosticEngine &diags,
+                     unsigned ptrSize)
       : context(context), builder(&context), diags(diags),
-        typeLowering(context) {
+        typeLowering(context, ptrSize), pointerSize(ptrSize) {
     context.getOrLoadDialect<::moksha::IR::MokshaDialect>();
     context.getOrLoadDialect<::mlir::func::FuncDialect>();
     context.getOrLoadDialect<::mlir::cf::ControlFlowDialect>();
@@ -63,6 +64,7 @@ public:
 
 private:
   bool hasMain = false;
+  unsigned pointerSize;
   ::mlir::MLIRContext &context;
   ::mlir::OpBuilder builder;
   DiagnosticEngine &diags;
@@ -148,17 +150,20 @@ private:
         elements.push_back(getAttributeForValue(elem));
       }
       return builder.getArrayAttr(elements);
-    } else if (auto *mapConst = ::llvm::dyn_cast_or_null<mir::ConstantMap>(constant)) {
+    } else if (auto *mapConst =
+                   ::llvm::dyn_cast_or_null<mir::ConstantMap>(constant)) {
       llvm::SmallVector<::mlir::Attribute, 4> entries;
       for (const auto &pair : mapConst->getEntries()) {
         llvm::SmallVector<::mlir::Attribute, 2> kv;
 
-        if (auto *kConst = ::llvm::dyn_cast_or_null<mir::MIRConstant>(pair.first))
+        if (auto *kConst =
+                ::llvm::dyn_cast_or_null<mir::MIRConstant>(pair.first))
           kv.push_back(getConstantAttribute(kConst));
         else
           kv.push_back(builder.getUnitAttr());
 
-        if (auto *vConst = ::llvm::dyn_cast_or_null<mir::MIRConstant>(pair.second))
+        if (auto *vConst =
+                ::llvm::dyn_cast_or_null<mir::MIRConstant>(pair.second))
           kv.push_back(getConstantAttribute(vConst));
         else
           kv.push_back(builder.getUnitAttr());
@@ -182,7 +187,8 @@ private:
           if (auto *global = ::llvm::dyn_cast_or_null<mir::MIRGlobal>(elem)) {
             elements.push_back(::mlir::FlatSymbolRefAttr::get(
                 builder.getContext(), global->getName()));
-          } else if (auto *func = ::llvm::dyn_cast_or_null<mir::MIRFunction>(elem)) {
+          } else if (auto *func =
+                         ::llvm::dyn_cast_or_null<mir::MIRFunction>(elem)) {
             elements.push_back(::mlir::FlatSymbolRefAttr::get(
                 builder.getContext(), func->getName()));
           } else {
@@ -200,10 +206,12 @@ private:
                    ::llvm::dyn_cast_or_null<mir::ConstantAnyCast>(constant)) {
       return getAttributeForValue(anycast->getValue());
     } else if (auto *arrToSlice =
-                   ::llvm::dyn_cast_or_null<mir::ConstantArrayToSlice>(constant)) {
+                   ::llvm::dyn_cast_or_null<mir::ConstantArrayToSlice>(
+                       constant)) {
       return getAttributeForValue(arrToSlice->getValue());
     } else if (auto *sliceToArr =
-                   ::llvm::dyn_cast_or_null<mir::ConstantSliceToArray>(constant)) {
+                   ::llvm::dyn_cast_or_null<mir::ConstantSliceToArray>(
+                       constant)) {
       return getAttributeForValue(sliceToArr->getValue());
     }
     return builder.getUnitAttr();
@@ -255,7 +263,8 @@ private:
     }
 
     if (auto *constant = ::llvm::dyn_cast_or_null<mir::MIRConstant>(val)) {
-      if (auto *bitcast = ::llvm::dyn_cast_or_null<mir::ConstantBitCast>(constant)) {
+      if (auto *bitcast =
+              ::llvm::dyn_cast_or_null<mir::ConstantBitCast>(constant)) {
         ::mlir::Value underlying = getValue(bitcast->getValue());
         if (!underlying)
           return nullptr;
@@ -271,7 +280,8 @@ private:
             loc, getMLIRType(anycast->getType()), underlying);
         return castOp.getResult();
       } else if (auto *a2s =
-                     ::llvm::dyn_cast_or_null<mir::ConstantArrayToSlice>(constant)) {
+                     ::llvm::dyn_cast_or_null<mir::ConstantArrayToSlice>(
+                         constant)) {
         ::mlir::Value underlying = getValue(a2s->getValue());
         if (!underlying)
           return nullptr;
@@ -279,7 +289,8 @@ private:
             loc, getMLIRType(a2s->getType()), underlying);
         return castOp.getResult();
       } else if (auto *s2a =
-                     ::llvm::dyn_cast_or_null<mir::ConstantSliceToArray>(constant)) {
+                     ::llvm::dyn_cast_or_null<mir::ConstantSliceToArray>(
+                         constant)) {
         ::mlir::Value underlying = getValue(s2a->getValue());
         if (!underlying)
           return nullptr;
@@ -308,7 +319,8 @@ private:
       auto getByteSize = [&](const hir::HIRType *t) -> size_t {
         auto impl = [&](auto &self, const hir::HIRType *t_) -> size_t {
           if (!t_)
-            return 8;
+            return pointerSize;
+
           if (t_->getKind() == hir::TypeKind::Int)
             return std::max<size_t>(
                 1, static_cast<const hir::HIRIntType *>(t_)->getWidth() / 8);
@@ -326,13 +338,18 @@ private:
               size += self(self, f);
             return size;
           }
+
+          if (t_->getKind() == hir::TypeKind::Decimal)
+            return 16; // Decimals are always a fixed {i128, i32}
+
+          // Fat Pointers (Data Ptr + Length/VTable/Env)
           if (t_->getKind() == hir::TypeKind::Any ||
               t_->getKind() == hir::TypeKind::Slice ||
-              t_->getKind() == hir::TypeKind::Closure ||
-              t_->getKind() == hir::TypeKind::Map ||
-              t_->getKind() == hir::TypeKind::Decimal)
-            return 16;
-          return 8;
+              t_->getKind() == hir::TypeKind::Closure)
+            return 2 * pointerSize;
+
+          // Standard Opaque Pointers (Map, Promise, String, etc)
+          return pointerSize;
         };
         return impl(impl, t);
       };
@@ -435,6 +452,15 @@ private:
         break;
       case mir::CallingConv::Interrupt:
         ccStr = "interrupt";
+        break;
+      case mir::CallingConv::VectorCall:
+        ccStr = "vectorcall";
+        break;
+      case mir::CallingConv::SysV64:
+        ccStr = "sysv64";
+        break;
+      case mir::CallingConv::Win64:
+        ccStr = "win64";
         break;
       default:
         ccStr = "cdecl";
@@ -562,6 +588,10 @@ private:
 
     if (global->isConstant()) {
       globalOp->setAttr("moksha.constant", builder.getUnitAttr());
+    }
+
+    if (global->isExtern()) {
+      globalOp->setAttr("moksha.is_extern", builder.getUnitAttr());
     }
 
     // Map Global Linkage
@@ -701,6 +731,10 @@ private:
       auto mlirAlloca = builder.create<::moksha::IR::AllocaOp>(
           loc, ::moksha::IR::PointerType::get(&context, elemType),
           ::mlir::TypeAttr::get(elemType));
+      if (alloca->getAlignment() > 0) {
+        mlirAlloca->setAttr("alignment",
+                            builder.getI32IntegerAttr(alloca->getAlignment()));
+      }
       valueMap[inst] = mlirAlloca.getResult();
       break;
     }
@@ -958,7 +992,8 @@ private:
           auto getByteSize = [&](const hir::HIRType *t) -> size_t {
             auto impl = [&](auto &self, const hir::HIRType *t_) -> size_t {
               if (!t_)
-                return 8;
+                return pointerSize;
+
               if (t_->getKind() == hir::TypeKind::Int)
                 return std::max<size_t>(
                     1,
@@ -978,13 +1013,18 @@ private:
                   size += self(self, f);
                 return size;
               }
+
+              if (t_->getKind() == hir::TypeKind::Decimal)
+                return 16; // Decimals are always a fixed {i128, i32}
+
+              // Fat Pointers (Data Ptr + Length/VTable/Env)
               if (t_->getKind() == hir::TypeKind::Any ||
                   t_->getKind() == hir::TypeKind::Slice ||
-                  t_->getKind() == hir::TypeKind::Closure ||
-                  t_->getKind() == hir::TypeKind::Map ||
-                  t_->getKind() == hir::TypeKind::Decimal)
-                return 16;
-              return 8;
+                  t_->getKind() == hir::TypeKind::Closure)
+                return 2 * pointerSize;
+
+              // Standard Opaque Pointers (Map, Promise, String, etc)
+              return pointerSize;
             };
             return impl(impl, t);
           };
@@ -1019,7 +1059,8 @@ private:
       } else {
         ::mlir::Value calleeMLIRVal = getValue(calleeVal);
         ::mlir::Type fnType = calleeMLIRVal.getType();
-        if (auto ptrTy = llvm::dyn_cast_or_null<::moksha::IR::PointerType>(fnType)) {
+        if (auto ptrTy =
+                llvm::dyn_cast_or_null<::moksha::IR::PointerType>(fnType)) {
           fnType = ptrTy.getPointee();
           calleeMLIRVal =
               builder.create<::moksha::IR::CastOp>(loc, fnType, calleeMLIRVal)
@@ -1075,7 +1116,8 @@ private:
     // Closures
     case mir::Opcode::MakeClosure: {
       auto *mc = static_cast<mir::MakeClosureInst *>(inst);
-      auto *func = llvm::dyn_cast_or_null<mir::MIRFunction>(mc->getFunctionPointer());
+      auto *func =
+          llvm::dyn_cast_or_null<mir::MIRFunction>(mc->getFunctionPointer());
       if (!func)
         return ::mlir::failure();
       auto symRef =
@@ -1265,7 +1307,8 @@ private:
           auto getByteSize = [&](const hir::HIRType *t) -> size_t {
             auto impl = [&](auto &self, const hir::HIRType *t_) -> size_t {
               if (!t_)
-                return 8;
+                return pointerSize;
+
               if (t_->getKind() == hir::TypeKind::Int)
                 return std::max<size_t>(
                     1,
@@ -1285,13 +1328,18 @@ private:
                   size += self(self, f);
                 return size;
               }
+
+              if (t_->getKind() == hir::TypeKind::Decimal)
+                return 16; // Decimals are always a fixed {i128, i32}
+
+              // Fat Pointers (Data Ptr + Length/VTable/Env)
               if (t_->getKind() == hir::TypeKind::Any ||
                   t_->getKind() == hir::TypeKind::Slice ||
-                  t_->getKind() == hir::TypeKind::Closure ||
-                  t_->getKind() == hir::TypeKind::Map ||
-                  t_->getKind() == hir::TypeKind::Decimal)
-                return 16;
-              return 8;
+                  t_->getKind() == hir::TypeKind::Closure)
+                return 2 * pointerSize;
+
+              // Standard Opaque Pointers (Map, Promise, String, etc)
+              return pointerSize;
             };
             return impl(impl, t);
           };
@@ -1327,7 +1375,8 @@ private:
       } else {
         ::mlir::Value calleeMLIRVal = getValue(calleeVal);
         ::mlir::Type fnType = calleeMLIRVal.getType();
-        if (auto ptrTy = llvm::dyn_cast_or_null<::moksha::IR::PointerType>(fnType)) {
+        if (auto ptrTy =
+                llvm::dyn_cast_or_null<::moksha::IR::PointerType>(fnType)) {
           fnType = ptrTy.getPointee();
           calleeMLIRVal =
               builder.create<::moksha::IR::CastOp>(loc, fnType, calleeMLIRVal)
@@ -1418,8 +1467,8 @@ private:
 
 ::mlir::OwningOpRef<::mlir::ModuleOp>
 convertMIRToMLIR(mir::MIRModule &mirModule, ::mlir::MLIRContext &context,
-                 DiagnosticEngine &diags) {
-  MIRToMLIRConverter converter(context, diags);
+                 DiagnosticEngine &diags, unsigned pointerSize) {
+  MIRToMLIRConverter converter(context, diags, pointerSize);
   return converter.convert(mirModule);
 }
 

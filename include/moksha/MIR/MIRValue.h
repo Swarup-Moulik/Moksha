@@ -12,7 +12,7 @@ namespace mir {
 enum class Linkage { Internal, External, Weak, LinkOnce };
 
 /** @brief Represents the calling convention of a function. */
-enum class CallingConv { C, StdCall, FastCall, Interrupt };
+enum class CallingConv { C, StdCall, FastCall, VectorCall, SysV64, Win64, Interrupt };
 
 /** @brief Represents the kind of a value. */
 enum class ValueKind {

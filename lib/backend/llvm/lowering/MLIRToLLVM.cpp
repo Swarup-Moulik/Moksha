@@ -266,6 +266,16 @@ static mlir::LLVM::AtomicBinOp mapAtomicBinOp(int32_t op) {
   }
 }
 
+static unsigned getPointerSize(mlir::Operation *op) {
+  if (auto module = op->getParentOfType<mlir::ModuleOp>()) {
+    if (auto attr =
+            module->getAttrOfType<mlir::StringAttr>("llvm.target_triple")) {
+      return llvm::Triple(attr.getValue().str()).isArch64Bit() ? 8 : 4;
+    }
+  }
+  return 8;
+}
+
 /** @brief Reconstructs the Frontend's sanitized stringifier names for types. */
 static std::string getMangledHIRTypeName(mlir::Type type) {
   if (type.isInteger(1))
@@ -791,11 +801,23 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
         linkage = mlir::LLVM::Linkage::Weak;
     }
 
+    bool isExternDecl = op->hasAttr("moksha.is_extern");
+
+    if (!isExternDecl && (!initAttr || mlir::isa<mlir::UnitAttr>(initAttr)) &&
+        !generateVTableRegion) {
+      initAttr = rewriter.getZeroAttr(llvmType);
+      if (linkage == mlir::LLVM::Linkage::External) {
+        linkage = mlir::LLVM::Linkage::Internal;
+      }
+    } else if (isExternDecl) {
+      initAttr = nullptr;
+    }
+
     auto globalOp = rewriter.replaceOpWithNewOp<mlir::LLVM::GlobalOp>(
         op, llvmType, isConstant, linkage, name, initAttr, alignment, 0, false,
         threadLocal);
 
-    if (!initAttr && !generateVTableRegion) {
+    if (!initAttr && !generateVTableRegion && !isExternDecl) {
       globalOp->setAttr("moksha.zeroinit", rewriter.getUnitAttr());
     }
 
@@ -1016,7 +1038,8 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
                 size_t strIdx = 0;
 
                 for (auto attr : mapEntries) {
-                  if (auto kvAttr = llvm::dyn_cast_or_null<mlir::ArrayAttr>(attr)) {
+                  if (auto kvAttr =
+                          llvm::dyn_cast_or_null<mlir::ArrayAttr>(attr)) {
                     if (kvAttr.size() == 2) {
                       mlir::Value kVal;
                       if (mlir::isa<mlir::UnitAttr>(kvAttr[0]) &&
@@ -1183,15 +1206,20 @@ struct AllocaOpLowering : public mlir::ConvertOpToLLVMPattern<IR::AllocaOp> {
   mlir::LogicalResult
   matchAndRewrite(IR::AllocaOp op, OpAdaptor adaptor,
                   mlir::ConversionPatternRewriter &rewriter) const override {
-
     mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
         op.getLoc(), rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
-
     mlir::Type allocatedTy = typeConverter->convertType(op.getAllocatedType());
     auto llvmAlloca = rewriter.create<mlir::LLVM::AllocaOp>(
         op.getLoc(), typeConverter->convertType(op.getType()), allocatedTy,
         one);
-
+    if (auto alignAttr = op->getAttrOfType<mlir::IntegerAttr>("alignment")) {
+      if (alignAttr.getInt() > 0)
+        llvmAlloca.setAlignment(alignAttr.getInt());
+    } else if (auto alignAttr2 =
+                   op->getAttrOfType<mlir::IntegerAttr>("moksha.alignment")) {
+      if (alignAttr2.getInt() > 0)
+        llvmAlloca.setAlignment(alignAttr2.getInt());
+    }
     mlir::Value zeroVal =
         rewriter.create<mlir::LLVM::ZeroOp>(op.getLoc(), allocatedTy);
     rewriter.create<mlir::LLVM::StoreOp>(op.getLoc(), zeroVal, llvmAlloca);
@@ -1325,7 +1353,8 @@ struct GetElementPtrOpLowering
     auto indices = adaptor.getOperands().drop_front(1);
     mlir::Type pointeeTy;
 
-    if (auto basePtrTy = llvm::dyn_cast_or_null<IR::PointerType>(origMokshaBaseTy)) {
+    if (auto basePtrTy =
+            llvm::dyn_cast_or_null<IR::PointerType>(origMokshaBaseTy)) {
       auto pointee = basePtrTy.getPointee();
       if (mlir::isa<mlir::NoneType>(pointee)) {
         pointeeTy = rewriter.getI8Type();
@@ -2782,7 +2811,8 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
                   mlir::ConversionPatternRewriter &rewriter) const override {
 
     mlir::Type ty = adaptor.getLhs().getType();
-    uint32_t pred = op.getPredicate(); // 0=EQ, 1=NE, 2=LT, 3=LE, 4=GT, 5=GE
+    uint32_t pred = op.getPredicate(); // 0=EQ, 1=NE, 2=LT, 3=LE, 4=GT, 5=GE,
+                                       // 6=ULT, 7=ULE, 8=UGT, 9=UGE
 
     // Intercept Decimal Comparisons
     if (auto structTy = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(ty)) {
@@ -2826,6 +2856,18 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
         case 5:
           llvmPred = mlir::LLVM::ICmpPredicate::sge;
           break;
+        case 6:
+          llvmPred = mlir::LLVM::ICmpPredicate::ult;
+          break;
+        case 7:
+          llvmPred = mlir::LLVM::ICmpPredicate::ule;
+          break;
+        case 8:
+          llvmPred = mlir::LLVM::ICmpPredicate::ugt;
+          break;
+        case 9:
+          llvmPred = mlir::LLVM::ICmpPredicate::uge;
+          break;
         default:
           llvmPred = mlir::LLVM::ICmpPredicate::eq;
           break;
@@ -2854,24 +2896,28 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
               switch (pred) {
               case 0:
                 result = (cmpRes == llvm::APFloat::cmpEqual);
-                break; // EQ
+                break;
               case 1:
                 result = (cmpRes != llvm::APFloat::cmpEqual);
-                break; // NE
+                break;
               case 2:
+              case 6:
                 result = (cmpRes == llvm::APFloat::cmpLessThan);
-                break; // LT
+                break;
               case 3:
+              case 7:
                 result = (cmpRes == llvm::APFloat::cmpLessThan ||
                           cmpRes == llvm::APFloat::cmpEqual);
-                break; // LE
+                break;
               case 4:
+              case 8:
                 result = (cmpRes == llvm::APFloat::cmpGreaterThan);
-                break; // GT
+                break;
               case 5:
+              case 9:
                 result = (cmpRes == llvm::APFloat::cmpGreaterThan ||
                           cmpRes == llvm::APFloat::cmpEqual);
-                break; // GE
+                break;
               }
 
               mlir::Type i1Ty = rewriter.getI1Type();
@@ -2915,6 +2961,18 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
       case 5:
         llvmPred = mlir::LLVM::FCmpPredicate::oge;
         break;
+      case 6:
+        llvmPred = mlir::LLVM::FCmpPredicate::ult;
+        break;
+      case 7:
+        llvmPred = mlir::LLVM::FCmpPredicate::ule;
+        break;
+      case 8:
+        llvmPred = mlir::LLVM::FCmpPredicate::ugt;
+        break;
+      case 9:
+        llvmPred = mlir::LLVM::FCmpPredicate::uge;
+        break;
       default:
         llvmPred = mlir::LLVM::FCmpPredicate::oeq;
         break;
@@ -2930,15 +2988,19 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
         llvmPred = mlir::LLVM::ICmpPredicate::ne;
         break;
       case 2:
+      case 6:
         llvmPred = mlir::LLVM::ICmpPredicate::ult;
         break;
       case 3:
+      case 7:
         llvmPred = mlir::LLVM::ICmpPredicate::ule;
         break;
       case 4:
+      case 8:
         llvmPred = mlir::LLVM::ICmpPredicate::ugt;
         break;
       case 5:
+      case 9:
         llvmPred = mlir::LLVM::ICmpPredicate::uge;
         break;
       default:
@@ -3015,6 +3077,18 @@ struct CmpOpLowering : public mlir::ConvertOpToLLVMPattern<IR::CmpOp> {
       case 5:
         llvmPred = isUnsigned ? mlir::LLVM::ICmpPredicate::uge
                               : mlir::LLVM::ICmpPredicate::sge;
+        break;
+      case 6:
+        llvmPred = mlir::LLVM::ICmpPredicate::ult;
+        break;
+      case 7:
+        llvmPred = mlir::LLVM::ICmpPredicate::ule;
+        break;
+      case 8:
+        llvmPred = mlir::LLVM::ICmpPredicate::ugt;
+        break;
+      case 9:
+        llvmPred = mlir::LLVM::ICmpPredicate::uge;
         break;
       default:
         llvmPred = mlir::LLVM::ICmpPredicate::eq;
@@ -3860,7 +3934,7 @@ struct CustomCallOpLowering
     llvm::SmallVector<mlir::Value, 4> newOperands;
     llvm::SmallVector<mlir::Attribute, 4> argAttrs;
     bool hasByVal = false;
-
+    unsigned ptrSize = getPointerSize(op);
     auto getByteSize = [&](mlir::Type t) -> size_t {
       auto impl = [&](auto &self, mlir::Type t_) -> size_t {
         if (t_.isIntOrFloat())
@@ -3873,7 +3947,7 @@ struct CustomCallOpLowering
             size += self(self, f);
           return size;
         }
-        return 8;
+        return ptrSize;
       };
       return impl(impl, t);
     };
@@ -4780,7 +4854,7 @@ struct ConvertMokshaToLLVMPass
   }
 
   void runOnOperation() override {
-    llvm::errs() << "[DEBUG] Starting ConvertMokshaToLLVMPass...\n";
+    // llvm::errs() << "[DEBUG] Starting ConvertMokshaToLLVMPass...\n";
     auto sanitizeName = [](llvm::StringRef name) -> std::string {
       std::string s = name.str();
       if (name.starts_with("llvm.")) {
@@ -4910,16 +4984,17 @@ struct ConvertMokshaToLLVMPass
     target.addIllegalDialect<mlir::func::FuncDialect>();
     target.addIllegalDialect<mlir::cf::ControlFlowDialect>();
 
-    llvm::errs() << "[DEBUG] Executing applyFullConversion...\n";
+    // llvm::errs() << "[DEBUG] Executing applyFullConversion...\n";
     if (mlir::failed(mlir::applyFullConversion(getOperation(), target,
                                                std::move(patterns)))) {
       llvm::errs() << "[FATAL] applyFullConversion failed!\n";
       signalPassFailure();
       return;
     }
-    llvm::errs() << "[DEBUG] applyFullConversion succeeded!\n";
+    // llvm::errs() << "[DEBUG] applyFullConversion succeeded!\n";
 
     mlir::ModuleOp module = getOperation();
+    unsigned ptrSize = getPointerSize(module.getOperation());
     module.walk([&](mlir::LLVM::LLVMFuncOp llvmFunc) {
       auto getByteSize = [&](mlir::Type t) -> size_t {
         auto impl = [&](auto &self, mlir::Type t_) -> size_t {
@@ -4933,7 +5008,7 @@ struct ConvertMokshaToLLVMPass
               size += self(self, f);
             return size;
           }
-          return 8;
+          return ptrSize;
         };
         return impl(impl, t);
       };
@@ -5045,12 +5120,19 @@ struct ConvertMokshaToLLVMPass
       funcBuilder.create<mlir::LLVM::ReturnOp>(loc, mlir::ValueRange{});
     }
 
-    llvm::errs() << "[DEBUG] Injecting Personality & Attributes...\n";
+    // llvm::errs() << "[DEBUG] Injecting Personality & Attributes...\n";
 
-    llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
+    // Try to get the actual target from the module, fallback to host if not set
+    std::string targetTripleStr = llvm::sys::getDefaultTargetTriple();
+    if (auto tripleAttr =
+            module->getAttrOfType<mlir::StringAttr>("llvm.target_triple")) {
+      targetTripleStr = tripleAttr.getValue().str();
+    }
+
+    llvm::Triple triple(targetTripleStr);
     llvm::StringRef persFnName = "__gxx_personality_v0";
+
     if (needsPersonality) {
-      // Target-aware personality routing
       if (triple.isOSWindows()) {
         if (triple.isGNUEnvironment()) {
           persFnName = "__gxx_personality_seh0"; // MinGW SEH
@@ -5509,7 +5591,7 @@ struct ConvertMokshaToLLVMPass
     if (auto mainFunc = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>("main")) {
       mainFunc.setName("__moksha_main");
     }
-    llvm::errs() << "[DEBUG] ConvertMokshaToLLVMPass Complete!\n";
+    // llvm::errs() << "[DEBUG] ConvertMokshaToLLVMPass Complete!\n";
   }
 };
 } // end anonymous namespace

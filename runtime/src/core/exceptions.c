@@ -1,4 +1,28 @@
-#include "../../include/moksha_rt.h"
+#include "moksha_rt.h"
+
+#if defined(__MOKSHA_BAREMETAL__)
+
+// Stub implementations matching the global header declarations
+void *moksha_rt_get_exception_payload(void *exc_base) {
+  (void)exc_base;
+  return NULL;
+}
+
+void moksha_rt_throw(void *payload) {
+  (void)payload;
+  moksha_rt_panic("Exceptions not supported on bare-metal target");
+}
+
+// Dummy personality function to satisfy Windows MLIR IR generation
+int __gxx_personality_seh0() {
+    return 0;
+}
+
+#else
+
+// ---------------------------------------------------------
+// Original Host OS Exception Unwinding Implementation
+// ---------------------------------------------------------
 #include <unwind.h>
 
 extern void *moksha_mem_alloc(size_t size);
@@ -13,6 +37,7 @@ struct MokshaException {
 
 static void cleanup_exception(_Unwind_Reason_Code reason,
                               struct _Unwind_Exception *exc) {
+  (void)reason;
   moksha_mem_free(exc);
 }
 
@@ -53,3 +78,5 @@ void Exception_constructor_string_ret_void(void *this_ptr, char *msg_str) {
 
   fields[0] = msg_str;
 }
+
+#endif

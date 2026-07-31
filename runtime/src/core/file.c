@@ -1,14 +1,202 @@
 #include "../../include/moksha_rt.h"
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#if defined(__MOKSHA_BAREMETAL__)
+
+// Minimal stubs for freestanding environments without a filesystem
+MokshaAnyRet moksha_file_open(char *path, int32_t mode) {
+  (void)path;
+  (void)mode;
+  return moksha_pack_any(NULL, NULL);
+}
+void moksha_file_close(MokshaAny *file_any) { (void)file_any; }
+void moksha_file_write(MokshaAny *file_any, MokshaAny *data_any) {
+  (void)file_any;
+  (void)data_any;
+}
+MokshaAnyRet moksha_file_read(MokshaAny *file_any) {
+  (void)file_any;
+  return moksha_pack_any(NULL, NULL);
+}
+int64_t moksha_file_size(MokshaAny *file_any) {
+  (void)file_any;
+  return 0;
+}
+void moksha_file_seek(MokshaAny *file_any, int64_t pos) {
+  (void)file_any;
+  (void)pos;
+}
+int64_t moksha_file_tell(MokshaAny *file_any) {
+  (void)file_any;
+  return -1;
+}
+void moksha_file_flush(MokshaAny *file_any) { (void)file_any; }
+bool moksha_file_eof(MokshaAny *file_any) {
+  (void)file_any;
+  return true;
+}
+bool moksha_file_exists(char *path) {
+  (void)path;
+  return false;
+}
+void moksha_file_truncate(MokshaAny *file_any, int64_t size) {
+  (void)file_any;
+  (void)size;
+}
+void moksha_file_writeLine(MokshaAny *file_any, char *text) {
+  (void)file_any;
+  (void)text;
+}
+char *moksha_file_readLine(MokshaAny *file_any) {
+  (void)file_any;
+  return NULL;
+}
+MokshaAnyRet moksha_file_readLines(MokshaAny *file_any) {
+  (void)file_any;
+  return moksha_pack_any(NULL, NULL);
+}
+char *moksha_file_readText(char *path) {
+  (void)path;
+  return NULL;
+}
+void moksha_file_writeText(char *path, char *text) {
+  (void)path;
+  (void)text;
+}
+void moksha_file_appendText(char *path, char *text) {
+  (void)path;
+  (void)text;
+}
+void moksha_file_writeBytes(char *path, MokshaAny *data_any) {
+  (void)path;
+  (void)data_any;
+}
+void moksha_file_appendBytes(char *path, MokshaAny *data_any) {
+  (void)path;
+  (void)data_any;
+}
+MokshaAnyRet moksha_file_readBytes(char *path) {
+  (void)path;
+  return moksha_pack_any(NULL, NULL);
+}
+void moksha_file_writeJson(char *path, MokshaAny *data_any) {
+  (void)path;
+  (void)data_any;
+}
+MokshaAnyRet moksha_file_readJson(char *path) {
+  (void)path;
+  return moksha_pack_any(NULL, NULL);
+}
+void moksha_file_writeYaml(char *path, MokshaAny *data_any) {
+  (void)path;
+  (void)data_any;
+}
+MokshaAnyRet moksha_file_readYaml(char *path) {
+  (void)path;
+  return moksha_pack_any(NULL, NULL);
+}
+void moksha_file_writeCsv(char *path, MokshaAny *data_any) {
+  (void)path;
+  (void)data_any;
+}
+MokshaAnyRet moksha_file_readCsv(char *path) {
+  (void)path;
+  return moksha_pack_any(NULL, NULL);
+}
+MokshaAnyRet moksha_file_createPdf(char *path) {
+  (void)path;
+  return moksha_pack_any(NULL, NULL);
+}
+void moksha_file_writePdfText(MokshaAny *pdf_any, char *text) {
+  (void)pdf_any;
+  (void)text;
+}
+void moksha_file_savePdf(MokshaAny *pdf_any) { (void)pdf_any; }
+MokshaAnyRet moksha_file_openPdf(char *path) {
+  (void)path;
+  return moksha_pack_any(NULL, NULL);
+}
+char *moksha_file_extractText(MokshaAny *pdf_any) {
+  (void)pdf_any;
+  return NULL;
+}
+bool moksha_file_createDir(char *path) {
+  (void)path;
+  return false;
+}
+bool moksha_file_isDir(char *path) {
+  (void)path;
+  return false;
+}
+bool moksha_file_isFile(char *path) {
+  (void)path;
+  return false;
+}
+bool moksha_file_copy(char *src, char *dst) {
+  (void)src;
+  (void)dst;
+  return false;
+}
+bool moksha_file_move(char *src, char *dst) {
+  (void)src;
+  (void)dst;
+  return false;
+}
+bool moksha_file_remove(char *path) {
+  (void)path;
+  return false;
+}
+bool moksha_file_removeDir(char *path) {
+  (void)path;
+  return false;
+}
+MokshaAnyRet moksha_file_listDir(char *path) {
+  (void)path;
+  return moksha_pack_any(NULL, NULL);
+}
+
+// Keep the dynamic dispatch length utility functional for strings/arrays/maps
+static size_t internal_strlen_file(const char *s) {
+  size_t len = 0;
+  while (s && s[len])
+    len++;
+  return len;
+}
+
+extern int32_t moksha_rt_map_len(void *map);
+int32_t moksha_rt_any_len(MokshaAny *any_val) {
+  if (!any_val || !any_val->vtable || !any_val->data)
+    return 0;
+  if (any_val->vtable->type_id == MOKSHA_TYPE_STRING) {
+    return (int32_t)internal_strlen_file((char *)any_val->data);
+  } else if (any_val->vtable->type_id == MOKSHA_TYPE_ARRAY) {
+    MokshaSlice *slice = (MokshaSlice *)any_val->data;
+    return (int32_t)slice->length;
+  } else if (any_val->vtable->type_id == MOKSHA_TYPE_TABLE) {
+    return moksha_rt_map_len(any_val->data);
+  }
+  return 0;
+}
+
+#else
+
+// ---------------------------------------------------------
+// Original Host OS Implementations (Linux / Windows / MacOS)
+// ---------------------------------------------------------
 #include <dirent.h>
 #include <fcntl.h>
-#include <stdbool.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+extern const AnyVTable vtable_string;
+extern const AnyVTable vtable_array;
+extern const AnyVTable vtable_map;
 
 #ifdef _WIN32
 #include <io.h>
@@ -18,21 +206,6 @@
 #ifndef O_BINARY
 #define O_BINARY 0
 #endif
-
-extern void *moksha_rt_alloc(size_t payload_size, uint32_t type_id);
-extern void moksha_rt_release(void *ptr);
-extern void moksha_mem_free(void *ptr);
-
-// External map & string bindings needed for structured data
-extern int32_t moksha_rt_map_len(void *map);
-extern MokshaAny *moksha_rt_map_get_key_at(void *map, int32_t index);
-extern MokshaAny *moksha_rt_map_get_val_at(void *map, int32_t index);
-extern char *__moksha_any_to_string(MokshaAny *any_val);
-extern void *moksha_rt_map_new();
-extern void moksha_rt_map_insert(void *map, MokshaAny *key, MokshaAny *val);
-extern const AnyVTable vtable_map;
-extern const AnyVTable vtable_string;
-extern const AnyVTable vtable_array;
 
 // Internal Utilities
 
@@ -999,3 +1172,5 @@ MokshaAnyRet moksha_file_listDir(char *path) {
   slice->length = len;
   return moksha_pack_any(slice, &vtable_array);
 }
+
+#endif

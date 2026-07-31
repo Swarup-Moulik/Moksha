@@ -18,7 +18,28 @@ void BuiltinRegistry::registerBuiltins(ASTContext &ctx, SymbolTable &sym) {
   // Register Intrinsics
   SourceLocation loc;
 
-  // 1. bswap32(val: unsigned int) -> unsigned int
+  // 1. bswap16(val: unsigned short) -> unsigned short
+  {
+    std::vector<FunctionDecl::Param> params;
+    params.push_back(
+        {"val",
+         std::make_unique<PrimitiveType>(PrimitiveType::Scalar::U16, loc),
+         loc});
+
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        "bswap16", std::move(params),
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::U16, loc),
+        nullptr, false, false, false, false, Visibility::Public, loc);
+
+    funcDecl->setBuiltin(true);
+    funcDecl->setIntrinsicKind(IntrinsicKind::Bswap16);
+
+    sym.addSymbol("bswap16", Symbol(SymbolKind::Function, "bswap16", nullptr,
+                                    funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  }
+
+  // 2. bswap32(val: unsigned int) -> unsigned int
   {
     std::vector<FunctionDecl::Param> params;
     params.push_back(
@@ -39,7 +60,28 @@ void BuiltinRegistry::registerBuiltins(ASTContext &ctx, SymbolTable &sym) {
     ctx.takeOwnership(std::move(funcDecl));
   }
 
-  // 2. clz(val: unsigned int) -> int (Count Leading Zeros)
+  // 3. bswap64(val: unsigned long) -> unsigned long
+  {
+    std::vector<FunctionDecl::Param> params;
+    params.push_back(
+        {"val",
+         std::make_unique<PrimitiveType>(PrimitiveType::Scalar::U64, loc),
+         loc});
+
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        "bswap64", std::move(params),
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::U64, loc),
+        nullptr, false, false, false, false, Visibility::Public, loc);
+
+    funcDecl->setBuiltin(true);
+    funcDecl->setIntrinsicKind(IntrinsicKind::Bswap64);
+
+    sym.addSymbol("bswap64", Symbol(SymbolKind::Function, "bswap64", nullptr,
+                                    funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  }
+
+  // 4. clz(val: unsigned int) -> int (Count Leading Zeros)
   {
     std::vector<FunctionDecl::Param> params;
     params.push_back(
@@ -58,6 +100,77 @@ void BuiltinRegistry::registerBuiltins(ASTContext &ctx, SymbolTable &sym) {
 
     sym.addSymbol("clz",
                   Symbol(SymbolKind::Function, "clz", nullptr, funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  }
+
+  // 5. ctz(val: unsigned int) -> int (Count Trailing Zeros)
+  {
+    std::vector<FunctionDecl::Param> params;
+    params.push_back(
+        {"val",
+         std::make_unique<PrimitiveType>(PrimitiveType::Scalar::U32, loc),
+         loc});
+
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        "ctz", std::move(params),
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::I32,
+                                        loc), // returns standard int
+        nullptr, false, false, false, false, Visibility::Public, loc);
+
+    funcDecl->setBuiltin(true);
+    funcDecl->setIntrinsicKind(IntrinsicKind::Ctz);
+
+    sym.addSymbol("ctz",
+                  Symbol(SymbolKind::Function, "ctz", nullptr, funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  }
+
+  // 6. sizeof(type_val: any) -> u64
+  {
+    std::vector<FunctionDecl::Param> params;
+    params.push_back({"type_val", std::make_unique<AnyType>(loc), loc});
+
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        "sizeof", std::move(params),
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::U64, loc),
+        nullptr, false, false, false, false, Visibility::Public, loc);
+
+    funcDecl->setBuiltin(true);
+    sym.addSymbol("sizeof", Symbol(SymbolKind::Function, "sizeof", nullptr,
+                                   funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  }
+
+  // 7. alignof(type_val: any) -> u64
+  {
+    std::vector<FunctionDecl::Param> params;
+    params.push_back({"type_val", std::make_unique<AnyType>(loc), loc});
+
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        "alignof", std::move(params),
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::U64, loc),
+        nullptr, false, false, false, false, Visibility::Public, loc);
+
+    funcDecl->setBuiltin(true);
+    sym.addSymbol("alignof", Symbol(SymbolKind::Function, "alignof", nullptr,
+                                    funcDecl.get()));
+    ctx.takeOwnership(std::move(funcDecl));
+  }
+
+  // 8. offsetof(type_val: any, field: any) -> u64
+  {
+    std::vector<FunctionDecl::Param> params;
+    params.push_back({"type_val", std::make_unique<AnyType>(loc), loc});
+    params.push_back({"field", std::make_unique<AnyType>(loc), loc});
+
+    auto funcDecl = std::make_unique<FunctionDecl>(
+        "offsetof", std::move(params),
+        std::make_unique<PrimitiveType>(PrimitiveType::Scalar::U64, loc),
+        nullptr, false, false, false, false, Visibility::Public, loc);
+
+    funcDecl->setBuiltin(true);
+    sym.addSymbol("offsetof", Symbol(SymbolKind::Function, "offsetof", nullptr,
+                                     funcDecl.get()));
     ctx.takeOwnership(std::move(funcDecl));
   }
 

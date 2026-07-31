@@ -39,7 +39,8 @@ public:
 
 std::unique_ptr<llvm::Module>
 translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
-                        llvm::LLVMContext &llvmContext) {
+                        llvm::LLVMContext &llvmContext,
+                        const moksha::TargetConfig &config) {
   // 1. Register translations
   mlir::registerBuiltinDialectTranslation(*mlirModule->getContext());
   mlir::registerLLVMDialectTranslation(*mlirModule->getContext());
@@ -48,31 +49,39 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
       ->getOrLoadDialect<moksha::IR::MokshaDialect>()
       ->addInterfaces<MokshaDialectLLVMIRTranslationInterface>();
 
-  std::string tripleStr = llvm::sys::getDefaultTargetTriple();
-  llvm::Triple targetTriple(tripleStr);
+  // Use the triple from our CLI config, fallback to host if empty
+  std::string tripleStr = config.triple.empty()
+                              ? llvm::sys::getDefaultTargetTriple()
+                              : config.triple;
 
+  // Tag the MLIR module with the correct triple
   mlirModule->setAttr(
       "llvm.target_triple",
       mlir::StringAttr::get(mlirModule->getContext(), tripleStr));
+  llvm::Triple targetTriple(tripleStr);
 
-  // Extract Host CPU & Features
-  std::string cpu = llvm::sys::getHostCPUName().str();
-  std::string featureStr;
+  // Use the CPU and Features from our CLI config
+  std::string cpu = config.cpu;
+  std::string featureStr = config.features;
 
-  // Modern LLVM returns the map directly instead of taking an out-parameter
-  llvm::StringMap<bool> hostFeatures = llvm::sys::getHostCPUFeatures();
+  // ONLY fallback to host CPU if config is empty AND we are compiling for the
+  // host
+  if (cpu.empty() && tripleStr == llvm::sys::getDefaultTargetTriple()) {
+    cpu = llvm::sys::getHostCPUName().str();
+    llvm::StringMap<bool> hostFeatures = llvm::sys::getHostCPUFeatures();
 
-  if (!hostFeatures.empty()) {
-    for (auto &f : hostFeatures) {
-      if (!featureStr.empty())
-        featureStr += ",";
-      featureStr += (f.second ? "+" : "-") + f.first().str();
+    if (!hostFeatures.empty()) {
+      for (auto &f : hostFeatures) {
+        if (!featureStr.empty())
+          featureStr += ",";
+        featureStr += (f.second ? "+" : "-") + f.first().str();
+      }
+    } else {
+      featureStr = "+f16c,+avx";
     }
-  } else {
-    featureStr = "+f16c,+avx";
   }
 
-  llvm::errs() << "[DEBUG] Setting Target Machine & Data Layout...\n";
+  // llvm::errs() << "[DEBUG] Setting Target Machine & Data Layout...\n";
   std::string error;
   if (auto target = llvm::TargetRegistry::lookupTarget(tripleStr, error)) {
     llvm::TargetOptions opt;
@@ -84,19 +93,19 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
     }
   }
 
-  llvm::errs() << "[DEBUG] Entering MLIR to LLVM IR Core Translator...\n";
+  // llvm::errs() << "[DEBUG] Entering MLIR to LLVM IR Core Translator...\n";
 
   std::unique_ptr<llvm::Module> llvmModule =
       mlir::translateModuleToLLVMIR(mlirModule, llvmContext);
 
-  llvm::errs() << "[DEBUG] MLIR to LLVM IR Translation Successful!\n";
+  // llvm::errs() << "[DEBUG] MLIR to LLVM IR Translation Successful!\n";
 
   if (!llvmModule) {
     llvm::errs() << "[FATAL] Translation returned nullptr.\n";
     return nullptr;
   }
 
-  llvm::errs() << "[DEBUG] Applying Post-Process Fixes...\n";
+  // llvm::errs() << "[DEBUG] Applying Post-Process Fixes...\n";
 
   llvm::StringRef persFnName = "__gxx_personality_v0";
   if (targetTriple.isOSWindows()) {
@@ -124,8 +133,10 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
     if (!llvmFunc)
       return;
 
-    llvmFunc->addFnAttr("target-cpu", cpu);
-    llvmFunc->addFnAttr("target-features", featureStr);
+    if (!cpu.empty())
+      llvmFunc->addFnAttr("target-cpu", cpu);
+    if (!featureStr.empty())
+      llvmFunc->addFnAttr("target-features", featureStr);
 
     // Standard LLVM Keyword Bindings
     if (mlirFunc->hasAttr("moksha.async")) {
@@ -155,7 +166,8 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
           for (llvm::Instruction &I : entryBlock) {
             if (&I == coroBoundary)
               break; // Stop at the boundary
-            if (auto *allocaInst = llvm::dyn_cast_or_null<llvm::AllocaInst>(&I)) {
+            if (auto *allocaInst =
+                    llvm::dyn_cast_or_null<llvm::AllocaInst>(&I)) {
               allocasToSink.push_back(allocaInst);
             }
           }
@@ -201,6 +213,12 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
         llvmFunc->setCallingConv(llvm::CallingConv::X86_StdCall);
       } else if (cc == "fastcall") {
         llvmFunc->setCallingConv(llvm::CallingConv::X86_FastCall);
+      } else if (cc == "vectorcall") {
+        llvmFunc->setCallingConv(llvm::CallingConv::X86_VectorCall);
+      } else if (cc == "sysv64") {
+        llvmFunc->setCallingConv(llvm::CallingConv::X86_64_SysV);
+      } else if (cc == "win64") {
+        llvmFunc->setCallingConv(llvm::CallingConv::Win64);
       } else if (cc == "interrupt") {
         llvmFunc->setCallingConv(llvm::CallingConv::X86_INTR);
         if (llvmFunc->arg_size() > 0) {
@@ -245,8 +263,8 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
       llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(llvmContext);
       llvm::Constant *nullPtr = llvm::ConstantPointerNull::get(ptrTy);
       for (llvm::BasicBlock &bb : *llvmFunc) {
-        if (auto *lpad =
-                llvm::dyn_cast_or_null<llvm::LandingPadInst>(bb.getFirstNonPHI())) {
+        if (auto *lpad = llvm::dyn_cast_or_null<llvm::LandingPadInst>(
+                bb.getFirstNonPHI())) {
           bool hasCatchAll = false;
           for (unsigned i = 0; i < lpad->getNumClauses(); ++i) {
             if (lpad->isCatch(i) && lpad->getClause(i)->isNullValue()) {
@@ -317,7 +335,7 @@ translateMokshaToLLVMIR(mlir::ModuleOp mlirModule,
     llvm::appendToUsed(*llvmModule, usedValues);
   }
 
-  llvm::errs() << "[DEBUG] TranslateToLLVM Complete!\n";
+  // llvm::errs() << "[DEBUG] TranslateToLLVM Complete!\n";
   return llvmModule;
 }
 

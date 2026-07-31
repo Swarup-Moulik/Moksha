@@ -443,11 +443,13 @@ for (int x in list) {
 **Iteration behavior by collection type and variable count:**
 
 **String** (1 variable only — yields characters):
+
 ```moksha
 for (char c in "ABC") { println(c); }  // A, B, C
 ```
 
 **Array** (1 variable = value, 2 variables = index + value):
+
 ```moksha
 int[] nums = [10, 20, 30];
 
@@ -459,6 +461,7 @@ for (int idx, int val in nums) { println(idx); } // 0, 1, 2
 ```
 
 **Table** (1 variable = key only, 2 variables = key + value):
+
 ```moksha
 table<string, int> scores = {"Alice": 90, "Bob": 85};
 
@@ -885,6 +888,7 @@ try {
 ```
 
 **Rules:**
+
 - `catch (any e)` must come last; placing it before more specific handlers is a compile error.
 - Throwing inside a `finally` block overrides the in-flight exception.
 - Double-fault (throwing while unwinding) causes an immediate runtime panic.
@@ -1046,6 +1050,14 @@ mokshac source.mox -target wasm32-wasi -o output.wasm
 ### 9.1 Module Imports
 
 ```moksha
+// Full module import (unquoted)
+import test
+println(test.calculate_magic(10, 20));
+
+// Full module import with an alias
+import test as t
+println(t.calculate_magic(10, 20));
+
 // Import specific symbols from a file
 import { test_multiplier, calculate_magic, TestConfig } from "test"
 

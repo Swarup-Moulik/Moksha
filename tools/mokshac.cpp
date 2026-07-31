@@ -51,6 +51,8 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
+#include <array>
+#include <cstdio>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -189,8 +191,10 @@ std::string resolveRuntimeLibrary(const std::string &explicitPath,
     return explicitPath;
   }
 
-  // 2. Map LLVM Triple OS to our CMake Target Strings
   std::string osName;
+  std::string baremetalFolder =
+      ""; // Used to target your specific build folders
+
   if (triple.isOSWindows()) {
     osName = "windows";
   } else if (triple.isOSDarwin()) {
@@ -203,6 +207,35 @@ std::string resolveRuntimeLibrary(const std::string &explicitPath,
     osName = "wasm_web";
   } else if (triple.getOS() == llvm::Triple::UnknownOS) {
     osName = "baremetal";
+
+    // Map the specific architectures to the folders you generated
+    switch (triple.getArch()) {
+    case llvm::Triple::aarch64:
+      baremetalFolder = "build_baremetal_aarch64";
+      break;
+    case llvm::Triple::arm:
+      baremetalFolder = "build_baremetal_stm32";
+      break;
+    case llvm::Triple::riscv32:
+      baremetalFolder = "build_baremetal_riscv32";
+      break;
+    case llvm::Triple::riscv64:
+      baremetalFolder = "build_baremetal_riscv64";
+      break;
+    case llvm::Triple::x86:
+      baremetalFolder = "build_baremetal_i686";
+      break;
+    case llvm::Triple::x86_64:
+      // Differentiate UEFI vs BIOS based on the environment field in the triple
+      if (triple.getEnvironment() == llvm::Triple::MSVC) {
+        baremetalFolder = "build_baremetal_uefi";
+      } else {
+        baremetalFolder = "build_baremetal_x86";
+      }
+      break;
+    default:
+      break;
+    }
   } else {
     osName = "posix_common";
   }
@@ -212,15 +245,24 @@ std::string resolveRuntimeLibrary(const std::string &explicitPath,
       argv0, (void *)(intptr_t)resolveRuntimeLibrary);
   llvm::StringRef binDir = llvm::sys::path::parent_path(exePath);
 
-  // --- [FIX] Search multiple common CMake output directories ---
-  const char *searchDirs[] = {
-      "../runtime",    // Default target directory
-      "../lib",        // Standard CMake CMAKE_ARCHIVE_OUTPUT_DIRECTORY
-      "../../runtime", // Fallback source directory
-      "."              // Current directory
-  };
+  std::vector<std::string> searchDirs = {"../runtime", "../lib",
+                                         "../../runtime", "."};
 
-  for (const char *dir : searchDirs) {
+  // If this is a bare-metal build, inject the specific arch folder into the
+  // search paths
+  if (!baremetalFolder.empty()) {
+    // 1. Matches C:\Moksha\build_baremetal_<arch> (Your new deployment layout)
+    searchDirs.insert(searchDirs.begin(), "../" + baremetalFolder);
+
+    // 2. Matches C:\dev\moksha\moksha\runtime\build_baremetal_<arch> (Your dev
+    // layout)
+    searchDirs.insert(searchDirs.begin(), "../runtime/" + baremetalFolder);
+
+    // 3. Fallback for deeply nested build folders
+    searchDirs.insert(searchDirs.begin(), "../../runtime/" + baremetalFolder);
+  }
+
+  for (const auto &dir : searchDirs) {
     llvm::SmallString<256> libPath = binDir;
     llvm::sys::path::append(libPath, dir, libFilename);
     if (llvm::sys::fs::exists(libPath)) {
@@ -228,9 +270,10 @@ std::string resolveRuntimeLibrary(const std::string &explicitPath,
     }
   }
 
-  // Fallback to default path to give a clear error message if not found
+  // Fallback to default path for clear error messages
   llvm::SmallString<256> fallback = binDir;
-  llvm::sys::path::append(fallback, "..", "runtime", libFilename);
+  llvm::sys::path::append(fallback, "..", "runtime", baremetalFolder,
+                          libFilename);
   return std::string(fallback.str());
 }
 
@@ -259,6 +302,55 @@ std::string findLLVMTool(const std::string &baseName) {
 
   // 4. If all else fails, just return the base name and let the shell try
   return baseName;
+}
+
+// Asks Clang (or GCC for ARM) for the exact path to its compiler-rt/libgcc
+// builtins
+std::string getBuiltinsLibraryPath(const std::string &compilerBinary,
+                                   const llvm::Triple &triple,
+                                   const std::string &cpu) {
+  std::string cmd;
+
+  // Bulletproof check using LLVM's internal architecture enum instead of
+  // strings
+  if (triple.getArch() == llvm::Triple::arm ||
+      triple.getArch() == llvm::Triple::thumb) {
+    std::string cpuFlag = cpu.empty() ? "cortex-m3" : cpu;
+    cmd = "arm-none-eabi-gcc -mthumb -mcpu=" + cpuFlag +
+          " -print-libgcc-file-name";
+  } else {
+    cmd = compilerBinary + " --target=" + triple.str() +
+          " -print-libgcc-file-name";
+  }
+
+  std::array<char, 256> buffer;
+  std::string result;
+
+#ifdef _WIN32
+  std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(cmd.c_str(), "r"),
+                                                 _pclose);
+#else
+  std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"),
+                                                pclose);
+#endif
+
+  if (!pipe)
+    return "";
+  while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+    result += buffer.data();
+  }
+
+  // Trim trailing newlines
+  if (!result.empty() && result.back() == '\n')
+    result.pop_back();
+  if (!result.empty() && result.back() == '\r')
+    result.pop_back();
+
+  if (!llvm::sys::fs::exists(result)) {
+    return "";
+  }
+
+  return result;
 }
 
 int main(int argc, char **argv) {
@@ -340,30 +432,71 @@ int main(int argc, char **argv) {
   llvm::StringRef mainModName = llvm::sys::path::stem(InputFilename);
   typeChecker.markModuleAsLoaded(mainModName.str());
 
+  // PYTHON-STYLE MODULE RESOLUTION PATHS
+  std::vector<std::string> searchPaths;
+
+  // 1. Current file's directory (Highest Priority)
+  searchPaths.push_back(llvm::sys::path::parent_path(InputFilename).str());
+
+  // 2. Environment Variable: MOKSHA_PATH
+  if (const char *envPath = std::getenv("MOKSHA_PATH")) {
+    llvm::SmallVector<llvm::StringRef, 4> paths;
+    // Splits by ':' on Linux/Mac, and ';' on Windows
+    llvm::StringRef(envPath).split(paths, llvm::sys::EnvPathSeparator);
+    for (auto p : paths) {
+      searchPaths.push_back(p.str());
+    }
+  }
+
+  // 3. Standard Library (Relative to mokshac executable)
+  std::string exePath =
+      llvm::sys::fs::getMainExecutable(argv[0], (void *)(intptr_t)main);
+  llvm::StringRef binDir = llvm::sys::path::parent_path(exePath);
+
+  llvm::SmallString<256> stdlibPath1 = binDir;
+  llvm::sys::path::append(stdlibPath1, "..", "stdlib");
+  searchPaths.push_back(stdlibPath1.str().str());
+
+  llvm::SmallString<256> stdlibPath2 = binDir;
+  llvm::sys::path::append(stdlibPath2, "..", "..", "stdlib");
+  searchPaths.push_back(stdlibPath2.str().str());
+
   // 2. Define the callback to parse imported files
   typeChecker.loadModuleCallback =
       [&](const std::string &modName) -> moksha::ModuleDecl * {
-    llvm::SmallString<256> parentDir =
-        llvm::sys::path::parent_path(InputFilename);
-    llvm::SmallString<256> modulePath = parentDir;
-    llvm::sys::path::append(modulePath, modName + ".mox");
+    std::string resolvedPath = "";
 
-    std::string path = modulePath.str().str();
+    // Support nested modules (e.g. import "std/collections/table")
+    std::string relativePath = modName + ".mox";
+
+    // Loop through our search paths to find the file
+    for (const auto &dir : searchPaths) {
+      llvm::SmallString<256> fullPath = llvm::StringRef(dir);
+      llvm::sys::path::append(fullPath, relativePath);
+
+      if (llvm::sys::fs::exists(fullPath)) {
+        resolvedPath = fullPath.str().str();
+        break; // Found it!
+      }
+    }
+
+    // If it's not found in ANY path, fail out
+    if (resolvedPath.empty()) {
+      return nullptr;
+    }
 
     // If it's already in the cache, just return it
-    if (moduleCache.count(path)) {
-      return moduleCache[path].get();
+    if (moduleCache.count(resolvedPath)) {
+      return moduleCache[resolvedPath].get();
     }
 
     // Open the file using LLVM's Memory Buffer
     llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> bufOrErr =
-        llvm::MemoryBuffer::getFile(path);
+        llvm::MemoryBuffer::getFile(resolvedPath);
     if (std::error_code ec = bufOrErr.getError()) {
-      return nullptr; // Returning nullptr tells Sema to emit an error
+      return nullptr;
     }
 
-    // Add the new file to your existing SourceMgr so diagnostics point to the
-    // right file!
     unsigned bufID =
         srcMgr.AddNewSourceBuffer(std::move(*bufOrErr), llvm::SMLoc());
 
@@ -383,7 +516,7 @@ int main(int argc, char **argv) {
 
     // Store in cache to keep memory alive, and return the raw pointer to Sema
     moksha::ModuleDecl *rawPtr = importedAST.get();
-    moduleCache[path] = std::move(importedAST);
+    moduleCache[resolvedPath] = std::move(importedAST);
     return rawPtr;
   };
 
@@ -401,8 +534,7 @@ int main(int argc, char **argv) {
     if (pair.second) {
       for (auto &decl : pair.second->getDeclsMut()) {
         if (decl) {
-          if (auto *fnDecl =
-                  llvm::dyn_cast_or_null<FunctionDecl>(decl.get())) {
+          if (auto *fnDecl = llvm::dyn_cast_or_null<FunctionDecl>(decl.get())) {
             if (fnDecl->getName() == "main") {
               continue; // Skip this declaration
             }
@@ -517,9 +649,39 @@ int main(int argc, char **argv) {
       return 1;
     }
 
+    moksha::TargetConfig config;
+    config.triple = TargetTriple.empty() ? llvm::sys::getDefaultTargetTriple()
+                                         : TargetTriple;
+    config.features = TargetFeatures;
+    config.optLevel = DisableOpt ? 0 : 2;
+
+    llvm::Triple actualTriple(config.triple);
+
+    if (TargetCPU.empty()) {
+      if (actualTriple.getArch() == llvm::Triple::aarch64) {
+        config.cpu = "cortex-a53";
+      } else if (actualTriple.getArch() == llvm::Triple::riscv32) {
+        config.cpu = "generic-rv32";
+        // Enable hardware Multiply/Divide (M) and Double Float (D)
+        if (config.features.empty())
+          config.features = "+m,+d";
+      } else if (actualTriple.getArch() == llvm::Triple::riscv64) {
+        config.cpu = "generic-rv64";
+        // Enable hardware Multiply/Divide (M) and Double Float (D)
+        if (config.features.empty())
+          config.features = "+m,+d";
+      } else if (actualTriple.getArch() == llvm::Triple::arm) {
+        config.cpu = "cortex-m3";
+      } else {
+        config.cpu = "";
+      }
+    } else {
+      config.cpu = TargetCPU;
+    }
+
     llvm::LLVMContext llvmCtx;
     auto llvmModule =
-        moksha::translateMokshaToLLVMIR(mlirModule.get(), llvmCtx);
+        moksha::translateMokshaToLLVMIR(mlirModule.get(), llvmCtx, config);
 
     if (!llvmModule) {
       llvm::errs() << "Failed to translate MLIR to LLVM IR!\n";
@@ -533,15 +695,6 @@ int main(int argc, char **argv) {
     }
 
     if (EmitObj || shouldCompile) {
-      moksha::TargetConfig config;
-      config.triple = TargetTriple.empty() ? llvm::sys::getDefaultTargetTriple()
-                                           : TargetTriple;
-      config.cpu = TargetCPU;
-      config.features = TargetFeatures;
-      config.optLevel = DisableOpt ? 0 : 2;
-
-      llvm::Triple actualTriple(config.triple);
-
       // Determine filenames
       std::string exeFilename = OutputFilename;
       if (actualTriple.isOSWindows() &&
@@ -587,62 +740,225 @@ int main(int argc, char **argv) {
           return 1;
         }
 
-        // Shell out to clang.exe to do the heavy lifting
         std::string extraFilesStr = "";
         for (const auto &file : ExtraLinkFiles) {
           extraFilesStr += " " + file;
         }
 
-        // 1. Determine the correct compiler driver
         std::string compilerBase = "clang++";
         if (actualTriple.isWasm() &&
             actualTriple.getOS() != llvm::Triple::WASI) {
           compilerBase = "emcc";
         }
 
-        // Dynamically find the correct compiler binary
         std::string compilerBinary = findLLVMTool(compilerBase);
         std::string asanFlags = (Sanitize == "address")
                                     ? " -g -fsanitize=address -static-libasan"
                                     : "";
 
-        // 2. Build the base command
-        std::string cmd = compilerBinary + " " + optLevel + asanFlags +
-                          " -Wno-override-module " + llFilename +
-                          extraFilesStr + " " + resolvedRtLib;
+        // ===================================================================
+        // STEP 1: Compile LLVM IR (.ll) to Native Object File (.o)
+        // ===================================================================
+        std::string objFilename = exeFilename + ".o";
+        std::string compileCmd =
+            compilerBinary + " -c " + optLevel + asanFlags +
+            " -fno-exceptions -fno-rtti -Wno-override-module " + llFilename +
+            " -o " + objFilename;
 
-        // Inject custom library paths (-L)
-        for (const auto &path : LibraryPaths) {
-          cmd += " -L" + path;
-        }
-
-        // Inject custom libraries (-l)
-        for (const auto &lib : Libraries) {
-          cmd += " -l" + lib;
-        }
-
-        // 3. Pass the target triple explicitly so Clang cross-compiles
-        // correctly
         if (!TargetTriple.empty() && compilerBase == "clang++") {
-          cmd += " --target=" + TargetTriple;
+          if (actualTriple.getArch() == llvm::Triple::x86_64 &&
+              actualTriple.getEnvironment() == llvm::Triple::MSVC) {
+            // Force Windows triple during object generation to ensure PE/COFF
+            // format instead of ELF
+            compileCmd += " --target=x86_64-unknown-windows-msvc";
+          } else {
+            compileCmd += " --target=" + TargetTriple;
+          }
         }
 
-        // 4. Inject OS-Specific Linker Flags
-        if (actualTriple.isOSLinux() || actualTriple.isAndroid()) {
-          cmd += " -pthread -lm"; // Required for Linux threading and math
+        // Target Specific Feature Flags for Object Compilation
+        if (actualTriple.getArch() == llvm::Triple::riscv64) {
+          compileCmd += " -march=rv64gc -mabi=lp64d -mcmodel=medany";
+        } else if (actualTriple.getArch() == llvm::Triple::riscv32) {
+          compileCmd += " -march=rv32gc -mabi=ilp32d -mcmodel=medany";
+        } else if (actualTriple.getArch() == llvm::Triple::x86) {
+          compileCmd += " -m32 -mno-sse -mno-mmx";
+        } else if (actualTriple.getArch() == llvm::Triple::x86_64) {
+          if (actualTriple.getEnvironment() == llvm::Triple::MSVC) {
+            // Use specific UEFI architecture flags
+            compileCmd += " -m64 -mcmodel=large -mno-red-zone -mno-sse "
+                          "-mno-mmx -fshort-wchar -ffreestanding "
+                          "-fno-unwind-tables -fno-asynchronous-unwind-tables";
+          } else {
+            // Standard PC BIOS baremetal
+            compileCmd +=
+                " -m64 -mcmodel=kernel -mno-red-zone -mno-sse -mno-mmx";
+          }
+        } else if (actualTriple.getArch() == llvm::Triple::arm) {
+          compileCmd += " -mthumb"; // Force thumb instructions for Cortex-M
         }
 
-        cmd += " -o " + exeFilename;
+        // Dynamically forward the CPU flag if the user provided one
+        if (!TargetCPU.empty()) {
+          compileCmd += " -mcpu=" + TargetCPU;
+        }
 
-        int result = std::system(cmd.c_str());
-
-        if (result != 0) {
-          llvm::errs() << "Clang failed to compile the generated LLVM IR.\n";
+        int compileResult = std::system(compileCmd.c_str());
+        if (compileResult != 0) {
+          llvm::errs() << "Clang failed to compile LLVM IR to object file.\n";
           return 1;
         }
 
-        // Clean up the temporary .ll file
+        // ===================================================================
+        // STEP 2: Direct LLD Link Execution (No GCC/g++ Wrappers)
+        // ===================================================================
+        if (actualTriple.getOS() == llvm::Triple::UnknownOS) {
+          std::string linkCmd = "";
+
+          if (actualTriple.getArch() == llvm::Triple::x86_64 &&
+              actualTriple.getEnvironment() == llvm::Triple::MSVC) {
+            // UEFI Target: Use PE/COFF linker (lld-link) instead of ELF
+            // (ld.lld)
+            std::string lldBinary = findLLVMTool("lld-link");
+
+            linkCmd = lldBinary + " /OUT:" + exeFilename + " " + objFilename +
+                      " " + resolvedRtLib + extraFilesStr +
+                      " /NOLOGO /NODEFAULTLIB /SUBSYSTEM:EFI_APPLICATION "
+                      "/ENTRY:efi_main";
+          } else {
+            // Standard ELF Baremetal Target
+            std::string lldBinary = findLLVMTool("ld.lld");
+            std::string builtinsLib = getBuiltinsLibraryPath(
+                compilerBinary, actualTriple, config.cpu);
+
+            linkCmd = lldBinary + " -o " + exeFilename + " " + objFilename +
+                      " " + resolvedRtLib + " " + builtinsLib + " " +
+                      extraFilesStr + " -static";
+
+            // Inject ELF Target Machine Emulation
+            if (actualTriple.getArch() == llvm::Triple::x86) {
+              linkCmd += " -m elf_i386";
+            } else if (actualTriple.getArch() == llvm::Triple::x86_64) {
+              linkCmd += " -m elf_x86_64";
+            } else if (actualTriple.getArch() == llvm::Triple::riscv64) {
+              linkCmd += " -m elf64lriscv";
+            } else if (actualTriple.getArch() == llvm::Triple::riscv32) {
+              linkCmd += " -m elf32lriscv";
+            } else if (actualTriple.getArch() == llvm::Triple::aarch64) {
+              linkCmd += " -m aarch64elf";
+            } else if (actualTriple.getArch() == llvm::Triple::arm) {
+              linkCmd += " -m armelf";
+            }
+          }
+
+          // Resolve Linker Scripts & Base Load Address
+          std::string linkerScript = "";
+          std::string baseAddr = "";
+
+          if (actualTriple.getArch() == llvm::Triple::arm) {
+            if (config.cpu == "cortex-m3" || config.cpu == "cortex-m4") {
+              linkerScript = "src/sys/baremetal/platform/stm32/linker.ld";
+              baseAddr = "0x08000000";
+            } else {
+              linkerScript = "src/sys/baremetal/platform/qemu_virt/linker.ld";
+              baseAddr = "0x40000000";
+            }
+          } else if (actualTriple.getArch() == llvm::Triple::aarch64) {
+            linkerScript = "src/sys/baremetal/platform/qemu_virt/linker.ld";
+            baseAddr = "0x40000000";
+          } else if (actualTriple.isRISCV()) {
+            linkerScript = "src/sys/baremetal/platform/qemu_virt/linker.ld";
+            baseAddr = "0x80200000";
+          } else if (actualTriple.getArch() == llvm::Triple::x86) {
+            linkerScript = "src/sys/baremetal/platform/pc_bios_i686/linker.ld";
+            baseAddr = "0x100000";
+          } else if (actualTriple.getArch() == llvm::Triple::x86_64) {
+            if (actualTriple.getEnvironment() == llvm::Triple::MSVC) {
+              linkerScript = "";
+            } else {
+              linkerScript =
+                  "src/sys/baremetal/platform/pc_bios_x86_64/linker.ld";
+              baseAddr = "0x200000";
+            }
+          }
+
+          if (!linkerScript.empty()) {
+            std::string exePath = llvm::sys::fs::getMainExecutable(
+                argv[0], (void *)(intptr_t)main);
+            llvm::StringRef binDir = llvm::sys::path::parent_path(exePath);
+
+            llvm::SmallString<256> ldPath1 = binDir;
+            llvm::sys::path::append(ldPath1, "..", "runtime", linkerScript);
+
+            llvm::SmallString<256> ldPath2 = binDir;
+            llvm::sys::path::append(ldPath2, "..", "..", "runtime",
+                                    linkerScript);
+
+            if (llvm::sys::fs::exists(ldPath1)) {
+              linkCmd += " --defsym=__BASE_ADDR=" + baseAddr;
+              linkCmd += " -T \"" + std::string(ldPath1.c_str()) + "\"";
+            } else if (llvm::sys::fs::exists(ldPath2)) {
+              linkCmd += " --defsym=__BASE_ADDR=" + baseAddr;
+              linkCmd += " -T \"" + std::string(ldPath2.c_str()) + "\"";
+            } else {
+              llvm::errs()
+                  << "[FATAL] Could not find linker script at path:\n  -> "
+                  << ldPath1.c_str() << "\n";
+              return 1;
+            }
+          }
+
+          int linkResult = std::system(linkCmd.c_str());
+          if (linkResult != 0) {
+            llvm::errs()
+                << "ld.lld failed to link the bare-metal kernel binary.\n";
+            return 1;
+          }
+
+          if (actualTriple.getArch() == llvm::Triple::x86_64 &&
+              actualTriple.getEnvironment() != llvm::Triple::MSVC) {
+            std::string objcopyBinary = findLLVMTool("llvm-objcopy");
+            std::string convertCmd = objcopyBinary + " -O elf32-i386 " +
+                                     exeFilename + " " + exeFilename;
+            int convertResult = std::system(convertCmd.c_str());
+            if (convertResult != 0) {
+              llvm::errs() << "Failed to convert x86_64 kernel ELF header to "
+                              "elf32-i386.\n";
+              return 1;
+            }
+          }
+        } else {
+          // Standard OS Hosted Linking (Linux, Windows, Darwin, WASM)
+          std::string cmd = compilerBinary + " " + optLevel + asanFlags +
+                            " -fno-exceptions -fno-rtti -Wno-override-module " +
+                            objFilename + extraFilesStr + " " + resolvedRtLib;
+
+          for (const auto &path : LibraryPaths)
+            cmd += " -L" + path;
+          for (const auto &lib : Libraries)
+            cmd += " -l" + lib;
+
+          if (!TargetTriple.empty() && compilerBase == "clang++") {
+            cmd += " --target=" + TargetTriple;
+          }
+
+          if (actualTriple.isOSLinux() || actualTriple.isAndroid()) {
+            cmd += " -pthread -lm";
+          }
+
+          cmd += " -o " + exeFilename;
+
+          int result = std::system(cmd.c_str());
+          if (result != 0) {
+            llvm::errs() << "Clang failed to link the hosted executable.\n";
+            return 1;
+          }
+        }
+
+        // Clean up temporary intermediate files (.ll and .o)
         llvm::sys::fs::remove(llFilename);
+        llvm::sys::fs::remove(objFilename);
+
         llvm::outs() << "Successfully generated executable: " << exeFilename
                      << "\n";
       }

@@ -112,9 +112,19 @@ void MIRFunction::dump(llvm::raw_ostream &os) const {
   case CallingConv::FastCall:
     os << "x86_fastcallcc ";
     break;
+  case CallingConv::VectorCall:
+    os << "x86_vectorcallcc ";
+    break;
+  case CallingConv::SysV64:
+    os << "x86_64_sysvcc ";
+    break;
+  case CallingConv::Win64:
+    os << "win64cc ";
+    break;
   case CallingConv::Interrupt:
     os << "x86_intrcc ";
     break;
+
   default:
     break;
   }

@@ -21,18 +21,6 @@ typedef struct __attribute__((aligned(64))) {
 
 static PaddedLock lock_table[LOCK_TABLE_SIZE] = {0};
 
-// CPU-specific Pause instruction to prevent pipeline starvation
-void cpu_relax() {
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) ||             \
-    defined(_M_IX86)
-  __builtin_ia32_pause();
-#elif defined(__aarch64__) || defined(__arm__)
-  __asm__ volatile("yield" ::: "memory");
-#elif defined(__riscv)
-  __asm__ volatile("pause" ::: "memory");
-#endif
-}
-
 // OS-specific Thread Yield
 static inline void thread_yield() {
 #if defined(_WIN32)

@@ -9,7 +9,6 @@ extern void moksha_scheduler_schedule(void *coro_handle);
 extern void moksha_scheduler_run(void);
 extern void moksha_rt_panic(const char *message);
 extern bool moksha_is_background_task;
-extern void cpu_relax(void);
 extern void *moksha_rt_array_alloc(size_t element_size, uint64_t capacity);
 extern void moksha_scheduler_inc_active(void);
 extern void moksha_scheduler_dec_active(void);

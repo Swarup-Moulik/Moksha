@@ -40,11 +40,12 @@ static bool isReservedBuiltin(const std::string &name, SymbolTable &symbols) {
 
   /** @note Hardcoded fallback for critical OS/Math functions */
   static const std::set<std::string> coreBuiltins = {
-      "seed",       "sqrt",       "log",    "cos",         "sin",
-      "tan",        "exp",        "pow",    "print",       "println",
-      "print_err",  "yield",      "sleep",  "spawn",       "join",
-      "select",     "timeout",    "cancel", "atomic_load", "atomic_store",
-      "atomic_add", "atomic_cas", "PI",     "E",           "TAU"};
+      "seed",       "sqrt",       "log",     "cos",         "sin",
+      "tan",        "exp",        "pow",     "print",       "println",
+      "print_err",  "yield",      "sleep",   "spawn",       "join",
+      "select",     "timeout",    "cancel",  "atomic_load", "atomic_store",
+      "atomic_add", "atomic_cas", "PI",      "E",           "TAU",
+      "alignof",    "offsetof",   "bswap32", "clz"};
 
   return coreBuiltins.count(name) > 0;
 }
@@ -2440,6 +2441,30 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
 
   const Type *outerExpectedRet = currentExpectedReturnType;
   currentExpectedReturnType = nullptr;
+
+  if (auto idExpr =
+          llvm::dyn_cast_or_null<const IdentifierExpr>(expr->getCallee())) {
+    if (idExpr->getName() == "offsetof") {
+      if (expr->getArgs().size() == 2) {
+        expr->getArgs()[0]->accept(*this);
+
+        // Ensure the second argument is a valid identifier (field name)
+        if (!llvm::isa<IdentifierExpr>(expr->getArgs()[1].get())) {
+          Diags.report(expr->getArgs()[1]->getLoc(), DiagID::err_type_mismatch)
+              << "Second argument to offsetof must be a field name";
+          hasError = true;
+        }
+      } else {
+        Diags.report(expr->getLoc(), DiagID::err_argument_count_mismatch);
+        hasError = true;
+      }
+
+      lastComputedType = context.getUSizeType();
+      const_cast<CallExpr *>(expr)->setType(lastComputedType);
+      currentExpectedReturnType = outerExpectedRet;
+      return;
+    }
+  }
 
   std::vector<const Type *> argTypes;
   for (const auto &arg : expr->getArgs()) {
@@ -5866,9 +5891,15 @@ void TypeChecker::visitImportDecl(const ImportDecl *decl) {
   llvm::StringRef modName = decl->getModuleName();
   std::string modStr = modName.str();
   size_t slash = modName.find_last_of('/');
-  llvm::StringRef ns =
-      (slash != llvm::StringRef::npos) ? modName.substr(slash + 1) : modName;
 
+  // 1. Determine the active namespace (Alias overrides the default module name)
+  std::string ns = decl->getAliasName();
+  if (ns.empty()) {
+    ns = (slash != llvm::StringRef::npos) ? modName.substr(slash + 1).str()
+                                          : modStr;
+  }
+
+  // 2. Load the module if not already loaded
   if (loadedModules.find(modStr) == loadedModules.end()) {
     loadedModules.insert(modStr);
 
@@ -5884,15 +5915,18 @@ void TypeChecker::visitImportDecl(const ImportDecl *decl) {
     }
   }
 
+  // 3. Register the namespace / symbols
   if (decl->getSymbols().empty()) {
-    if (!symbols.lookup(ns.str())) {
-      symbols.addSymbol(
-          ns, Symbol(SymbolKind::Module, ns.str(), context.getAnyType()),
-          decl->getLoc());
+    // Full module import (e.g., `import test` OR `import test as t`)
+    if (!symbols.lookup(ns)) {
+      symbols.addSymbol(ns,
+                        Symbol(SymbolKind::Module, ns, context.getAnyType()),
+                        decl->getLoc());
     }
   } else {
+    // Destructured import (e.g., `import { a, b } from test`)
     for (const auto &sym : decl->getSymbols()) {
-      std::string fqName = ns.str() + "." + sym;
+      std::string fqName = ns + "." + sym;
       Symbol *realSym = symbols.lookup(fqName);
 
       if (!realSym) {
@@ -5906,7 +5940,7 @@ void TypeChecker::visitImportDecl(const ImportDecl *decl) {
             decl->getLoc());
       }
 
-      ambiguousImports[sym].push_back(ns.str());
+      ambiguousImports[sym].push_back(ns);
 
       if (ambiguousImports[sym].size() == 1) {
         if (!symbols.lookup(sym)) {
@@ -5990,8 +6024,21 @@ void TypeChecker::visitNullableType(const NullableType *t) {
 }
 void TypeChecker::visitAnyType(const AnyType *t) { lastComputedType = t; }
 void TypeChecker::visitNamedType(const NamedType *type) {
+  std::string lookupName = type->getName();
+
+  // Handle Module Namespace Resolution (e.g., 'test.TestConfig')
+  size_t dotPos = lookupName.find('.');
+  if (dotPos != std::string::npos) {
+    std::string modPrefix = lookupName.substr(0, dotPos);
+    std::string typeSuffix = lookupName.substr(dotPos + 1);
+    Symbol *modSym = symbols.lookup(modPrefix);
+    if (modSym && modSym->kind == SymbolKind::Module) {
+      lookupName = typeSuffix;
+    }
+  }
+
   if (!type->getGenericArgs().empty()) {
-    Symbol *sym = symbols.lookup(type->getName());
+    Symbol *sym = symbols.lookup(lookupName);
 
     if (!sym || !sym->decl || sym->decl->getKind() != StmtKind::GenericDecl) {
       Diags.report(type->getLoc(), DiagID::err_type_mismatch)
@@ -6017,7 +6064,7 @@ void TypeChecker::visitNamedType(const NamedType *type) {
       }
 
       std::string mangledName =
-          resolver.getMangledName(type->getName(), concreteArgs);
+          resolver.getMangledName(lookupName, concreteArgs);
       const ClassDecl *concreteClass = context.lookupClass(mangledName);
 
       if (!concreteClass) {
@@ -6041,10 +6088,10 @@ void TypeChecker::visitNamedType(const NamedType *type) {
     }
   }
 
-  const ClassDecl *classDecl = context.lookupClass(type->getName());
+  const ClassDecl *classDecl = context.lookupClass(lookupName);
 
   if (!classDecl) {
-    Symbol *sym = symbols.lookup(type->getName());
+    Symbol *sym = symbols.lookup(lookupName);
     if (sym && sym->kind == SymbolKind::Type) {
       type->setResolvedType(sym->type);
       lastComputedType = type;
@@ -6053,7 +6100,13 @@ void TypeChecker::visitNamedType(const NamedType *type) {
 
     Diags.report(type->getLoc(), DiagID::err_unknown_type) << type->getName();
     hasError = true;
+  } else {
+    auto *mutType = const_cast<NamedType *>(type);
+    if (mutType->getName() != lookupName && mutType->getGenericArgs().empty()) {
+      mutType->setName(lookupName);
+    }
   }
+
   lastComputedType = type;
 }
 void TypeChecker::visitLockType(const LockType *t) {

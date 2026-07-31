@@ -11,35 +11,39 @@ namespace moksha {
 namespace backend {
 namespace mlir {
 
-static uint64_t getMLIRTypeSize(::mlir::Type ty) {
+static uint64_t getMLIRTypeSize(::mlir::Type ty, unsigned pointerSize) {
   if (ty.isIntOrFloat()) {
     return (ty.getIntOrFloatBitWidth() + 7) / 8;
   }
-
+  // Fat pointers (Closure, Any) are 2x pointer size
   if (::llvm::isa<::moksha::IR::AnyType>(ty) ||
       ::llvm::isa<::moksha::IR::ClosureType>(ty)) {
-    return 16;
+    return 2 * pointerSize;
   }
-
+  // Standard opaque pointers
   if (::llvm::isa<::moksha::IR::PointerType>(ty) ||
       ::llvm::isa<::moksha::IR::SliceType>(ty) ||
+      ::llvm::isa<::moksha::IR::MapType>(ty) ||
+      ::llvm::isa<::moksha::IR::PromiseType>(ty) ||
       ::llvm::isa<::mlir::LLVM::LLVMPointerType>(ty)) {
-    return 8; // 64-bit pointers
+    return pointerSize;
   }
   if (auto arrTy = ::llvm::dyn_cast_or_null<::moksha::IR::ArrayType>(ty)) {
-    return getMLIRTypeSize(arrTy.getElementType()) * arrTy.getSize();
+    return getMLIRTypeSize(arrTy.getElementType(), pointerSize) *
+           arrTy.getSize();
   }
   if (auto stTy = ::llvm::dyn_cast_or_null<::mlir::LLVM::LLVMStructType>(ty)) {
     uint64_t size = 0;
     for (auto elem : stTy.getBody()) {
-      size += getMLIRTypeSize(elem);
+      size += getMLIRTypeSize(elem, pointerSize);
     }
     return size;
   }
-  return 8;
+  return pointerSize;
 }
 
-TypeLowering::TypeLowering(::mlir::MLIRContext &ctx) : context(ctx) {}
+TypeLowering::TypeLowering(::mlir::MLIRContext &ctx, unsigned ptrSize)
+    : context(ctx), pointerSize(ptrSize) {}
 
 ::mlir::Type TypeLowering::lowerHIRType(const hir::HIRType &type) const {
   switch (type.getKind()) {
@@ -183,7 +187,8 @@ TypeLowering::TypeLowering(::mlir::MLIRContext &ctx) : context(ctx) {}
             for (auto *field : st.getFields()) {
               bool emitOpaque = false;
               const hir::HIRType *checkTy = field;
-              if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(checkTy)) {
+              if (auto *ptrTy =
+                      llvm::dyn_cast_or_null<hir::PointerType>(checkTy)) {
                 checkTy = ptrTy->getPointee();
               }
               if (auto *st = llvm::dyn_cast_or_null<hir::StructType>(checkTy)) {
@@ -237,10 +242,12 @@ TypeLowering::TypeLowering(::mlir::MLIRContext &ctx) : context(ctx) {}
           for (auto *field : st.getFields()) {
             bool emitOpaque = false;
             const hir::HIRType *checkTy = field;
-            if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(checkTy)) {
+            if (auto *ptrTy =
+                    llvm::dyn_cast_or_null<hir::PointerType>(checkTy)) {
               checkTy = ptrTy->getPointee();
             }
-            if (auto *childSt = llvm::dyn_cast_or_null<hir::StructType>(checkTy)) {
+            if (auto *childSt =
+                    llvm::dyn_cast_or_null<hir::StructType>(checkTy)) {
               if (activeStructs.count(childSt->getName())) {
                 emitOpaque = true;
               }
@@ -271,7 +278,7 @@ TypeLowering::TypeLowering(::mlir::MLIRContext &ctx) : context(ctx) {}
 
     for (auto *field : unionType.getFields()) {
       ::mlir::Type mlirTy = lowerHIRType(*field);
-      uint64_t memberSize = getMLIRTypeSize(mlirTy);
+      uint64_t memberSize = getMLIRTypeSize(mlirTy, pointerSize);
 
       if (memberSize > maxSize || maxSize == 0) {
         maxSize = memberSize;

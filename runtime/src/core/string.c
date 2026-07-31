@@ -6,9 +6,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+int __gxx_personality_v0(void) { return 0; }
+
 extern void *moksha_rt_alloc(size_t payload_size, uint32_t type_id);
 extern void moksha_rt_panic(const char *message);
 extern void *moksha_mem_alloc(size_t size);
+extern void moksha_rt_release(void *ptr);
 
 /** @brief Bare-Metal Utility Functions */
 
@@ -38,9 +41,9 @@ bool __moksha_string_eq(void *a_ptr, void *b_ptr) {
   char *b = (char *)b_ptr;
 
   if (a == b)
-    return true; // Same identity
+    return true;
   if (!a || !b)
-    return false; // One is null
+    return false;
 
   while (*a && (*a == *b)) {
     a++;
@@ -107,21 +110,19 @@ static int internal_ptrtoa(void *ptr, char *buf) {
 }
 
 static int internal_ftoa(double val, char *buf) {
-  // 1. Check for NaN
   if (val != val) {
     internal_strcpy(buf, "NaN");
     return 3;
   }
 
-  // 2. Check for Infinity (Bare-metal trick: Infinity - Infinity = NaN)
   double test = val - val;
   if (test != test) {
     if (val > 0) {
       internal_strcpy(buf, "Infinity");
-      return 8; // Length of "Infinity"
+      return 8;
     } else {
       internal_strcpy(buf, "-Infinity");
-      return 9; // Length of "-Infinity"
+      return 9;
     }
   }
 
@@ -140,8 +141,7 @@ static int internal_ftoa(double val, char *buf) {
   int exponent = 0;
   double temp = val;
 
-  // 1. Detect if we need Scientific Notation
-  bool use_scientific = (val >= 1e6 || val < 1e-4);
+  bool use_scientific = (val >= 1e18 || val < 1e-4);
 
   if (use_scientific) {
     if (temp >= 10.0) {
@@ -159,13 +159,11 @@ static int internal_ftoa(double val, char *buf) {
 
   temp += 0.0000005;
 
-  // 2. Extract Integer and Fractional parts
   uint64_t int_part = (uint64_t)temp;
   double frac_part = temp - (double)int_part;
 
   j += internal_utoa64(int_part, buf + j);
 
-  // 3. Print up to 6 decimal places
   buf[j++] = '.';
   for (int i = 0; i < 6; i++) {
     frac_part *= 10;
@@ -174,20 +172,17 @@ static int internal_ftoa(double val, char *buf) {
     frac_part -= digit;
   }
 
-  // 4. Strip trailing zeros and the decimal point if it's clean
   while (buf[j - 1] == '0')
     j--;
   if (buf[j - 1] == '.')
     j--;
 
-  // 5. Append the 'e' exponent if we used scientific notation
   if (use_scientific) {
     buf[j++] = 'e';
     if (exponent >= 0) {
       buf[j++] = '+';
       j += internal_itoa64(exponent, buf + j);
     } else {
-      // internal_itoa64 automatically adds the '-' for negative numbers
       j += internal_itoa64(exponent, buf + j);
     }
   }
@@ -196,12 +191,11 @@ static int internal_ftoa(double val, char *buf) {
   return j;
 }
 
-// 1. Define the Global Spinlock
+// Global Spinlock
 static int stdout_lock = 0;
 
 static inline void acquire_print_lock(void) {
   while (__atomic_exchange_n(&stdout_lock, 1, __ATOMIC_ACQUIRE)) {
-    // Spin lightly.
   }
 }
 
@@ -209,11 +203,9 @@ static inline void release_print_lock(void) {
   __atomic_store_n(&stdout_lock, 0, __ATOMIC_RELEASE);
 }
 
-// ============================================================================
 // Core Formatter
-// ============================================================================
 
-void moksha_print_decimal128(__int128_t value, int scale) {
+void moksha_print_decimal128(moksha_int128_t value, int scale) {
   if (value == 0) {
     sys_print("0");
     return;
@@ -256,7 +248,6 @@ int32_t moksha_rt_string_len(char *str) {
 char moksha_rt_string_char_at(char *str, int32_t index) {
   if (!str)
     moksha_rt_panic("Null string access");
-  // Simple bounds check
   if (index < 0 || index >= (int32_t)internal_strlen(str)) {
     moksha_rt_panic("String index out of bounds");
   }
@@ -267,7 +258,6 @@ void print(MokshaAny *any_val, ...) {
   if (!sys_get_caps()->has_stdout)
     return;
 
-  // Handle nulls safely
   if (!any_val || !any_val->data || !any_val->vtable) {
     acquire_print_lock();
     sys_print("null");
@@ -275,15 +265,12 @@ void print(MokshaAny *any_val, ...) {
     return;
   }
 
-  // 1. Resolve the string BEFORE taking the lock
   char *str = any_val->vtable->to_string(any_val->data);
 
-  // 2. Lock and write
   acquire_print_lock();
   sys_print(str);
   release_print_lock();
 
-  // 3. Cleanup after the lock is released
   moksha_rt_release(str);
 }
 
@@ -291,7 +278,6 @@ void println(MokshaAny *any_val, ...) {
   if (!sys_get_caps()->has_stdout)
     return;
 
-  // Handle nulls safely with a built-in newline
   if (!any_val || !any_val->data || !any_val->vtable) {
     acquire_print_lock();
     sys_print("null\n");
@@ -299,16 +285,13 @@ void println(MokshaAny *any_val, ...) {
     return;
   }
 
-  // 1. Resolve the string BEFORE taking the lock
   char *str = any_val->vtable->to_string(any_val->data);
 
-  // 2. Lock, write the string, AND write the newline atomically!
   acquire_print_lock();
   sys_print(str);
   sys_print("\n");
   release_print_lock();
 
-  // 3. Cleanup after the lock is released
   moksha_rt_release(str);
 }
 
@@ -487,8 +470,7 @@ char *moksha_rt_dec_to_string(MokshaDecimal *dec) {
   if (!dec)
     return NULL;
 
-  // Extract the values locally
-  __int128_t value = dec->mantissa;
+  moksha_int128_t value = dec->mantissa;
   int32_t scale = dec->scale;
 
   if (value == 0) {
@@ -568,7 +550,6 @@ char *__moksha_any_to_string(MokshaAny *any_val) {
 
 /** @brief Moksha String Builtins */
 
-// Helper for substring searching
 static char *internal_strstr(const char *haystack, const char *needle) {
   if (!*needle)
     return (char *)haystack;
@@ -741,7 +722,9 @@ char *moksha_string_replace(char *str, char *old_str, char *new_str) {
 }
 
 MokshaSlice *moksha_string_split(char *str, char *delim) {
-  MokshaSlice *ret = (MokshaSlice *)moksha_mem_alloc(sizeof(MokshaSlice));
+  // Allocate the returning MokshaSlice via ARC (MOKSHA_TYPE_ARRAY)
+  MokshaSlice *ret =
+      (MokshaSlice *)moksha_rt_alloc(sizeof(MokshaSlice), MOKSHA_TYPE_ARRAY);
 
   if (!str || !delim) {
     ret->data = NULL;
@@ -752,7 +735,7 @@ MokshaSlice *moksha_string_split(char *str, char *delim) {
   size_t delim_len = internal_strlen(delim);
 
   if (delim_len == 0) {
-    char **arr = (char **)moksha_rt_alloc(sizeof(char *), 0);
+    char **arr = (char **)moksha_rt_alloc(sizeof(char *), MOKSHA_TYPE_ARRAY);
     arr[0] = str;
     ret->data = arr;
     ret->length = 1;
@@ -766,14 +749,15 @@ MokshaSlice *moksha_string_split(char *str, char *delim) {
     p += delim_len;
   }
 
-  char **arr = (char **)moksha_rt_alloc(sizeof(char *) * count, 0);
+  char **arr =
+      (char **)moksha_rt_alloc(sizeof(char *) * count, MOKSHA_TYPE_ARRAY);
 
   size_t idx = 0;
   p = str;
   const char *next;
   while ((next = internal_strstr(p, delim)) != NULL) {
     size_t part_len = next - p;
-    char *part = (char *)moksha_rt_alloc(part_len + 1, 0); // String type ID
+    char *part = (char *)moksha_rt_alloc(part_len + 1, MOKSHA_TYPE_STRING);
     for (size_t i = 0; i < part_len; i++)
       part[i] = p[i];
     part[part_len] = '\0';
@@ -782,7 +766,7 @@ MokshaSlice *moksha_string_split(char *str, char *delim) {
   }
 
   size_t last_len = internal_strlen(p);
-  char *last_part = (char *)moksha_rt_alloc(last_len + 1, 0);
+  char *last_part = (char *)moksha_rt_alloc(last_len + 1, MOKSHA_TYPE_STRING);
   internal_strcpy(last_part, p);
   arr[idx++] = last_part;
 
@@ -792,14 +776,12 @@ MokshaSlice *moksha_string_split(char *str, char *delim) {
 }
 
 char *moksha_string_join(MokshaSlice *arr, char *delim) {
-  // 1. Add a null check for the pointer itself
   if (!arr || !arr->data || arr->length == 0) {
     char *empty = (char *)moksha_rt_alloc(1, MOKSHA_TYPE_STRING);
     empty[0] = '\0';
     return empty;
   }
 
-  // 2. Dereference using -> instead of .
   char **strs = (char **)arr->data;
   size_t delim_len = delim ? internal_strlen(delim) : 0;
   size_t total_len = 0;
