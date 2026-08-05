@@ -776,6 +776,7 @@ bool Lexer::consumeEscape() {
   case 'r':
   case 't':
   case '0':
+  case 'b':
   case '\\':
   case '\'':
   case '"':

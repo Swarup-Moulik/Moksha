@@ -16,7 +16,8 @@ class DiagnosticEngine;
 class ModuleDecl;
 class ASTContext;
 
-/** @brief The parser for the Moksha compiler, responsible for parsing AST nodes from tokens. */
+/** @brief The parser for the Moksha compiler, responsible for parsing AST nodes
+ * from tokens. */
 class Parser {
 public:
   explicit Parser(Lexer &lexer, ASTContext &context, llvm::SourceMgr &srcMgr,
@@ -42,7 +43,8 @@ private:
   void advance();
   bool peekIs(TokenKind kind) const { return nextTok.is(kind); }
   bool isStartOfDeclaration();
-  void parseImportSymbolList(std::vector<std::string> &symbols);
+  void parseImportSymbolList(
+      std::vector<std::pair<std::string, std::string>> &symbols);
   void error(const std::string &message);
   void synchronize();
 

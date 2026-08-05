@@ -393,7 +393,8 @@ private:
 class ImportDecl : public Decl {
 public:
   ImportDecl(std::string moduleName, std::string aliasName,
-             std::vector<std::string> symbols, SourceLocation loc)
+             const std::vector<std::pair<std::string, std::string>> symbols,
+             SourceLocation loc)
       : Decl(StmtKind::ImportDecl, std::move(moduleName), Visibility::Default,
              loc),
         aliasName(std::move(aliasName)), symbols(std::move(symbols)) {}
@@ -401,7 +402,8 @@ public:
   void accept(ASTVisitor &v) const override;
   [[nodiscard]] const std::string &getModuleName() const { return name; }
   [[nodiscard]] const std::string &getAliasName() const { return aliasName; }
-  [[nodiscard]] const std::vector<std::string> &getSymbols() const {
+  [[nodiscard]] const std::vector<std::pair<std::string, std::string>> &
+  getSymbols() const {
     return symbols;
   }
   std::unique_ptr<Decl> clone() const override;
@@ -411,7 +413,7 @@ public:
 
 private:
   std::string aliasName;
-  std::vector<std::string> symbols;
+  const std::vector<std::pair<std::string, std::string>> symbols;
 };
 
 class EnumDecl : public Decl {

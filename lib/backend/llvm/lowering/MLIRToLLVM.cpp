@@ -1409,46 +1409,71 @@ struct ExtractValueOpLowering
                   mlir::ConversionPatternRewriter &rewriter) const override {
 
     mlir::Value aggVal = adaptor.getAggregate();
-    if (mlir::isa<mlir::LLVM::LLVMPointerType>(aggVal.getType())) {
-      mlir::Value ptr = aggVal;
-      mlir::Type expectedType = typeConverter->convertType(op.getType());
-      if (expectedType && ptr.getType() != expectedType) {
-        ptr = rewriter.create<mlir::LLVM::BitcastOp>(op.getLoc(), expectedType,
-                                                     ptr);
+    mlir::Type expectedType = typeConverter->convertType(op.getType());
+    int64_t idx = op.getIndex();
+    auto loc = op.getLoc();
+
+    mlir::Type aggTy = aggVal.getType();
+    bool isAggregate = mlir::isa<mlir::LLVM::LLVMStructType>(aggTy) ||
+                       mlir::isa<mlir::LLVM::LLVMArrayType>(aggTy);
+    bool isPointer = mlir::isa<mlir::LLVM::LLVMPointerType>(aggTy);
+
+    // ABI FIX: If the struct was scalarized into an integer/float, spill it to
+    // the stack
+    if (!isAggregate && !isPointer) {
+      mlir::Type ptrTy = mlir::LLVM::LLVMPointerType::get(getContext());
+      mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
+          loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
+      mlir::Value alloc =
+          rewriter.create<mlir::LLVM::AllocaOp>(loc, ptrTy, aggTy, one);
+      rewriter.create<mlir::LLVM::StoreOp>(loc, aggVal, alloc);
+      aggVal = alloc;
+      isPointer = true;
+    }
+
+    if (isPointer) {
+      mlir::Type origAggTy = op.getAggregate().getType();
+      mlir::Type llvmAggTy = typeConverter->convertType(origAggTy);
+
+      // Only use GEP if the underlying type is STILL a true aggregate
+      bool isStructOrArray = mlir::isa<mlir::LLVM::LLVMStructType>(llvmAggTy) ||
+                             mlir::isa<mlir::LLVM::LLVMArrayType>(llvmAggTy);
+
+      mlir::Value ptrToLoad = aggVal;
+
+      if (isStructOrArray) {
+        ptrToLoad = rewriter.create<mlir::LLVM::GEPOp>(
+            loc, mlir::LLVM::LLVMPointerType::get(getContext()), llvmAggTy,
+            aggVal, llvm::ArrayRef<mlir::LLVM::GEPArg>{0, idx});
       }
-      rewriter.replaceOp(op, ptr);
+
+      // Load directly from the pointer (Opaque pointers allow safe partial
+      // reads)
+      mlir::Value loaded =
+          rewriter.create<mlir::LLVM::LoadOp>(loc, expectedType, ptrToLoad);
+
+      rewriter.replaceOp(op, loaded);
       return mlir::success();
     }
 
+    // Standard ExtractValue for true aggregates in registers
     mlir::Value ext = rewriter.create<mlir::LLVM::ExtractValueOp>(
-        op.getLoc(), aggVal, op.getIndex());
-    mlir::Type expectedType = typeConverter->convertType(op.getType());
+        loc, expectedType, aggVal, llvm::ArrayRef<int64_t>{idx});
+
     mlir::Type extractedType = ext.getType();
 
     if (expectedType && extractedType && extractedType != expectedType) {
-      if (mlir::isa<mlir::IntegerType>(extractedType) &&
-          mlir::isa<mlir::IntegerType>(expectedType)) {
+      if (extractedType.isIntOrIndex() && expectedType.isIntOrIndex()) {
         unsigned srcW = extractedType.getIntOrFloatBitWidth();
         unsigned dstW = expectedType.getIntOrFloatBitWidth();
         if (srcW > dstW) {
-          ext = rewriter.create<mlir::LLVM::TruncOp>(op.getLoc(), expectedType,
-                                                     ext);
+          ext = rewriter.create<mlir::LLVM::TruncOp>(loc, expectedType, ext);
         } else if (srcW < dstW) {
-          ext = rewriter.create<mlir::LLVM::SExtOp>(op.getLoc(), expectedType,
-                                                    ext);
+          ext = rewriter.create<mlir::LLVM::SExtOp>(loc, expectedType, ext);
         }
-      } else if (mlir::isa<mlir::IndexType>(extractedType) &&
-                 mlir::isa<mlir::IntegerType>(expectedType)) {
-        ext = rewriter.create<mlir::LLVM::TruncOp>(op.getLoc(), expectedType,
-                                                   ext);
-      } else if (mlir::isa<mlir::IntegerType>(extractedType) &&
-                 mlir::isa<mlir::IndexType>(expectedType)) {
-        ext =
-            rewriter.create<mlir::LLVM::SExtOp>(op.getLoc(), expectedType, ext);
       } else if (mlir::isa<mlir::LLVM::LLVMPointerType>(extractedType) &&
                  mlir::isa<mlir::LLVM::LLVMPointerType>(expectedType)) {
-        ext = rewriter.create<mlir::LLVM::BitcastOp>(op.getLoc(), expectedType,
-                                                     ext);
+        ext = rewriter.create<mlir::LLVM::BitcastOp>(loc, expectedType, ext);
       }
     }
 
@@ -1473,29 +1498,87 @@ struct InsertValueOpLowering
     mlir::Value container = operands[0];
     mlir::Value val = operands[1];
     int64_t idx = op.getIndex();
+    auto loc = op.getLoc();
 
-    if (auto structTy = mlir::dyn_cast<mlir::LLVM::LLVMStructType>(dstType)) {
-      mlir::Type elemTy = structTy.getBody()[idx];
-      if (val.getType() != elemTy) {
-        if (val.getType().isIntOrIndex() && elemTy.isIntOrIndex()) {
-          unsigned srcW = val.getType().getIntOrFloatBitWidth();
-          unsigned dstW = elemTy.getIntOrFloatBitWidth();
-          if (srcW < dstW) {
-            val = rewriter.create<mlir::LLVM::SExtOp>(op.getLoc(), elemTy, val);
-          } else if (srcW > dstW) {
-            val =
-                rewriter.create<mlir::LLVM::TruncOp>(op.getLoc(), elemTy, val);
-          }
-        } else if (mlir::isa<mlir::LLVM::LLVMPointerType>(val.getType()) &&
-                   mlir::isa<mlir::LLVM::LLVMPointerType>(elemTy)) {
-          val =
-              rewriter.create<mlir::LLVM::BitcastOp>(op.getLoc(), elemTy, val);
-        }
-      }
+    mlir::Type containerTy = container.getType();
+    bool isAggregate = mlir::isa<mlir::LLVM::LLVMStructType>(containerTy) ||
+                       mlir::isa<mlir::LLVM::LLVMArrayType>(containerTy);
+    bool isPointer = mlir::isa<mlir::LLVM::LLVMPointerType>(containerTy);
+    bool wasScalarSpilled = false;
+
+    // ABI FIX: If scalarized, spill to stack so we can mutate the field
+    if (!isAggregate && !isPointer) {
+      mlir::Type ptrTy = mlir::LLVM::LLVMPointerType::get(getContext());
+      mlir::Value one = rewriter.create<mlir::LLVM::ConstantOp>(
+          loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
+      mlir::Value alloc =
+          rewriter.create<mlir::LLVM::AllocaOp>(loc, ptrTy, containerTy, one);
+      rewriter.create<mlir::LLVM::StoreOp>(loc, container, alloc);
+      container = alloc;
+      isPointer = true;
+      wasScalarSpilled = true;
     }
 
-    rewriter.replaceOpWithNewOp<mlir::LLVM::InsertValueOp>(
-        op, dstType, container, val, llvm::ArrayRef<int64_t>({idx}));
+    if (isPointer) {
+      mlir::Type origAggTy = op.getAggregate().getType();
+      mlir::Type llvmAggTy = typeConverter->convertType(origAggTy);
+
+      bool isStructOrArray = mlir::isa<mlir::LLVM::LLVMStructType>(llvmAggTy) ||
+                             mlir::isa<mlir::LLVM::LLVMArrayType>(llvmAggTy);
+
+      mlir::Value ptrToStore = container;
+      mlir::Type expectedElemTy = val.getType();
+
+      // Only use GEP if the underlying type is STILL a true aggregate
+      if (isStructOrArray) {
+        ptrToStore = rewriter.create<mlir::LLVM::GEPOp>(
+            loc, mlir::LLVM::LLVMPointerType::get(getContext()), llvmAggTy,
+            container, llvm::ArrayRef<mlir::LLVM::GEPArg>{0, idx});
+
+        if (auto structTy =
+                mlir::dyn_cast<mlir::LLVM::LLVMStructType>(llvmAggTy)) {
+          if (idx >= 0 &&
+              idx < static_cast<int64_t>(structTy.getBody().size())) {
+            expectedElemTy = structTy.getBody()[idx];
+          }
+        }
+      }
+
+      if (val.getType() != expectedElemTy) {
+        if (val.getType().isIntOrIndex() && expectedElemTy.isIntOrIndex()) {
+          unsigned srcW = val.getType().getIntOrFloatBitWidth();
+          unsigned dstW = expectedElemTy.getIntOrFloatBitWidth();
+          if (srcW < dstW) {
+            val = rewriter.create<mlir::LLVM::SExtOp>(loc, expectedElemTy, val);
+          } else if (srcW > dstW) {
+            val =
+                rewriter.create<mlir::LLVM::TruncOp>(loc, expectedElemTy, val);
+          }
+        } else if (mlir::isa<mlir::LLVM::LLVMPointerType>(val.getType()) &&
+                   mlir::isa<mlir::LLVM::LLVMPointerType>(expectedElemTy)) {
+          val =
+              rewriter.create<mlir::LLVM::BitcastOp>(loc, expectedElemTy, val);
+        }
+      }
+
+      rewriter.create<mlir::LLVM::StoreOp>(loc, val, ptrToStore);
+
+      // If we spilled a scalar, load the updated scalar back out to satisfy the
+      // return type
+      if (wasScalarSpilled) {
+        mlir::Value reloadedScalar =
+            rewriter.create<mlir::LLVM::LoadOp>(loc, containerTy, container);
+        rewriter.replaceOp(op, reloadedScalar);
+      } else {
+        rewriter.replaceOp(op, container);
+      }
+      return mlir::success();
+    }
+
+    // Standard InsertValue for true aggregates in registers
+    auto insertOp = rewriter.create<mlir::LLVM::InsertValueOp>(
+        loc, dstType, container, val, llvm::ArrayRef<int64_t>{idx});
+    rewriter.replaceOp(op, insertOp.getResult());
     return mlir::success();
   }
 };

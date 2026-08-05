@@ -59,9 +59,7 @@
 #include <unordered_map>
 #include <vector>
 
-// ============================================================================
-// LLD Linker Forward Declarations & Helper
-// ============================================================================
+/* @brief LLD Linker Forward Declarations & Helper */
 namespace lld {
 namespace elf {
 bool link(llvm::ArrayRef<const char *> args, llvm::raw_ostream &stdoutOS,
@@ -170,6 +168,9 @@ static cl::opt<std::string>
              cl::value_desc("sanitizer"), cl::init(""),
              cl::cat(MokshaCategory));
 static cl::list<std::string>
+    IncludeDirs("I", cl::desc("Add directory to module import search path"),
+                cl::ZeroOrMore, cl::Prefix, cl::cat(MokshaCategory));
+static cl::list<std::string>
     Libraries("l",
               cl::desc("Libraries to link against (e.g., curl for -lcurl)"),
               cl::ZeroOrMore, cl::Prefix, cl::cat(MokshaCategory));
@@ -192,8 +193,7 @@ std::string resolveRuntimeLibrary(const std::string &explicitPath,
   }
 
   std::string osName;
-  std::string baremetalFolder =
-      ""; // Used to target your specific build folders
+  std::string baremetalFolder = "";
 
   if (triple.isOSWindows()) {
     osName = "windows";
@@ -248,14 +248,12 @@ std::string resolveRuntimeLibrary(const std::string &explicitPath,
   std::vector<std::string> searchDirs = {"../runtime", "../lib",
                                          "../../runtime", "."};
 
-  // If this is a bare-metal build, inject the specific arch folder into the
-  // search paths
+  // For bare-metal build, inject the specific arch folder into the search paths
   if (!baremetalFolder.empty()) {
-    // 1. Matches C:\Moksha\build_baremetal_<arch> (Your new deployment layout)
+    // 1. Matches C:\Moksha\build_baremetal_<arch>
     searchDirs.insert(searchDirs.begin(), "../" + baremetalFolder);
 
-    // 2. Matches C:\dev\moksha\moksha\runtime\build_baremetal_<arch> (Your dev
-    // layout)
+    // 2. Matches C:\dev\moksha\moksha\runtime\build_baremetal_<arch>
     searchDirs.insert(searchDirs.begin(), "../runtime/" + baremetalFolder);
 
     // 3. Fallback for deeply nested build folders
@@ -311,8 +309,6 @@ std::string getBuiltinsLibraryPath(const std::string &compilerBinary,
                                    const std::string &cpu) {
   std::string cmd;
 
-  // Bulletproof check using LLVM's internal architecture enum instead of
-  // strings
   if (triple.getArch() == llvm::Triple::arm ||
       triple.getArch() == llvm::Triple::thumb) {
     std::string cpuFlag = cpu.empty() ? "cortex-m3" : cpu;
@@ -461,6 +457,10 @@ int main(int argc, char **argv) {
   llvm::sys::path::append(stdlibPath2, "..", "..", "stdlib");
   searchPaths.push_back(stdlibPath2.str().str());
 
+  for (const auto &dir : IncludeDirs) {
+    searchPaths.push_back(dir);
+  }
+
   // 2. Define the callback to parse imported files
   typeChecker.loadModuleCallback =
       [&](const std::string &modName) -> moksha::ModuleDecl * {
@@ -475,14 +475,26 @@ int main(int argc, char **argv) {
       llvm::sys::path::append(fullPath, relativePath);
 
       if (llvm::sys::fs::exists(fullPath)) {
+        llvm::sys::fs::make_absolute(fullPath); // 1. Make it a full C:/... path
+        llvm::sys::path::remove_dots(fullPath,
+                                     true); // 2. Strip all '.' and '..'
+        llvm::sys::path::native(fullPath);  // 3. Unify all slashes for Windows
+
         resolvedPath = fullPath.str().str();
-        break; // Found it!
+        break;
       }
     }
 
     // If it's not found in ANY path, fail out
     if (resolvedPath.empty()) {
       return nullptr;
+    }
+
+    // Extract the folder of the file we just successfully resolved
+    std::string newDir = llvm::sys::path::parent_path(resolvedPath).str();
+    if (std::find(searchPaths.begin(), searchPaths.end(), newDir) ==
+        searchPaths.end()) {
+      searchPaths.insert(searchPaths.begin() + 1, newDir);
     }
 
     // If it's already in the cache, just return it
@@ -564,7 +576,7 @@ int main(int argc, char **argv) {
   }
 
   auto mirModule = mir::LowerHIRToMIR(hirModule.get(), diags);
-  if (!mirModule) {
+  if (!mirModule || diags.hasErrors()) {
     llvm::errs() << "Failed to lower HIR to MIR.\n";
     return 1;
   }
@@ -632,9 +644,7 @@ int main(int argc, char **argv) {
     llvm::outs() << "\n================\n\n";
   }
 
-  // ==========================================================================
-  // 11. GENERATE LLVM IR & OBJECT CODE
-  // ==========================================================================
+  /* @brief GENERATE LLVM IR & OBJECT CODE */
 
   // Always emit if DumpLLVM or regular compilation (not just emitting an
   // object)
@@ -702,7 +712,7 @@ int main(int argc, char **argv) {
         exeFilename += ".exe";
       }
 
-      // --- [FIX] Emit a .ll file instead of an object file ---
+      // Emit a .ll file instead of an object file
       std::string llFilename = EmitObj ? OutputFilename : exeFilename + ".ll";
 
       if (!moksha::emitObjectCode(*llvmModule, llFilename, config)) {
@@ -756,9 +766,7 @@ int main(int argc, char **argv) {
                                     ? " -g -fsanitize=address -static-libasan"
                                     : "";
 
-        // ===================================================================
         // STEP 1: Compile LLVM IR (.ll) to Native Object File (.o)
-        // ===================================================================
         std::string objFilename = exeFilename + ".o";
         std::string compileCmd =
             compilerBinary + " -c " + optLevel + asanFlags +
@@ -809,9 +817,7 @@ int main(int argc, char **argv) {
           return 1;
         }
 
-        // ===================================================================
         // STEP 2: Direct LLD Link Execution (No GCC/g++ Wrappers)
-        // ===================================================================
         if (actualTriple.getOS() == llvm::Triple::UnknownOS) {
           std::string linkCmd = "";
 

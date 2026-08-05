@@ -768,7 +768,7 @@ private:
       ::mlir::Value aggVal = getValue(extInst->getAggregate());
       if (!aggVal)
         return ::mlir::failure();
-      ::mlir::Type resType = typeLowering.lowerHIRType(*extInst->getType());
+      ::mlir::Type resType = getMLIRType(extInst->getType());
       auto mlirExt = builder.create<::moksha::IR::ExtractValueOp>(
           loc, resType, aggVal, extInst->getIndex());
       valueMap[inst] = mlirExt.getResult();
@@ -780,7 +780,7 @@ private:
       ::mlir::Value insertVal = getValue(insInst->getValue());
       if (!aggVal || !insertVal)
         return ::mlir::failure();
-      ::mlir::Type resType = typeLowering.lowerHIRType(*insInst->getType());
+      ::mlir::Type resType = getMLIRType(insInst->getType());
       auto mlirIns = builder.create<::moksha::IR::InsertValueOp>(
           loc, resType, aggVal, insertVal, insInst->getIndex());
       valueMap[inst] = mlirIns.getResult();

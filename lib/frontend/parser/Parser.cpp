@@ -365,6 +365,10 @@ static std::string unescapeString(llvm::StringRef raw) {
         result += '\t';
         i++;
         break;
+      case 'b':
+        result += '\b';
+        i++;
+        break;
       case '0':
         result += '\0';
         i++;
@@ -461,12 +465,27 @@ static std::string unescapeString(llvm::StringRef raw) {
   return result;
 }
 
-// Safely parse { a, b } without hanging
-void Parser::parseImportSymbolList(std::vector<std::string> &symbols) {
+// Safely parse { a, a as b, c } without hanging
+void Parser::parseImportSymbolList(
+    std::vector<std::pair<std::string, std::string>> &symbols) {
   while (curTok.isNot(TokenKind::RBrace) && curTok.isNot(TokenKind::Eof)) {
     if (curTok.is(TokenKind::Identifier) || curTok.is(TokenKind::KwTable)) {
-      symbols.push_back(curTok.getSpelling().str());
+
+      std::string originalName = curTok.getSpelling().str();
+      std::string aliasName = originalName;
       consume();
+
+      // NEW: Check for 'as' aliasing
+      if (consumeIf(TokenKind::KwAs)) {
+        if (curTok.is(TokenKind::Identifier)) {
+          aliasName = curTok.getSpelling().str();
+          consume();
+        } else {
+          error("Expected identifier after 'as'");
+        }
+      }
+
+      symbols.push_back({originalName, aliasName});
     } else {
       error("Expected identifier or type in import list");
       consume();
@@ -1315,7 +1334,7 @@ DeclPtr Parser::parseImportDecl() {
   SourceLocation loc = curTok.location;
   std::string moduleName;
   std::string aliasName = "";
-  std::vector<std::string> symbols;
+  std::vector<std::pair<std::string, std::string>> symbols;
 
   /** @brief Helper to strip quotes from a string literal */
   auto stripQuotes = [](std::string s) {
@@ -2933,6 +2952,9 @@ ExprPtr Parser::parsePrimary() {
           break;
         case 't':
           val = '\t';
+          break;
+        case 'b':
+          val = '\b';
           break;
         case 'r':
           val = '\r';

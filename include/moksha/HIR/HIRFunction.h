@@ -38,7 +38,8 @@ public:
 
   bool isAsyncFunc() const;
   bool isVariadicFunc() const;
-  bool isExtern() const { return !body; }
+  bool isExtern() const { return isExternFlag || !body; }
+  void setExtern(bool v) { isExternFlag = v; }
   bool isInterruptFunc() const { return isInterrupt; }
   bool isNakedFunc() const { return isNaked; }
   bool isNoReturnFunc() const { return isNoReturn; }
@@ -91,6 +92,7 @@ private:
   bool isInterrupt;
   bool isNaked;
   bool isNoReturn;
+  bool isExternFlag = false;
   bool isWeakFlag = false;
   std::string abi = "C";
   std::string sectionName;

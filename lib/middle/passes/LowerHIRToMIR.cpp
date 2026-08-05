@@ -9834,6 +9834,8 @@ private:
         ptr = symbolMap[name];
       } else if (auto *global = mirModule->getGlobal(name)) {
         ptr = global;
+      } else if (auto *func = mirModule->getFunction(name)) {
+        ptr = func;
       }
     } else {
       ptr = evaluateAsLValue(operand);

@@ -489,16 +489,22 @@ void HIRGen::visitFunctionDecl(const FunctionDecl *decl) {
 
   // 4. Setup metadata
   std::vector<hir::HIRGenericParam> typeParams;
+  std::string funcName = decl->getName();
 
   // 5. Create the HIRFunction object
   auto func = std::make_unique<hir::HIRFunction>(
-      decl->getName(), typeParams, std::move(hirParams), retType,
-      std::move(body), decl->isAsyncFunc(), decl->isVariadicFunc(),
-      decl->isInterruptFunc(), decl->isNakedFunc(), decl->isNoReturnFunc(),
-      decl->getSection(), decl->getLoc());
+      funcName, typeParams, std::move(hirParams), retType, std::move(body),
+      decl->isAsyncFunc(), decl->isVariadicFunc(), decl->isInterruptFunc(),
+      decl->isNakedFunc(), decl->isNoReturnFunc(), decl->getSection(),
+      decl->getLoc());
 
   func->setWeak(decl->isWeakFunc());
-  func->setABI(decl->getABI());
+  if (decl->isExternFunc() && !decl->getExternLinkage().empty()) {
+    func->setABI(decl->getExternLinkage());
+  } else {
+    func->setABI(decl->getABI());
+  }
+  func->setExtern(decl->isExternFunc());
   func->setVirtual(decl->isVirtualFunc());
   func->setOverride(decl->isOverrideFunc());
   func->setVTableIndex(decl->getVTableIndex());
@@ -707,11 +713,11 @@ void HIRGen::visitVariableDecl(const VariableDecl *decl) {
     }
   }
 
+  std::string varName = decl->getName();
   auto varStmt = std::make_unique<hir::HIRVarDeclStmt>(
-      decl->getName(), hirType, std::move(hirInit), isMut,
-      decl->isThreadLocalVar(), decl->isVolatileVar(), decl->getAlignment(),
-      decl->isStaticVar(), decl->isUsedVar(), decl->getSection(),
-      decl->getLoc());
+      varName, hirType, std::move(hirInit), isMut, decl->isThreadLocalVar(),
+      decl->isVolatileVar(), decl->getAlignment(), decl->isStaticVar(),
+      decl->isUsedVar(), decl->getSection(), decl->getLoc());
 
   varStmt->setExtern(decl->isExternVar());
   varStmt->setWeakVar(decl->isWeakVar());
@@ -1264,7 +1270,7 @@ void HIRGen::visitMemberExpr(const MemberExpr *expr) {
   const Type *baseType = expr->getObject()->getType();
 
   // 1. Module Prefix Stripping for Whole-Program Linking
-  if (auto *idObj = llvm::dyn_cast_or_null<IdentifierExpr>(expr->getObject())) {
+  if (llvm::dyn_cast_or_null<IdentifierExpr>(expr->getObject())) {
     if (baseType && baseType->is<AnyType>()) {
       auto directId = std::make_unique<hir::HIRIdentifierExpr>(
           expr->getName(), lowerType(expr->getType()), expr->getLoc());

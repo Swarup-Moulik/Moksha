@@ -198,7 +198,8 @@ void ASTPrinter::visitPointerType(const PointerType *type) {
 }
 
 void ASTPrinter::visitArrayType(const ArrayType *type) {
-  if (auto nullElem = llvm::dyn_cast_or_null<NullableType>(type->getElementType())) {
+  if (auto nullElem =
+          llvm::dyn_cast_or_null<NullableType>(type->getElementType())) {
     nullElem->getInner()->accept(*this);
     OS << "[]?";
   } else {
@@ -898,11 +899,20 @@ void ASTPrinter::visitImportDecl(const ImportDecl *decl) {
     for (size_t i = 0; i < decl->getSymbols().size(); ++i) {
       if (i > 0)
         OS << ", ";
-      OS << decl->getSymbols()[i];
+
+      const auto &symPair = decl->getSymbols()[i];
+      if (symPair.first == symPair.second) {
+        OS << symPair.first;
+      } else {
+        OS << symPair.first << " as " << symPair.second;
+      }
     }
     OS << " }";
   } else {
     OS << "import \"" << decl->getModuleName() << "\"";
+    if (!decl->getAliasName().empty()) {
+      OS << " as " << decl->getAliasName();
+    }
   }
   OS << ";";
 }

@@ -81,10 +81,11 @@ static bool isExclusiveBorrow(MIRValue *pointerVal) {
     return false;
 
   if (pointerVal->getType()) {
-    if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(pointerVal->getType())) {
+    if (auto *ptrTy =
+            llvm::dyn_cast_or_null<hir::PointerType>(pointerVal->getType())) {
       return ptrTy->isMut();
-    } else if (auto *refTy =
-                   llvm::dyn_cast_or_null<hir::ReferenceType>(pointerVal->getType())) {
+    } else if (auto *refTy = llvm::dyn_cast_or_null<hir::ReferenceType>(
+                   pointerVal->getType())) {
       return refTy->isMut();
     }
   }
@@ -100,8 +101,7 @@ static bool isMoveOnlyType(const hir::HIRType *type) {
 
   case hir::TypeKind::Pointer:
     if (auto *ptrTy = llvm::dyn_cast_or_null<hir::PointerType>(type)) {
-      return ptrTy->getOwnership() ==
-             hir::Ownership::Owned;
+      return ptrTy->getOwnership() == hir::Ownership::Owned;
     }
     return false;
 
@@ -234,15 +234,18 @@ void NLLBorrowChecker::computeLiveness(MIRFunction *func) {
       } else if (auto *spawn = llvm::dyn_cast_or_null<SpawnInst>(inst)) {
         if (spawn->getClosure())
           lastUses[spawn->getClosure()] = inst;
-      } else if (auto *makeClosure = llvm::dyn_cast_or_null<MakeClosureInst>(inst)) {
+      } else if (auto *makeClosure =
+                     llvm::dyn_cast_or_null<MakeClosureInst>(inst)) {
         for (MIRValue *cap : makeClosure->getCaptures()) {
           if (cap)
             lastUses[cap] = inst;
         }
-      } else if (auto *atomLoad = llvm::dyn_cast_or_null<AtomicLoadInst>(inst)) {
+      } else if (auto *atomLoad =
+                     llvm::dyn_cast_or_null<AtomicLoadInst>(inst)) {
         if (atomLoad->getPointer())
           lastUses[atomLoad->getPointer()] = inst;
-      } else if (auto *atomStore = llvm::dyn_cast_or_null<AtomicStoreInst>(inst)) {
+      } else if (auto *atomStore =
+                     llvm::dyn_cast_or_null<AtomicStoreInst>(inst)) {
         if (atomStore->getValue())
           lastUses[atomStore->getValue()] = inst;
         if (atomStore->getPointer())
@@ -252,7 +255,8 @@ void NLLBorrowChecker::computeLiveness(MIRFunction *func) {
           lastUses[atomRmw->getValue()] = inst;
         if (atomRmw->getPointer())
           lastUses[atomRmw->getPointer()] = inst;
-      } else if (auto *atomCas = llvm::dyn_cast_or_null<AtomicCmpXchgInst>(inst)) {
+      } else if (auto *atomCas =
+                     llvm::dyn_cast_or_null<AtomicCmpXchgInst>(inst)) {
         if (atomCas->getPointer())
           lastUses[atomCas->getPointer()] = inst;
         if (atomCas->getExpected())
@@ -373,7 +377,8 @@ void NLLBorrowChecker::computeDataflow(MIRFunction *func) {
                 llvm::isa<GetElementPtrInst>(consumer) ||
                 llvm::isa<BinaryInst>(consumer)) {
               isActualMove = false;
-            } else if (auto *call = llvm::dyn_cast_or_null<CallInst>(consumer)) {
+            } else if (auto *call =
+                           llvm::dyn_cast_or_null<CallInst>(consumer)) {
               if (call->getCallee()) {
                 std::string cName = call->getCallee()->getName();
                 if (cName == "print" || cName == "println" ||
@@ -492,8 +497,8 @@ void NLLBorrowChecker::computeDataflow(MIRFunction *func) {
               currentLoans.end());
 
           bool isClosureEnv = false;
-          if (auto *gep =
-                  llvm::dyn_cast_or_null<GetElementPtrInst>(store->getPointer())) {
+          if (auto *gep = llvm::dyn_cast_or_null<GetElementPtrInst>(
+                  store->getPointer())) {
             if (gep->getPointer() && gep->getPointer()->getType()) {
               std::string tyName = gep->getPointer()->getType()->toString();
               if (tyName.find("Env") != std::string::npos ||
@@ -590,7 +595,8 @@ void NLLBorrowChecker::computeDataflow(MIRFunction *func) {
                 if (!rehomed) {
                   MIRValue *tracedVal = store->getValue();
                   while (tracedVal) {
-                    if (auto *loadVal = llvm::dyn_cast_or_null<LoadInst>(tracedVal)) {
+                    if (auto *loadVal =
+                            llvm::dyn_cast_or_null<LoadInst>(tracedVal)) {
                       for (const Place &src :
                            resolvePlace(loadVal->getPointer())) {
                         if (active_loan.borrowedPlace.base == src.base) {
@@ -602,8 +608,8 @@ void NLLBorrowChecker::computeDataflow(MIRFunction *func) {
                       if (rehomed)
                         break;
                       tracedVal = loadVal->getPointer();
-                    } else if (auto *castVal =
-                                   llvm::dyn_cast_or_null<CastInst>(tracedVal)) {
+                    } else if (auto *castVal = llvm::dyn_cast_or_null<CastInst>(
+                                   tracedVal)) {
                       tracedVal = castVal->getValue();
                     } else {
                       break;
@@ -622,7 +628,8 @@ void NLLBorrowChecker::computeDataflow(MIRFunction *func) {
               }
             }
           }
-        } else if (auto *makeClosure = llvm::dyn_cast_or_null<MakeClosureInst>(inst)) {
+        } else if (auto *makeClosure =
+                       llvm::dyn_cast_or_null<MakeClosureInst>(inst)) {
           bool requiresMut = false;
           bool hasRef = false;
           for (MIRValue *cap : makeClosure->getCaptures()) {
@@ -655,7 +662,8 @@ void NLLBorrowChecker::computeDataflow(MIRFunction *func) {
             while (true) {
               if (auto *cast = llvm::dyn_cast_or_null<CastInst>(tracedCap)) {
                 tracedCap = cast->getValue();
-              } else if (auto *load = llvm::dyn_cast_or_null<LoadInst>(tracedCap)) {
+              } else if (auto *load =
+                             llvm::dyn_cast_or_null<LoadInst>(tracedCap)) {
                 tracedCap = load->getPointer();
               } else {
                 break;
@@ -745,8 +753,9 @@ void NLLBorrowChecker::computeDataflow(MIRFunction *func) {
                     if (auto *ptrTy =
                             llvm::dyn_cast_or_null<hir::PointerType>(checkTy)) {
                       checkTy = ptrTy->getPointee();
-                    } else if (auto *refTy = llvm::dyn_cast_or_null<hir::ReferenceType>(
-                                   checkTy)) {
+                    } else if (auto *refTy =
+                                   llvm::dyn_cast_or_null<hir::ReferenceType>(
+                                       checkTy)) {
                       checkTy = refTy->getInner();
                     }
 
@@ -824,7 +833,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
         if (auto *cast = llvm::dyn_cast_or_null<CastInst>(inst)) {
           if (visited.insert(cast->getValue()).second)
             q.push(cast->getValue());
-        } else if (auto *gep = llvm::dyn_cast_or_null<GetElementPtrInst>(inst)) {
+        } else if (auto *gep =
+                       llvm::dyn_cast_or_null<GetElementPtrInst>(inst)) {
           if (visited.insert(gep->getPointer()).second)
             q.push(gep->getPointer());
         } else if (auto *load = llvm::dyn_cast_or_null<LoadInst>(inst)) {
@@ -857,7 +867,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
         if (auto *inst = llvm::dyn_cast_or_null<MIRInst>(v)) {
           if (auto *cast = llvm::dyn_cast_or_null<CastInst>(inst)) {
             v = cast->getValue();
-          } else if (auto *gep = llvm::dyn_cast_or_null<GetElementPtrInst>(inst)) {
+          } else if (auto *gep =
+                         llvm::dyn_cast_or_null<GetElementPtrInst>(inst)) {
             v = gep->getPointer();
           } else if (auto *load = llvm::dyn_cast_or_null<LoadInst>(inst)) {
             v = load->getPointer();
@@ -927,7 +938,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
             MIRValue *srcPtr = load->getPointer();
             for (auto &bPtr : func->getBlocks()) {
               for (auto &iPtr : bPtr->getInstructions()) {
-                if (auto *store = llvm::dyn_cast_or_null<StoreInst>(iPtr.get())) {
+                if (auto *store =
+                        llvm::dyn_cast_or_null<StoreInst>(iPtr.get())) {
                   bool aliases = false;
                   if (store->getPointer() == srcPtr) {
                     aliases = true;
@@ -1009,7 +1021,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
           if (consumer) {
             if (consumer->getOpcode() == Opcode::Release) {
               isImplicitDrop = true;
-            } else if (auto *call = llvm::dyn_cast_or_null<CallInst>(consumer)) {
+            } else if (auto *call =
+                           llvm::dyn_cast_or_null<CallInst>(consumer)) {
               if (call->getCallee()) {
                 std::string calleeName = call->getCallee()->getName();
                 if (calleeName.find("destructor") != std::string::npos ||
@@ -1184,7 +1197,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
             while (auto *cast = llvm::dyn_cast_or_null<CastInst>(destPtr)) {
               destPtr = cast->getValue();
             }
-            if (auto *gep = llvm::dyn_cast_or_null<GetElementPtrInst>(destPtr)) {
+            if (auto *gep =
+                    llvm::dyn_cast_or_null<GetElementPtrInst>(destPtr)) {
               if (gep->getPointer() && gep->getPointer()->getType()) {
                 std::string tyName = gep->getPointer()->getType()->toString();
                 if (tyName.find("Env") != std::string::npos ||
@@ -1257,8 +1271,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
                          "local reference into a global variable, heap object, "
                          "or caller argument.";
                   break;
-                } else if (auto *global =
-                               llvm::dyn_cast_or_null<MIRGlobal>(srcPlace.base)) {
+                } else if (auto *global = llvm::dyn_cast_or_null<MIRGlobal>(
+                               srcPlace.base)) {
                   if (global->isConstant() &&
                       isExclusiveBorrow(store->getValue())) {
                     diags.report(inst->getLoc(), DiagID::err_borrow_violation)
@@ -1441,7 +1455,8 @@ void NLLBorrowChecker::checkConflicts(MIRFunction *func) {
               }
             }
           }
-        } else if (auto *makeClosure = llvm::dyn_cast_or_null<MakeClosureInst>(inst)) {
+        } else if (auto *makeClosure =
+                       llvm::dyn_cast_or_null<MakeClosureInst>(inst)) {
           for (MIRValue *cap : makeClosure->getCaptures()) {
             if (!cap)
               continue;
@@ -1585,8 +1600,12 @@ std::vector<Place> NLLBorrowChecker::resolvePlace(MIRValue *val) const {
 
     if (auto *inst = llvm::dyn_cast_or_null<MIRInst>(currentVal)) {
       if (auto *cast = llvm::dyn_cast_or_null<CastInst>(inst)) {
-        worklist.push({cast->getValue(), proj});
-        continue;
+        if (isPointerType(cast) && !isPointerType(cast->getValue())) {
+          // Stop tracing. Treat the CastInst itself as the isolated base place.
+        } else {
+          worklist.push({cast->getValue(), proj});
+          continue;
+        }
       }
       if (auto *load = llvm::dyn_cast_or_null<LoadInst>(inst)) {
         if (!isPointerType(load)) {
@@ -1603,9 +1622,11 @@ std::vector<Place> NLLBorrowChecker::resolvePlace(MIRValue *val) const {
                 if (auto *i = llvm::dyn_cast_or_null<MIRInst>(v)) {
                   if (auto *cast = llvm::dyn_cast_or_null<CastInst>(i)) {
                     v = cast->getValue();
-                  } else if (auto *ext = llvm::dyn_cast_or_null<ExtractValueInst>(i)) {
+                  } else if (auto *ext =
+                                 llvm::dyn_cast_or_null<ExtractValueInst>(i)) {
                     v = ext->getAggregate();
-                  } else if (auto *gep = llvm::dyn_cast_or_null<GetElementPtrInst>(i)) {
+                  } else if (auto *gep =
+                                 llvm::dyn_cast_or_null<GetElementPtrInst>(i)) {
                     v = gep->getPointer();
                     std::vector<uint64_t> tmp;
                     for (auto *idx : gep->getIndices()) {
@@ -1633,7 +1654,8 @@ std::vector<Place> NLLBorrowChecker::resolvePlace(MIRValue *val) const {
 
             for (auto &bPtr : parentFunc->getBlocks()) {
               for (auto &iPtr : bPtr->getInstructions()) {
-                if (auto *store = llvm::dyn_cast_or_null<StoreInst>(iPtr.get())) {
+                if (auto *store =
+                        llvm::dyn_cast_or_null<StoreInst>(iPtr.get())) {
                   bool aliases = false;
                   if (store->getPointer() == load->getPointer()) {
                     aliases = true;

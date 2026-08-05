@@ -1355,6 +1355,19 @@ void TypeChecker::visitIdentifierExpr(const IdentifierExpr *expr) {
         }
       }
     }
+    if (sym->decl) {
+      std::string trueName = expr->getName();
+      if (auto *vd = llvm::dyn_cast_or_null<const VariableDecl>(sym->decl))
+        trueName = vd->getName();
+      else if (auto *fd = llvm::dyn_cast_or_null<const FunctionDecl>(sym->decl))
+        trueName = fd->getName();
+      else if (auto *cd = llvm::dyn_cast_or_null<const ClassDecl>(sym->decl))
+        trueName = cd->getName();
+
+      if (trueName != expr->getName()) {
+        const_cast<IdentifierExpr *>(expr)->setName(trueName);
+      }
+    }
     lastComputedType = sym->type;
   }
   const_cast<IdentifierExpr *>(expr)->setType(lastComputedType);
@@ -2352,6 +2365,19 @@ void TypeChecker::visitCallExpr(const CallExpr *expr) {
     }
 
     Symbol *sym = symbols.lookup(idExpr->getName());
+    if (sym && sym->decl) {
+      std::string trueName = idExpr->getName();
+      if (auto *vd = llvm::dyn_cast_or_null<const VariableDecl>(sym->decl))
+        trueName = vd->getName();
+      else if (auto *fd = llvm::dyn_cast_or_null<const FunctionDecl>(sym->decl))
+        trueName = fd->getName();
+      else if (auto *cd = llvm::dyn_cast_or_null<const ClassDecl>(sym->decl))
+        trueName = cd->getName();
+
+      if (trueName != idExpr->getName()) {
+        const_cast<IdentifierExpr *>(idExpr)->setName(trueName);
+      }
+    }
     std::string typeName = idExpr->getName();
 
     /** @note Intercept primitive type names directly even if missing from
@@ -3661,9 +3687,11 @@ void TypeChecker::visitIndexExpr(const IndexExpr *expr) {
         targetElem = context.createViewType(elem);
       lastComputedType = context.createPointerType(targetElem);
     } else {
-      Diags.report(expr->getArray()->getLoc(), DiagID::err_type_mismatch)
-          << "Type is not indexable";
-      lastComputedType = context.getAnyType();
+      if (!isIntegerOrChar(idxType)) {
+        Diags.report(expr->getIndex()->getLoc(), DiagID::err_type_mismatch)
+            << "Pointer index must be an integer";
+      }
+      lastComputedType = ptrT->getPointee();
     }
   } else if (auto *mt = llvm::dyn_cast_or_null<const MapType>(rawArrType)) {
     if (!isCompatible(mt->getKeyType(), idxType)) {
@@ -5899,19 +5927,19 @@ void TypeChecker::visitImportDecl(const ImportDecl *decl) {
                                           : modStr;
   }
 
-  // 2. Load the module if not already loaded
-  if (loadedModules.find(modStr) == loadedModules.end()) {
-    loadedModules.insert(modStr);
-
-    if (loadModuleCallback) {
-      if (ModuleDecl *importedMod = loadModuleCallback(modStr)) {
+  // 2. Load the module using the callback
+  if (loadModuleCallback) {
+    if (ModuleDecl *importedMod = loadModuleCallback(modStr)) {
+      static std::set<ModuleDecl *> processedModules;
+      if (processedModules.find(importedMod) == processedModules.end()) {
+        processedModules.insert(importedMod);
         importedMod->accept(*this);
-      } else {
-        Diags.report(decl->getLoc(), DiagID::err_internal)
-            << "Failed to resolve and load module: '" << modStr << "'";
-        hasError = true;
-        return;
       }
+    } else {
+      Diags.report(decl->getLoc(), DiagID::err_internal)
+          << "Failed to resolve and load module: '" << modStr << "'";
+      hasError = true;
+      return;
     }
   }
 
@@ -5924,13 +5952,17 @@ void TypeChecker::visitImportDecl(const ImportDecl *decl) {
                         decl->getLoc());
     }
   } else {
-    // Destructured import (e.g., `import { a, b } from test`)
-    for (const auto &sym : decl->getSymbols()) {
-      std::string fqName = ns + "." + sym;
+    // Destructured import (e.g., `import { a, b as c } from test`)
+    for (const auto &symPair : decl->getSymbols()) {
+      const std::string &originalName = symPair.first;
+      const std::string &aliasName = symPair.second;
+
+      // 1. Look up the REAL symbol in the imported namespace
+      std::string fqName = ns + "." + originalName;
       Symbol *realSym = symbols.lookup(fqName);
 
       if (!realSym) {
-        realSym = symbols.lookup(sym);
+        realSym = symbols.lookup(originalName);
       }
 
       if (!realSym && !symbols.lookup(fqName)) {
@@ -5940,23 +5972,31 @@ void TypeChecker::visitImportDecl(const ImportDecl *decl) {
             decl->getLoc());
       }
 
-      ambiguousImports[sym].push_back(ns);
+      // 2. Track ambiguity using the ALIAS NAME (what we are actually calling
+      // it locally)
+      if (std::find(ambiguousImports[aliasName].begin(),
+                    ambiguousImports[aliasName].end(),
+                    ns) == ambiguousImports[aliasName].end()) {
+        ambiguousImports[aliasName].push_back(ns);
+      }
 
-      if (ambiguousImports[sym].size() == 1) {
-        if (!symbols.lookup(sym)) {
+      // 3. Bind it into the local scope under the ALIAS NAME
+      if (ambiguousImports[aliasName].size() == 1) {
+        if (!symbols.lookup(aliasName)) {
           if (realSym) {
             Symbol aliasedSym = *realSym;
-            aliasedSym.name = sym;
-            symbols.addSymbol(sym, aliasedSym, decl->getLoc());
+            aliasedSym.name = aliasName; // Rename the symbol in memory
+            symbols.addSymbol(aliasName, aliasedSym, decl->getLoc());
+
             if (aliasedSym.kind == SymbolKind::Class && aliasedSym.decl) {
               context.registerClass(
                   static_cast<const ClassDecl *>(aliasedSym.decl));
             }
           } else {
-            symbols.addSymbol(
-                sym,
-                Symbol(SymbolKind::Variable, sym, context.getAnyType(), decl),
-                decl->getLoc());
+            symbols.addSymbol(aliasName,
+                              Symbol(SymbolKind::Variable, aliasName,
+                                     context.getAnyType(), decl),
+                              decl->getLoc());
           }
         }
       }
@@ -6035,6 +6075,12 @@ void TypeChecker::visitNamedType(const NamedType *type) {
     if (modSym && modSym->kind == SymbolKind::Module) {
       lookupName = typeSuffix;
     }
+  }
+
+  // If string maps to a local alias for a class, extract its true internal name
+  Symbol *aliasSym = symbols.lookup(lookupName);
+  if (aliasSym && aliasSym->kind == SymbolKind::Class && aliasSym->decl) {
+    lookupName = static_cast<const ClassDecl *>(aliasSym->decl)->getName();
   }
 
   if (!type->getGenericArgs().empty()) {

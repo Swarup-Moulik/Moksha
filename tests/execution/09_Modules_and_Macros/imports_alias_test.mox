@@ -1,0 +1,19 @@
+println("--- [E2E] imports_alias_test.mox ---");
+
+// Import specific symbols and map them to local aliases using 'as'
+import { test_multiplier as tm, calculate_magic as calc, TestConfig as TC } from "test";
+
+void run_import_alias_test() {
+    // 1. Test importing and aliasing a global variable
+    println(tm); // Expected: 5
+
+    // 2. Test importing and aliasing a function
+    int result = calc(10, 20);
+    println(result); // Expected: 150  ((10 + 20) * 5)
+
+    // 3. Test importing and aliasing a class (value-type instantiation)
+    TC config = new TC(42);
+    println(config.version); // Expected: 42
+}
+
+run_import_alias_test();
