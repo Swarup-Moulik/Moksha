@@ -1,0 +1,24 @@
+void main(int argc, **char argv) {
+    println("--- Moksha CLI Argument Test ---");
+
+    print("Total arguments received: ");
+    println(argc);
+
+    if (argc == 0) {
+        println("Error: No arguments provided (not even the program name).");
+        return;
+    }
+
+    // Iterate through the double pointer array
+    for (int i = 0; i < argc; i = i + 1) {
+        print("Argument [");
+        print(i);
+        print("]: ");
+
+        // Extract the *char and safely cast it to a Moksha string
+        string arg_str = cast<string>(argv[i]);
+        println(arg_str);
+    }
+
+    println("--- Test Complete ---");
+}

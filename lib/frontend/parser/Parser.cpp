@@ -853,6 +853,25 @@ std::unique_ptr<ModuleDecl> Parser::parseModule() {
       auto voidType = std::make_unique<PrimitiveType>(
           PrimitiveType::Scalar::Void, startLoc);
 
+      // INJECT C++ STYLE COMMAND LINE ARGUMENTS FOR TOP-LEVEL SCRIPTS
+      std::vector<FunctionDecl::Param> mainParams;
+
+      // 1. int argc
+      auto argcType =
+          std::make_unique<PrimitiveType>(PrimitiveType::Scalar::I32, startLoc);
+      mainParams.push_back(
+          FunctionDecl::Param{"argc", std::move(argcType), startLoc, nullptr});
+
+      // 2. **char argv
+      auto charType = std::make_unique<PrimitiveType>(
+          PrimitiveType::Scalar::Char, startLoc);
+      auto ptrCharType =
+          std::make_unique<PointerType>(std::move(charType), startLoc);
+      auto ptrPtrCharType =
+          std::make_unique<PointerType>(std::move(ptrCharType), startLoc);
+      mainParams.push_back(FunctionDecl::Param{
+          "argv", std::move(ptrPtrCharType), startLoc, nullptr});
+
       // Ensure imported scripts don't collide with the root file's main()
       static int scriptCounter = 0;
       std::string scriptFuncName =
@@ -862,9 +881,9 @@ std::unique_ptr<ModuleDecl> Parser::parseModule() {
       scriptCounter++;
 
       auto mainFunc = std::make_unique<FunctionDecl>(
-          scriptFuncName, std::vector<FunctionDecl::Param>{},
-          std::move(voidType), std::move(body), false, false, false, false,
-          Visibility::Default, startLoc);
+          scriptFuncName, std::move(mainParams), std::move(voidType),
+          std::move(body), false, false, false, false, Visibility::Default,
+          startLoc);
 
       decls.push_back(std::move(mainFunc));
     }

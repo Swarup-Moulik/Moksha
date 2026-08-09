@@ -1,4 +1,3 @@
-// runtime/src/core/runtime_init.c
 #include "../../include/moksha_rt.h"
 #include "../abi/sys_caps.h"
 #include "../abi/sys_event.h"
@@ -12,8 +11,8 @@
 extern void __moksha_module_init(void);
 extern void __moksha_module_destroy(void);
 
-// The renamed user entry point compiled by Moksha
-extern void __moksha_main(void);
+// FIX: Declare the Moksha entry point with CLI arguments
+extern void __moksha_main(int argc, char **argv);
 
 // Provided by src/async/scheduler.c
 extern void moksha_scheduler_init(void);
@@ -38,8 +37,8 @@ int main(int argc, char **argv) {
   // 2. Execute global LLVM constructors (Initializes your strings!)
   __moksha_module_init();
 
-  // 3. Run the user's program
-  __moksha_main();
+  // FIX: 3. Run the user's program and pass the OS arguments forward
+  __moksha_main(argc, argv);
 
   // Keep pumping the scheduler until all async tasks are complete.
   if (caps->has_async_io) {
