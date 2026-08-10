@@ -9,23 +9,23 @@ SECTIONS
         *(.multiboot)
         *(.text.boot)
         *(.text)
-        *(.text.*)      /* <-- Catches libgcc/compiler-rt function sections */
+        *(.text.*)      /* Catches libgcc/compiler-rt function sections */
     }
 
-    .rodata : ALIGN(4K) { 
-        *(.rodata) 
-        *(.rodata.*)    /* <-- Catches fragmented read-only data */
+    .rodata : ALIGN(4K) {
+        *(.rodata)
+        *(.rodata.*)    /* Catches fragmented read-only data */
     }
-    
-    .data : ALIGN(4K) { 
-        *(.data) 
-        *(.data.*)      /* <-- Catches fragmented data */
+
+    .data : ALIGN(4K) {
+        *(.data)
+        *(.data.*)      /* Catches fragmented data */
     }
 
     .bss : ALIGN(4K) {
         _sbss = .;
         *(.bss)
-        *(.bss.*)       /* <-- Catches fragmented bss */
+        *(.bss.*)       /* Catches fragmented bss */
         *(COMMON)
         _ebss = .;
 

@@ -19,11 +19,7 @@ sys_err_t sys_event_init(void) {
   return SYS_OK;
 }
 
-int32_t sys_event_poll(int timeout_ms) {
-  // In the browser, the JS environment controls the loop.
-  // Emscripten handles yielding back to JS, so we don't block here.
-  return 0;
-}
+int32_t sys_event_poll(int timeout_ms) { return 0; }
 
 sys_err_t sys_event_register_timer(uint64_t timeout_ms, sys_task_waker_t waker,
                                    void *ctx) {

@@ -39,7 +39,7 @@ static void write_serial(char a) {
 
 sys_err_t sys_io_write(int32_t fd, const void *buffer, size_t count,
                        size_t *out_bytes_written) {
-  (void)fd; // Unused on baremetal (we just write to Serial/VGA)
+  (void)fd; // We just write to Serial/VGA
 
   if (!serial_initialized) {
     init_serial();

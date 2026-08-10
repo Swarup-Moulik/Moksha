@@ -120,8 +120,6 @@ void moksha_rt_release_with_dtor(void *ptr, void (*dtor)(void *)) {
       } PromiseLayout;
 
       PromiseLayout *prom = (PromiseLayout *)ptr;
-
-      // THE TICKING TIMEBOMB DETONATOR
       if (prom->is_rejected && !prom->was_awaited) {
         moksha_rt_panic("Unhandled Promise Rejection: An async function threw "
                         "an exception that was never awaited!");

@@ -26,8 +26,6 @@ int32_t sys_event_poll(int timeout_ms) {
 
   if (num_events > 0) {
     EventCtx *ctx = (EventCtx *)event.data.ptr;
-
-    // If this was a timer, we need to read from it to clear the event
     uint64_t expirations;
     read(ctx->fd, &expirations, sizeof(expirations));
 
@@ -67,7 +65,6 @@ sys_err_t sys_event_register_timer(uint64_t timeout_ms, sys_task_waker_t waker,
   timerfd_settime(tfd, 0, &its, NULL);
 
   struct epoll_event ev;
-  // ADD EPOLLONESHOT HERE:
   ev.events = EPOLLIN | EPOLLONESHOT;
   ev.data.ptr = ectx;
 

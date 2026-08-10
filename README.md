@@ -36,6 +36,9 @@ Moksha is a statically typed systems programming language with a custom multi-st
 > **⚠️ Disclaimer: Active Development**
 > Moksha is currently in an early, active stage of development. While the core compilation pipeline is functional, features are subject to change, and you may encounter bugs or incomplete implementations.
 
+> **⚠️ Platform Support Warning**
+> Moksha has **only been tested on Windows 10 and Kali Linux**. Other platforms (macOS, Android, iOS, WebAssembly, bare-metal) are targeted by the backend, but may not work reliably and have not been validated. Build and run at your own risk on untested platforms.
+
 ## Core Features
 
 - **Deterministic Memory Management:** Zero-cost abstractions with no Garbage Collector. Moksha utilizes Automatic Reference Counting (ARC) paired with strict Non-Lexical Lifetime (NLL) borrow checking to ensure memory safety at compile time.

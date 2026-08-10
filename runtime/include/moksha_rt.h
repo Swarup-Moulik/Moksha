@@ -248,10 +248,8 @@ char *__moksha_ulong_to_string(uint64_t val);
 char *__moksha_isize_to_string(intptr_t val);
 char *__moksha_usize_to_string(size_t val);
 char *__moksha_quarter_to_string(float val); // f8
-char *__moksha_half_to_string(float val);
-// f16
-char *__moksha_float_to_string(float val);
-// f32
+char *__moksha_half_to_string(float val);    // f16
+char *__moksha_float_to_string(float val);   // f32
 char *__moksha_double_to_string(double val); // f64
 char *__moksha_half_to_string_abi(float val);
 char *__moksha_quarter_to_string_abi(float val);

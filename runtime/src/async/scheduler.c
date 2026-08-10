@@ -151,7 +151,7 @@ void moksha_scheduler_schedule(void *coro_handle) {
 void moksha_scheduler_run(void) {
   acquire_sched_lock();
 
-  // If there are absolutely no tasks left, bail out safely.
+  // Bail out safely since no tasks left to run
   if (active_tasks == 0 && !queue_head) {
     release_sched_lock();
     return;

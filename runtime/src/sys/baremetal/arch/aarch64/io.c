@@ -1,8 +1,6 @@
 #include "abi/sys_io.h"
 #include <stdint.h>
 
-// REMOVED the __attribute__((weak)) board_putchar implementation.
-// This forces the linker to pull in board.c to find the strong symbol!
 extern void board_putchar(char c);
 
 sys_err_t sys_io_write(int32_t fd, const void *buffer, size_t count,

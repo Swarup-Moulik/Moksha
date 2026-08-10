@@ -5,7 +5,8 @@
 sys_err_t sys_thread_create(sys_thread_t *thread, sys_thread_func_t func,
                             void *arg) {
   pthread_t pt;
-  // We cast the func to match the expected pthread signature: void* (*)(void*)
+  // Casting the function to match the expected pthread signature: void*
+  // (*)(void*)
   if (pthread_create(&pt, NULL, (void *(*)(void *))(uintptr_t)func, arg) == 0) {
     *thread = (sys_thread_t)pt;
     return SYS_OK;

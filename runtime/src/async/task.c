@@ -129,7 +129,7 @@ void *moksha_rt_spawn_thread(void *closure_ptr) {
   sys_thread_t thread;
   if (sys_thread_create(&thread, (sys_thread_func_t)strong_thread_trampoline,
                         ctx) != 0) {
-    moksha_scheduler_dec_active(); // Rollback if spawn fails
+    moksha_scheduler_dec_active();
     moksha_rt_panic("Failed to spawn strong thread");
   }
 

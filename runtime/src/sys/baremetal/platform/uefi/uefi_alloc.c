@@ -16,7 +16,7 @@ void *sys_alloc(size_t size) {
 }
 
 void sys_free(void *ptr) {
-  kfree(ptr); // The memory leak is finally fixed!
+  kfree(ptr);
 }
 
 void *sys_realloc(void *ptr, size_t new_size) {

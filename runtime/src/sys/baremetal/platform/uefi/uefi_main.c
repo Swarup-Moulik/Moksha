@@ -121,8 +121,7 @@ EFIAPI uint64_t efi_main(void *ImageHandle, void *SystemTable) {
   // 1. Init Moksha globals BEFORE we kill UEFI so FONT_8X16 gets populated
   __moksha_module_init();
 
-  // 2. Loop to successfully terminate UEFI (ExitBootServices often requires a
-  // retry)
+  // 2. Loop to successfully terminate UEFI
   size_t MapSize = 0, MapKey = 0, DescriptorSize = 0;
   uint32_t DescriptorVersion = 0;
   void *MemoryMap = NULL;
@@ -138,9 +137,8 @@ EFIAPI uint64_t efi_main(void *ImageHandle, void *SystemTable) {
     // Fetch the actual map and the fresh MapKey
     if (GetMemoryMap(&MapSize, MemoryMap, &MapKey, &DescriptorSize,
                      &DescriptorVersion) == 0) {
-      // Attempt to kill UEFI using the fresh MapKey
       if (ExitBootServices(ImageHandle, MapKey) == 0) {
-        break; // Success! UEFI is dead.
+        break;
       }
     }
   }

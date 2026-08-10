@@ -20,9 +20,6 @@ void sys_time_sleep_ms(uint64_t ms) {
   req.tv_sec = ms / 1000;
   req.tv_nsec = (ms % 1000) * 1000000;
 
-  // nanosleep can be interrupted by signals (like SIGINT).
-  // If it is interrupted, it returns -1 and stores the remaining time in 'rem'.
-  // We loop to ensure the thread sleeps for the full duration requested.
   while (nanosleep(&req, &rem) == -1) {
     req = rem;
   }

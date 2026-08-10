@@ -1,4 +1,3 @@
-// runtime/src/abi/sys_event.h
 #pragma once
 #include "sys_error.h"
 #include <stdint.h>

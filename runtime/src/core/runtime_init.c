@@ -11,7 +11,7 @@
 extern void __moksha_module_init(void);
 extern void __moksha_module_destroy(void);
 
-// FIX: Declare the Moksha entry point with CLI arguments
+// Declare the Moksha entry point with CLI arguments
 extern void __moksha_main(int argc, char **argv);
 
 // Provided by src/async/scheduler.c
@@ -28,16 +28,16 @@ int main(int argc, char **argv) {
 
   const sys_caps_t *caps = sys_get_caps();
 
-  // 1. Initialize Async Event Loop if the platform supports it
+  // Initialize Async Event Loop if the platform supports it
   if (caps->has_async_io) {
     sys_event_init();
     moksha_scheduler_init();
   }
 
-  // 2. Execute global LLVM constructors (Initializes your strings!)
+  // Execute global LLVM constructors (Initializes your strings!)
   __moksha_module_init();
 
-  // FIX: 3. Run the user's program and pass the OS arguments forward
+  // Runs the user's program and pass the OS arguments forward
   __moksha_main(argc, argv);
 
   // Keep pumping the scheduler until all async tasks are complete.
@@ -47,7 +47,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  // 4. Cleanup
+  // Cleanup
   __moksha_module_destroy();
 
   return 0;

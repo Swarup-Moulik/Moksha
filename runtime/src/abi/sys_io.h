@@ -1,4 +1,3 @@
-// runtime/src/abi/sys_io.h
 #pragma once
 #include <stddef.h>
 #include <stdint.h>

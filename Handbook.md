@@ -4,6 +4,8 @@
 
 > **Status:** Active development. Features may change; incomplete implementations may exist.
 
+> **⚠️ Built-in Shadowing Warning:** Moksha **bans shadowing of built-in functions and constants**. You cannot declare a variable, parameter, function, or class member whose name collides with a reserved built-in (e.g., `println`, `print`, `sqrt`, `pow`, `length`, `push`, `spawn`, `join`, `PI`, `E`, `TAU`, `seed`, `sleep`, `cancel`, `atomic_load`, `atomic_store`, `atomic_add`, `atomic_cas`, etc.). Attempting to do so produces a compile-time error. A small allowlist (`push`, `pop`, `insert`, `remove`, `clear`, `capacity`, `resize`, `extend`) exists for methods; all other names in the core built-in set are reserved. See §10 for the full built-in list.
+
 ---
 
 ## Table of Contents
@@ -537,6 +539,8 @@ void processData(string data, int retries = 3, int timeout = 5000) {
 
 ### 4.2 Closures
 
+A closure is a fat pointer (function pointer + environment pointer) that captures variables from the enclosing scope. Closures are typed with the `closure(params...) -> return` syntax and can be invoked like a function.
+
 ```moksha
 // Typed closure
 closure(int, int) -> int addFunc = (int a, int b) => {
@@ -544,14 +548,140 @@ closure(int, int) -> int addFunc = (int a, int b) => {
 };
 
 // Short-form closure
-closure() -> int counter = &() => {
+closure() -> int counter = () => {
     return 42;
 };
 
 println(addFunc(50, 50));  // 100
 ```
 
-Closures capture variables by reference. Mutating a captured variable from both the closure and the outer scope is a compile-time borrow error.
+#### 4.2.1 Capture Modes
+
+A closure can capture variables using one of four explicit capture modifiers, placed before the parameter list:
+
+| Modifier  | Capture Mode                  | Semantics                                                                                                                                                                                                   |
+| --------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _(none)_  | **Snapshot** (by-value copy)  | Captured variables are copied into the environment at closure creation. Later mutations of the outer variable do not affect the closure, and mutations inside the closure do not affect the outer variable. |
+| `&()`     | **View** (immutable borrow)   | Captured variables are borrowed read-only. The closure reads the latest value of the outer variable; the outer scope cannot mutate the variable while the closure is alive.                                 |
+| `&mut ()` | **Mut** (mutable borrow)      | Captured variables are borrowed mutably. The closure can read and write the outer variable, and the outer scope cannot access it while the closure is alive.                                                |
+| `move ()` | **Move** (ownership transfer) | Ownership of captured variables is transferred into the closure environment. The outer variable is moved and can no longer be used after the closure is created.                                            |
+
+```moksha
+void test_snapshot_capture() {
+    int a = 10;
+    // Snapshot: 'a' is copied into the environment at creation time.
+    closure() -> int snap = () => { return a + 5; };
+    a = 20; // Mutating 'a' outside does NOT affect the snapshot.
+    println(snap()); // Expected: 15
+}
+
+void test_view_capture() {
+    int b = 100;
+    // View: 'b' is borrowed read-only. The closure reads the live value.
+    closure() -> int view_closure = &() => { return b; };
+    println(view_closure()); // Expected: 100
+}
+
+void test_mut_capture() {
+    int c = 50;
+    // Mut: 'c' is borrowed mutably; the closure can modify it.
+    closure() -> void mut_closure = &mut () => { c = c + 10; };
+    mut_closure();
+    println(c); // Expected: 60
+}
+
+void test_move_capture() {
+    string d = "Hello Moksha";
+    // Move: ownership of 'd' transfers into the closure environment.
+    closure() -> string move_closure = move () => { return d; };
+    println(move_closure()); // Expected: Hello Moksha
+}
+```
+
+#### 4.2.2 Capture Mode Semantics & Rules
+
+- **Snapshot (default):** If no modifier is given, captured primitives are copied by value. The closure and the outer scope operate on independent copies.
+- **`&mut` affects all captures from that scope:** If a closure is marked `&mut`, all captures from that scope become mutable references rather than snapshots, unless explicitly requested otherwise.
+- **Borrow errors:** Mutating a captured variable from both the closure and the outer scope is a compile-time borrow error (enforced by NLL borrow checking). Multiple simultaneous `&mut` closures over the same variable are rejected; `&mut` and `&` closures over the same variable conflict.
+- **Move closes over the variable:** After a `move` capture, the original variable is moved into the environment and is no longer usable in the outer scope.
+- **Environment cleanup:** When a `move` closure goes out of scope, its environment (and the captured objects it owns) is destroyed, running destructors.
+
+```moksha
+void test_move_drop() {
+    class Logger {
+        public string name;
+        constructor(string n) { this.name = n; }
+        destructor() { println("Destroyed: " + this.name); }
+    }
+
+    Logger lg = new Logger("Resource1");
+    // 'lg' is owned by the closure and destroyed with it.
+    closure() -> void f = move () => {
+        println("Using: " + lg.name);
+    };
+    f();
+    // Expected output: Using: Resource1, Destroyed: Resource1
+}
+```
+
+#### 4.2.3 Shared Environment Between Closures
+
+Multiple closures can capture the same variable with compatible borrow kinds, sharing a single environment:
+
+```moksha
+void test_shared_env() {
+    int x = 0;
+    // Both closures capture the same 'x': one mutably, one immutably.
+    closure() -> void inc = &mut () => { x = x + 1; };
+    closure() -> int get = &() => { return x; };
+
+    inc();
+    inc();
+    println(get()); // Expected: 2
+}
+```
+
+#### 4.2.4 Closure Identity
+
+Closures are compared by reference: equality requires both the same function pointer **and** the same environment pointer.
+
+```moksha
+void test_closure_identity() {
+    int x = 10;
+    closure() -> int a = () => { return x; };
+    closure() -> int b = () => { return x; };
+    closure() -> int c = a;
+
+    println(a == c); // Expected: true (same env)
+    println(a == b); // Expected: false (different env allocations)
+}
+```
+
+#### 4.2.5 Non-Capturing Closures
+
+If a closure captures nothing, its environment pointer is `null`; it can be treated like a plain function pointer with zero environment overhead.
+
+```moksha
+closure(int) -> int f = (int x) => { return x + 1; };
+println(f(5)); // Expected: 6
+```
+
+#### 4.2.6 Nested & Returning Closures
+
+Closures can capture other closures, be nested, and be returned from functions:
+
+```moksha
+void test_nested_mutation_layers() {
+    int x = 1;
+    // Outer closure returns an inner closure that mutates the shared capture.
+    closure() -> closure() -> void outer = &mut () => {
+        return &mut () => { x = x * 2; };
+    };
+    closure() -> void f = outer();
+    f();
+    println(x); // Expected: 2
+}
+```
 
 ### 4.3 Operator Overloading
 
@@ -1049,21 +1179,88 @@ mokshac source.mox -target wasm32-wasi -o output.wasm
 
 ### 9.1 Module Imports
 
+Moksha supports **four** import syntaxes, including Python-style `from ... import ...` and JavaScript-style destructured imports with `as` aliasing.
+
+#### 9.1.1 Full Module Import (Python-style `import module`)
+
 ```moksha
-// Full module import (unquoted)
 import test
-println(test.calculate_magic(10, 20));
 
-// Full module import with an alias
+void run() {
+    println(test.test_multiplier);          // Access imported global via module namespace
+    int r = test.calculate_magic(10, 20);   // Call imported function
+    test.TestConfig cfg = new test.TestConfig(42); // Instantiate imported class
+}
+```
+
+#### 9.1.2 Full Module Import with Alias (`import module as alias`)
+
+```moksha
 import test as t
-println(t.calculate_magic(10, 20));
 
-// Import specific symbols from a file
+void run() {
+    println(t.test_multiplier);              // Expected: 5
+    int r = t.calculate_magic(10, 20);       // Expected: 150
+    t.TestConfig cfg = new t.TestConfig(42); // Expected: version = 42
+}
+```
+
+#### 9.1.3 Python-Style Destructured Import (`from "file" import { a, b }`)
+
+```moksha
+from "test" import { test_multiplier, calculate_magic, TestConfig }
+
+void run() {
+    println(test_multiplier);        // Imported symbols are used directly
+    int r = calculate_magic(10, 20);
+    TestConfig cfg = new TestConfig(42);
+}
+```
+
+#### 9.1.4 JavaScript-Style Destructured Import (`import { a, b } from "file"`)
+
+```moksha
 import { test_multiplier, calculate_magic, TestConfig } from "test"
+```
 
-// Cross-folder imports
+#### 9.1.5 Per-Symbol Aliasing (`symbol as alias`)
+
+Both destructured forms support renaming individual symbols with `as`:
+
+```moksha
+// Python-style
+from "test" import { test_multiplier as tm, calculate_magic as calc, TestConfig as TC }
+
+// JavaScript-style
+import { test_multiplier as tm, calculate_magic as calc, TestConfig as TC } from "test"
+
+void run() {
+    println(tm);            // Expected: 5
+    int r = calc(10, 20);   // Expected: 150
+    TC cfg = new TC(42);    // Expected: version = 42
+}
+```
+
+#### 9.1.6 Bare / Side-Effect Import and Cross-Folder Imports
+
+```moksha
+// Bare import (module namespace available)
+import "std/io"
+
+// Cross-folder imports (relative paths)
 import { Helper } from "../utils/helper"
 ```
+
+**Import summary table:**
+
+| Syntax                          | Style  | Use                                     |
+| ------------------------------- | ------ | --------------------------------------- |
+| `import test`                   | Python | Import whole module; access via `test.` |
+| `import test as t`              | Python | Import whole module under alias `t`     |
+| `import { a, b } from "test"`   | JS     | Import selected symbols into scope      |
+| `from "test" import { a, b }`   | Python | Import selected symbols into scope      |
+| `from "test" import { a as x }` | Python | Import and rename a symbol              |
+| `import "std/io"`               | Bare   | Load module without binding its symbols |
 
 ### 9.2 Exporting Symbols
 
@@ -1148,6 +1345,49 @@ Color x = Color.Red;
 Color y = Color.Green;
 swap(x, y);  // x is now Green, y is now Red
 ```
+
+### 9.6 Command Line Arguments
+
+Moksha supports **two** styles for accessing command-line arguments.
+
+#### 9.6.1 Style 1: Explicit `main(argc, argv)` (C++ style)
+
+Declare a `main` function with the standard signature. `argc` is the argument count and `argv` is a null-terminated array of C strings (`**char`). Convert each entry to a Moksha `string` with `cast<string>`.
+
+```moksha
+void main(int argc, **char argv) {
+    println("Total arguments received:");
+    println(argc);
+
+    for (int i = 0; i < argc; i = i + 1) {
+        string arg_str = cast<string>(argv[i]);
+        println(arg_str);
+    }
+}
+```
+
+> **Note:** When you declare an explicit `main`, you cannot mix it with top-level statements in the same file.
+
+#### 9.6.2 Style 2: Implicit `argc` / `argv` (script mode)
+
+When a file contains only top-level statements (no explicit `main`), the compiler **injects** a `main(argc, argv)` wrapper automatically, making `argc` and `argv` available directly at the top level. This is ideal for quick scripts.
+
+```moksha
+println("--- Script Mode CLI Test ---");
+
+print("Total arguments received: ");
+println(argc);
+
+for (int i = 0; i < argc; i = i + 1) {
+    print("Arg [");
+    print(i);
+    print("]: ");
+    string arg_str = cast<string>(argv[i]);
+    println(arg_str);
+}
+```
+
+**Both styles are equivalent at runtime**: `argc` includes the program name as `argv[0]`, and `argv` is a `**char` pointer to an array of C strings.
 
 ---
 

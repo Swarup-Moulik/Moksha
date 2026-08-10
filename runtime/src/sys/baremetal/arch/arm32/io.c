@@ -2,8 +2,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Force the linker to extract the platform-specific driver (system.c) from the
-// archive
 extern void board_putchar(char c);
 
 sys_err_t sys_io_write(int32_t fd, const void *buffer, size_t count,
@@ -44,8 +42,6 @@ void *memcpy(void *dest, const void *src, size_t n) {
   return dest;
 }
 
-// memset is often requested alongside memcpy by GCC, so we include it to be
-// safe
 void *memset(void *s, int c, size_t n) {
   unsigned char *p = (unsigned char *)s;
   while (n--) {
