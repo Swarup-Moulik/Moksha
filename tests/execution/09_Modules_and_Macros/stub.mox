@@ -1,0 +1,13 @@
+// These private symbols must not leak into the global symbol table
+private int private_var = 10;
+private int SHARED_NAME = 50;
+
+// This private function shares a name with a function in the main test file
+private int helper_func() {
+    return private_var * 2; // Returns 20
+}
+
+// Public API to prove module_a resolves its own private symbols
+public int get_module_a_result() {
+    return helper_func() + SHARED_NAME; // Expected: 70
+}

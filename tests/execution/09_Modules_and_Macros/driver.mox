@@ -1,0 +1,24 @@
+println("--- [E2E] test_private.mox ---")
+
+import { get_module_a_result } from "stub";
+
+// If the compiler's private mangling works, these will NOT collide with module_a.mox!
+private int private_var = 999;
+private int SHARED_NAME = 100;
+
+private int helper_func() {
+    return private_var;
+}
+
+void run_private_test() {
+    // 1. Test local private resolution (Ensures AST rewrites didn't break local lookups)
+    println(SHARED_NAME); // Expected: 100
+    println(helper_func()); // Expected: 999
+
+    // 2. Test cross-file private isolation
+    // get_module_a_result() should use its own hidden 'private_var', 'SHARED_NAME', and 'helper_func()'
+    int ext_result = get_module_a_result();
+    println(ext_result); // Expected: 70
+}
+
+run_private_test();

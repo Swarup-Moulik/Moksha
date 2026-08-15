@@ -27,8 +27,8 @@ class MIRToMLIRConverter {
 public:
   MIRToMLIRConverter(::mlir::MLIRContext &context, DiagnosticEngine &diags,
                      unsigned ptrSize)
-      : context(context), builder(&context), diags(diags),
-        typeLowering(context, ptrSize), pointerSize(ptrSize) {
+      : pointerSize(ptrSize), context(context), builder(&context), diags(diags),
+        typeLowering(context, ptrSize) {
     context.getOrLoadDialect<::moksha::IR::MokshaDialect>();
     context.getOrLoadDialect<::mlir::func::FuncDialect>();
     context.getOrLoadDialect<::mlir::cf::ControlFlowDialect>();
@@ -380,8 +380,7 @@ private:
     auto funcOp = builder.create<::mlir::func::FuncOp>(
         builder.getUnknownLoc(), func->getName(), funcType);
 
-    if (!func->isDeclaration() &&
-        func->getLinkage() == mir::Linkage::Internal) {
+    if (func->getLinkage() == mir::Linkage::Internal) {
       funcOp.setPrivate();
     }
     if (func->isVariadic())
@@ -612,6 +611,9 @@ private:
     }
 
     globalOp->setAttr("moksha.linkage", builder.getStringAttr(linkStr));
+    if (global->getLinkage() == mir::Linkage::Internal) {
+      globalOp.setPrivate();
+    }
 
     // Attach all Global Attributes
     if (global->isVolatile())

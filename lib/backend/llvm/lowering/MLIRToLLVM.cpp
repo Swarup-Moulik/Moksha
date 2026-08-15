@@ -801,6 +801,10 @@ struct GlobalOpLowering : public mlir::ConvertOpToLLVMPattern<IR::GlobalOp> {
         linkage = mlir::LLVM::Linkage::Weak;
     }
 
+    if (op.isPrivate()) {
+      linkage = mlir::LLVM::Linkage::Internal;
+    }
+
     bool isExternDecl = op->hasAttr("moksha.is_extern");
 
     if (!isExternDecl && (!initAttr || mlir::isa<mlir::UnitAttr>(initAttr)) &&
@@ -1444,7 +1448,8 @@ struct ExtractValueOpLowering
       if (isStructOrArray) {
         ptrToLoad = rewriter.create<mlir::LLVM::GEPOp>(
             loc, mlir::LLVM::LLVMPointerType::get(getContext()), llvmAggTy,
-            aggVal, llvm::ArrayRef<mlir::LLVM::GEPArg>{0, idx});
+            aggVal,
+            llvm::ArrayRef<mlir::LLVM::GEPArg>{0, static_cast<int32_t>(idx)});
       }
 
       // Load directly from the pointer (Opaque pointers allow safe partial
@@ -1533,7 +1538,8 @@ struct InsertValueOpLowering
       if (isStructOrArray) {
         ptrToStore = rewriter.create<mlir::LLVM::GEPOp>(
             loc, mlir::LLVM::LLVMPointerType::get(getContext()), llvmAggTy,
-            container, llvm::ArrayRef<mlir::LLVM::GEPArg>{0, idx});
+            container,
+            llvm::ArrayRef<mlir::LLVM::GEPArg>{0, static_cast<int32_t>(idx)});
 
         if (auto structTy =
                 mlir::dyn_cast<mlir::LLVM::LLVMStructType>(llvmAggTy)) {
@@ -5252,14 +5258,18 @@ struct ConvertMokshaToLLVMPass
         }
       }
 
-      // 2a. Satisfy the MLIR LLVM Dialect Verifier!
+      if (llvmFunc.isPrivate() && !llvmFunc.getBody().empty()) {
+        llvmFunc.setLinkage(mlir::LLVM::Linkage::Internal);
+      }
+
+      // Satisfies the MLIR LLVM Dialect Verifier
       bool hasPad = false;
       llvmFunc.walk([&](mlir::LLVM::LandingpadOp) { hasPad = true; });
       if (hasPad) {
         llvmFunc.setPersonalityAttr(persAttr);
       }
 
-      // 2b. Restore Moksha attributes
+      // Restores Moksha attributes
       auto name = llvmFunc.getName();
       auto unit = mlir::UnitAttr::get(&getContext());
       if (hasAttrNaked.count(name))

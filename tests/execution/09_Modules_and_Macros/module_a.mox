@@ -1,6 +1,0 @@
-import { b_func } from "module_b"
-
-public void a_func() {
-    println("In A");
-    // b_func(); // Potential infinite loop at runtime if called
-}

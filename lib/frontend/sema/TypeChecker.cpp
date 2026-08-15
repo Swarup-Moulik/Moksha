@@ -1339,6 +1339,10 @@ void TypeChecker::visitIdentifierExpr(const IdentifierExpr *expr) {
 
   Symbol *sym = symbols.lookup(expr->getName());
   if (!sym) {
+    sym = symbols.lookup(currentModuleName + "_" + expr->getName());
+  }
+
+  if (!sym) {
     Diags.report(expr->getLoc(), DiagID::err_undeclared_identifier)
         << expr->getName();
     lastComputedType = context.getAnyType();
@@ -4646,19 +4650,26 @@ void TypeChecker::visitVariableDecl(const VariableDecl *decl) {
     }
   }
 
-  if (!symbols.isDefinedInCurrentScope(decl->getName())) {
-    Symbol sym(SymbolKind::Variable, decl->getName(), effectiveType, decl);
+  // DO NOT RE-MANGLE: The AST name was permanently rewritten in Pass 1A!
+  std::string symName = decl->getName();
+
+  if (!symbols.isDefinedInCurrentScope(symName)) {
+    Symbol sym(SymbolKind::Variable, symName, effectiveType, decl);
     sym.bitWidth = decl->getBitWidth();
 
-    if (!symbols.addSymbol(decl->getName(), sym, decl->getLoc())) {
+    if (!symbols.addSymbol(symName, sym, decl->getLoc())) {
       Diags.report(decl->getLoc(), DiagID::err_symbol_redefinition)
           << decl->getName();
       hasError = true;
     }
   } else {
-    if (Symbol *existing = symbols.lookup(decl->getName())) {
+    if (Symbol *existing = symbols.lookup(symName)) {
       if (existing->decl == decl) {
         existing->type = effectiveType;
+      } else {
+        Diags.report(decl->getLoc(), DiagID::err_symbol_redefinition)
+            << decl->getName();
+        hasError = true;
       }
     }
   }
@@ -4700,17 +4711,24 @@ void TypeChecker::visitFunctionDecl(const FunctionDecl *decl) {
   const Type *fnType =
       context.createFunctionType(pTypes, retType, decl->isVariadicFunc());
 
-  if (!symbols.isDefinedInCurrentScope(decl->getName())) {
-    Symbol sym(SymbolKind::Function, decl->getName(), fnType, decl);
-    if (!symbols.addSymbol(decl->getName(), sym, decl->getLoc())) {
+  // Use the name which has already been rewritten in Pass 1A
+  std::string symName = decl->getName();
+
+  if (!symbols.isDefinedInCurrentScope(symName)) {
+    Symbol sym(SymbolKind::Function, symName, fnType, decl);
+    if (!symbols.addSymbol(symName, sym, decl->getLoc())) {
       Diags.report(decl->getLoc(), DiagID::err_symbol_redefinition)
           << decl->getName();
       hasError = true;
     }
   } else {
-    if (Symbol *existing = symbols.lookup(decl->getName())) {
+    if (Symbol *existing = symbols.lookup(symName)) {
       if (existing->decl == decl) {
         existing->type = fnType;
+      } else {
+        Diags.report(decl->getLoc(), DiagID::err_symbol_redefinition)
+            << decl->getName();
+        hasError = true;
       }
     }
   }
@@ -5400,6 +5418,13 @@ void TypeChecker::visitLockStmt(const LockStmt *stmt) {
 /** @brief Top-Level Declarations */
 
 void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
+  // Capture the previous module to restore it after recursive imports
+  std::string prevModule = currentModuleName;
+
+  // GUARANTEE a unique namespace ID for every single file parsed
+  static int uniqueModId = 0;
+  currentModuleName = "mod_" + std::to_string(++uniqueModId);
+
   // Pass 1A: Global Symbol Registration
   for (const auto &d : decl->getDecls()) {
     const Decl *currentDecl = d.get();
@@ -5417,9 +5442,21 @@ void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
 
       const Type *fnType = context.createFunctionType(pTypes, actualRetType,
                                                       fd->isVariadicFunc());
-      symbols.addSymbol(fd->getName(),
-                        Symbol(SymbolKind::Function, fd->getName(), fnType, fd),
-                        fd->getLoc());
+
+      // PERMANENT AST REWRITE FOR PRIVATE FUNCTIONS
+      std::string symName = fd->getName();
+      if (fd->getVisibility() == Visibility::Private) {
+        symName = currentModuleName + "_" + symName;
+        const_cast<std::string &>(fd->getName()) = symName;
+      }
+
+      if (!symbols.addSymbol(symName,
+                             Symbol(SymbolKind::Function, symName, fnType, fd),
+                             fd->getLoc())) {
+        Diags.report(fd->getLoc(), DiagID::err_symbol_redefinition)
+            << fd->getName();
+        hasError = true;
+      }
     } else if (auto cd = llvm::dyn_cast_or_null<const ClassDecl>(currentDecl)) {
       symbols.addSymbol(cd->getName(),
                         Symbol(SymbolKind::Class, cd->getName(),
@@ -5451,15 +5488,29 @@ void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
       }
     } else if (auto vd =
                    llvm::dyn_cast_or_null<const VariableDecl>(currentDecl)) {
-      symbols.addSymbol(
-          vd->getName(),
-          Symbol(SymbolKind::Variable, vd->getName(), vd->getType(), vd),
-          vd->getLoc());
+      // PERMANENT AST REWRITE FOR PRIVATE VARIABLES
+      std::string symName = vd->getName();
+      if (vd->getVisibility() == Visibility::Private) {
+        symName = currentModuleName + "_" + symName;
+        const_cast<std::string &>(vd->getName()) = symName;
+      }
+
+      if (!symbols.addSymbol(
+              symName, Symbol(SymbolKind::Variable, symName, vd->getType(), vd),
+              vd->getLoc())) {
+        Diags.report(vd->getLoc(), DiagID::err_symbol_redefinition)
+            << vd->getName();
+        hasError = true;
+      }
     } else if (auto ed = llvm::dyn_cast_or_null<const EnumDecl>(currentDecl)) {
-      symbols.addSymbol(ed->getName(),
-                        Symbol(SymbolKind::Type, ed->getName(),
-                               context.createNamedType(ed->getName()), ed),
-                        ed->getLoc());
+      if (!symbols.addSymbol(ed->getName(),
+                             Symbol(SymbolKind::Type, ed->getName(),
+                                    context.createNamedType(ed->getName()), ed),
+                             ed->getLoc())) {
+        Diags.report(ed->getLoc(), DiagID::err_symbol_redefinition)
+            << ed->getName();
+        hasError = true;
+      }
     }
   }
 
@@ -5480,7 +5531,6 @@ void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
   // Pass 2: Full Type Checking
   for (const auto &d : decl->getDecls()) {
     const Decl *checkDecl = d.get();
-    /** @brief Skip Decls already fully processed in Pass 1/1.5 */
     if (llvm::dyn_cast_or_null<const UsingDecl>(checkDecl) ||
         llvm::dyn_cast_or_null<const ImportDecl>(checkDecl) ||
         llvm::dyn_cast_or_null<const EnumDecl>(checkDecl)) {
@@ -5491,6 +5541,9 @@ void TypeChecker::visitModuleDecl(const ModuleDecl *decl) {
 
   // Pass 3: Process Generic Instantiations
   processPendingInstantiations();
+
+  // Restore previous module context
+  currentModuleName = prevModule;
 }
 
 void TypeChecker::visitClassDecl(const ClassDecl *decl) {
@@ -5566,6 +5619,7 @@ void TypeChecker::visitClassDecl(const ClassDecl *decl) {
             }
           } else if (auto vd = llvm::dyn_cast_or_null<const VariableDecl>(
                          member.get())) {
+            // FIX: Restored field inheritance lookup here
             std::string fieldName = vd->getName();
             if (!parentFields.count(fieldName)) {
               parentFields[fieldName] = cur->getName();
@@ -5585,7 +5639,8 @@ void TypeChecker::visitClassDecl(const ClassDecl *decl) {
                 << "Ambiguous implementation: Class '" << decl->getName()
                 << "' inherits method '" << sig << "' from both '"
                 << inheritedMethods[sig] << "' and '" << origin
-                << "'. It must override this method to resolve the ambiguity.";
+                << "'. It must override this method to resolve the "
+                   "ambiguity.";
             hasError = true;
           }
         } else {
@@ -5661,7 +5716,8 @@ void TypeChecker::visitClassDecl(const ClassDecl *decl) {
         if (fd->isOverrideFunc()) {
           Diags.report(fd->getLoc(), DiagID::err_type_mismatch)
               << "Method '" << fd->getName()
-              << "' is marked 'override' but does not match any parent virtual "
+              << "' is marked 'override' but does not match any parent "
+                 "virtual "
                  "method.";
           hasError = true;
         }
@@ -5865,10 +5921,13 @@ void TypeChecker::visitClassDecl(const ClassDecl *decl) {
           break;
         case PrimitiveType::Scalar::U32:
         case PrimitiveType::Scalar::I32:
+        case PrimitiveType::Scalar::Int:
           storageSize = 32;
           break;
-        case PrimitiveType::Scalar::U64:
         case PrimitiveType::Scalar::I64:
+        case PrimitiveType::Scalar::U64:
+        case PrimitiveType::Scalar::ISize:
+        case PrimitiveType::Scalar::USize:
           storageSize = 64;
           break;
         default:
@@ -5972,8 +6031,7 @@ void TypeChecker::visitImportDecl(const ImportDecl *decl) {
             decl->getLoc());
       }
 
-      // 2. Track ambiguity using the ALIAS NAME (what we are actually calling
-      // it locally)
+      // 2. Track ambiguity using the ALIAS NAME
       if (std::find(ambiguousImports[aliasName].begin(),
                     ambiguousImports[aliasName].end(),
                     ns) == ambiguousImports[aliasName].end()) {
@@ -6077,7 +6135,8 @@ void TypeChecker::visitNamedType(const NamedType *type) {
     }
   }
 
-  // If string maps to a local alias for a class, extract its true internal name
+  // If string maps to a local alias for a class, extract its true internal
+  // name
   Symbol *aliasSym = symbols.lookup(lookupName);
   if (aliasSym && aliasSym->kind == SymbolKind::Class && aliasSym->decl) {
     lookupName = static_cast<const ClassDecl *>(aliasSym->decl)->getName();

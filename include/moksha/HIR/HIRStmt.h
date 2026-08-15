@@ -414,6 +414,9 @@ public:
   bool isWeakVar() const { return isWeakLinkage; }
   void setWeakVar(bool w) { isWeakLinkage = w; }
 
+  bool isPrivate() const { return isPrivateFlag; }
+  void setPrivate(bool p) { isPrivateFlag = p; }
+
   int getAlignment() const { return alignment; }
   void setAlignment(int v) { alignment = v; }
 
@@ -443,6 +446,7 @@ private:
   bool isThreadLocal = false;
   bool isVolatile = false;
   bool isWeakLinkage = false;
+  bool isPrivateFlag = false;
   int alignment = 0;
   bool isStatic = false;
   bool isUsed = false;

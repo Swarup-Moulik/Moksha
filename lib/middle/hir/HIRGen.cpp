@@ -514,6 +514,7 @@ void HIRGen::visitFunctionDecl(const FunctionDecl *decl) {
   func->setPure(decl->isPureFunc());
   func->setCold(decl->isColdFunc());
   func->setUsed(decl->isUsedFunc());
+  func->setPrivate(decl->getVisibility() == Visibility::Private);
 
   // 6. Store the generated HIR function
   functions.push_back(std::move(func));
@@ -721,6 +722,7 @@ void HIRGen::visitVariableDecl(const VariableDecl *decl) {
 
   varStmt->setExtern(decl->isExternVar());
   varStmt->setWeakVar(decl->isWeakVar());
+  varStmt->setPrivate(decl->getVisibility() == Visibility::Private);
   lastStmt = std::move(varStmt);
 }
 

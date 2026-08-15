@@ -60,8 +60,13 @@ public:
 
   bool isStaticFunc() const { return isStatic; }
   void setStatic(bool v) { isStatic = v; }
+
   bool isWeak() const { return isWeakFlag; }
   void setWeak(bool v) { isWeakFlag = v; }
+
+  bool isPrivate() const { return isPrivateFlag; }
+  void setPrivate(bool p) { isPrivateFlag = p; }
+
   const std::string &getABI() const { return abi; }
   void setABI(std::string abiStr) { abi = std::move(abiStr); }
   const std::string &getSection() const { return sectionName; }
@@ -94,6 +99,7 @@ private:
   bool isNoReturn;
   bool isExternFlag = false;
   bool isWeakFlag = false;
+  bool isPrivateFlag = false;
   std::string abi = "C";
   std::string sectionName;
   bool isNoInline = false;

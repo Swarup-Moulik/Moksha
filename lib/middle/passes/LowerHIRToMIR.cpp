@@ -2455,7 +2455,12 @@ private:
       mirName = "moksha_builtin_" + mirName;
     }
 
-    Linkage linkage = hirFunc->isWeak() ? Linkage::Weak : Linkage::External;
+    Linkage linkage = Linkage::External;
+    if (hirFunc->isPrivate()) {
+      linkage = Linkage::Internal;
+    } else if (hirFunc->isWeak()) {
+      linkage = Linkage::Weak;
+    }
 
     bool isExternC = hirFunc->isExtern();
     const hir::HIRType *retTy = resolveType(hirFunc->getReturnType());
@@ -2605,9 +2610,12 @@ private:
         }
       }
 
-      Linkage linkage = varDecl->isStaticVar() ? Linkage::Internal
-                        : varDecl->isWeakVar() ? Linkage::Weak
-                                               : Linkage::External;
+      Linkage linkage = Linkage::External;
+      if (varDecl->isPrivate() || varDecl->isStaticVar()) {
+        linkage = Linkage::Internal;
+      } else if (varDecl->isWeakVar()) {
+        linkage = Linkage::Weak;
+      }
 
       bool isConstant = false;
       if (actualType && actualType->isImmutable()) {

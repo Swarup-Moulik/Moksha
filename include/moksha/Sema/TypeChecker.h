@@ -58,6 +58,7 @@ private:
   bool inConstructorContext = false;
   bool inAsyncContext = false;
   bool inUnsafeContext = false;
+  std::string currentModuleName = "";
   std::vector<TypePtr> parkedTypes; // Safely stores inferred generic types
   std::map<std::string, std::vector<std::string>> ambiguousImports;
   bool detectInfiniteSize(const Type *t, std::set<std::string> &visited);
